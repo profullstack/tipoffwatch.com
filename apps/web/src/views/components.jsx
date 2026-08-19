@@ -47,9 +47,16 @@ export const StateBadge = ({ state, detail }) => {
 /** Follow / unfollow as a plain form, so it works with JavaScript off. */
 export const FollowButton = ({ user, subjectType, subjectId, following, next, label }) => {
   if (!user) {
+    // Just "Follow". The long "Sign in to follow" was wide enough to squeeze the
+    // team name into two wrapped lines on every card; the link goes to sign-in
+    // either way, and the title says so for anyone who wants the detail.
     return (
-      <a class="ghost small-btn" href={`/login?next=${encodeURIComponent(next ?? '/')}`}>
-        Sign in to follow
+      <a
+        class="ghost small-btn"
+        title="Sign in to follow"
+        href={`/login?next=${encodeURIComponent(next ?? '/')}`}
+      >
+        ☆ Follow
       </a>
     );
   }

@@ -428,7 +428,9 @@ ul.teams {
   list-style: none;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  /* Wide enough that a long club name sits on one line next to the follow
+     control; below this the name wrapped on nearly every card. */
+  grid-template-columns: repeat(auto-fill, minmax(19.5rem, 1fr));
   gap: 0.5rem;
 }
 li.team {
@@ -461,6 +463,10 @@ li.team img {
   color: var(--fg);
   font-weight: 600;
   font-size: 0.95rem;
+  /* Long names shorten rather than reflow the card. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .team-name .meta {
   font-size: 0.72rem;
