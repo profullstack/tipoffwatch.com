@@ -504,14 +504,25 @@ button.following {
   padding: 0.3rem 0.8rem;
   font-size: 0.88rem;
 }
+/* The unfollow x inside a chip.
+   Scoped through .inline deliberately: the button sits in a <form class="inline">,
+   and `.inline button` further down the file matches it at the same specificity, so
+   with a plain `.chip button` whichever rule came last won -- which is how the x
+   ended up wearing a bordered box. This is (0,2,1), so order stops mattering. */
+.chip .inline button,
 .chip button {
   border: 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0 0 0.15rem;
+  border-radius: 0;
 }
+.chip .inline button:hover,
 .chip button:hover {
+  border-color: transparent;
   color: var(--live);
 }
 
