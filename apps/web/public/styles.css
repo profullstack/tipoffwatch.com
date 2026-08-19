@@ -1074,11 +1074,21 @@ ul.comments li {
   min-width: 0;
   gap: 0.15rem;
 }
+/* The team names are the point of the block, so they carry the weight -- at the
+   previous size they read as secondary to the logo beside them. */
 .side-name a,
 .side-name span {
   font-family: var(--disp);
-  font-size: 1.05rem;
-  line-height: 1.15;
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.side-name .meta {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--muted);
 }
 .side-score {
   font-family: var(--disp);
@@ -1305,6 +1315,7 @@ ul.comments li {
   .card-foot {
     justify-content: flex-start;
   }
+}
 /* The kickoff line under the matchup.
    `display: inline` deliberately overrides the stacking default: this variant
    carries real "·" separators in the markup, so it must stay on one line -- and

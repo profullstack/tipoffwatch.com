@@ -173,3 +173,32 @@ test('asset versions change when the file does', async () => {
   // An asset that does not exist degrades to the bare path rather than throwing.
   expect(assetUrl('nope.css')).toBe('/nope.css');
 });
+
+/**
+ * A stylesheet with an unclosed block is not a style bug, it is a cliff.
+ *
+ * Resolving a merge inside an @media block once dropped its closing brace, so
+ * every rule after that point was silently nested inside a max-width query and
+ * stopped applying at desktop width. Nothing errors — the browser just parses a
+ * different stylesheet than the one that was written, and the page looks like a
+ * dozen unrelated regressions at once.
+ */
+test('styles.css has balanced braces', async () => {
+  const css = await readFile(
+    new URL('../apps/web/public/styles.css', import.meta.url).pathname,
+    'utf8',
+  );
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const open = (code.match(/\{/g) ?? []).length;
+  const close = (code.match(/\}/g) ?? []).length;
+  expect({ open, close }).toEqual({ open: close, close });
+
+  // And nothing may be left dangling inside a media query at the end of the file.
+  let depth = 0;
+  for (const ch of code) {
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    expect(depth).toBeGreaterThanOrEqual(0);
+  }
+  expect(depth).toBe(0);
+});
