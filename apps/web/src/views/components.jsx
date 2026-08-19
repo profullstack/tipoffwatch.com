@@ -58,7 +58,13 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
       <input type="hidden" name="subject_type" value={subjectType} />
       <input type="hidden" name="subject_id" value={subjectId} />
       <input type="hidden" name="next" value={next ?? '/'} />
-      <button type="submit" class={following ? 'ghost small-btn following' : 'cta small-btn'}>
+      {/* data-label lets the client rebuild the unfollowed wording without having to
+          re-render the row from the server. */}
+      <button
+        type="submit"
+        data-label={label ?? ''}
+        class={following ? 'ghost small-btn following' : 'ghost small-btn'}
+      >
         {following ? '★ Following' : `☆ Follow${label ? ` ${label}` : ''}`}
       </button>
     </form>

@@ -198,7 +198,133 @@ async function initPasskeys() {
   }
 }
 
+/* ------------------------------------------------------------------ ajax -- */
+
+/**
+ * Follow / unfollow without a round trip.
+ *
+ * The markup stays a real <form> that posts and redirects, so the site works with
+ * JavaScript off and for anything that does not run it. This intercepts the submit
+ * and does the same request in the background, then flips the button in place.
+ *
+ * The button is updated optimistically and reverted if the request fails, because
+ * the honest alternative -- a spinner on a 60ms request -- is slower to read than
+ * the state change itself.
+ */
+function initFollowForms() {
+  document.addEventListener('submit', async (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const action = form.getAttribute('action') ?? '';
+    if (action !== '/api/follow' && action !== '/api/unfollow') return;
+
+    event.preventDefault();
+    const button = form.querySelector('button');
+    const following = action === '/api/unfollow';
+    const chip = form.closest('.chip');
+
+    form.setAttribute('data-pending', '');
+    try {
+      const res = await fetch(action, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        body: new FormData(form),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+
+      // A chip only exists to be removed; everything else toggles.
+      if (chip) {
+        chip.remove();
+        return;
+      }
+      form.setAttribute('action', following ? '/api/follow' : '/api/unfollow');
+      if (button) {
+        const label = button.getAttribute('data-label') ?? '';
+        button.textContent = following ? `☆ Follow${label ? ` ${label}` : ''}` : '★ Following';
+        button.classList.toggle('following', !following);
+        button.classList.toggle('cta', false);
+        button.classList.toggle('ghost', true);
+      }
+    } catch {
+      // Put it back rather than leaving a button claiming something untrue.
+      if (button) button.textContent = following ? '★ Following' : '☆ Follow';
+    } finally {
+      form.removeAttribute('data-pending');
+    }
+  });
+}
+
+/**
+ * Same-origin navigation without a full document load.
+ *
+ * Fetches the next page, swaps <main> and the title, and pushes history. Anything
+ * this cannot handle -- a modified click, a different origin, a download, a form
+ * post -- is left to the browser, which is the correct behaviour rather than a
+ * fallback.
+ */
+function initNavigation() {
+  if (!window.history?.pushState) return;
+
+  const main = () => document.querySelector('main');
+  let token = 0;
+
+  async function go(url, { push = true } = {}) {
+    const mine = ++token;
+    document.body.setAttribute('data-loading', '');
+    try {
+      const res = await fetch(url, { headers: { 'x-requested-with': 'navigation' } });
+      if (!res.ok) throw new Error(String(res.status));
+      const html = await res.text();
+      // A newer click already started; discard this one rather than racing it onto
+      // the page out of order.
+      if (mine !== token) return;
+
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const next = doc.querySelector('main');
+      if (!next || !main()) {
+        location.href = url;
+        return;
+      }
+      main().replaceWith(next);
+      document.title = doc.title;
+      if (push) history.pushState({}, '', url);
+      window.scrollTo(0, 0);
+      localiseTimes();
+      initPush();
+      initPasskeys();
+    } catch {
+      location.href = url;
+    } finally {
+      if (mine === token) document.body.removeAttribute('data-loading');
+    }
+  }
+
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target.closest?.('a');
+    if (!link) return;
+    const href = link.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    if (link.target || link.hasAttribute('download') || link.hasAttribute('data-no-ajax')) return;
+
+    const url = new URL(link.href, location.href);
+    if (url.origin !== location.origin) return;
+    // The API and static assets are not pages; let the browser have them.
+    if (url.pathname.startsWith('/api/') || /\.[a-z0-9]+$/i.test(url.pathname)) return;
+
+    event.preventDefault();
+    go(url.pathname + url.search);
+  });
+
+  window.addEventListener('popstate', () =>
+    go(location.pathname + location.search, { push: false }),
+  );
+}
+
 localiseTimes();
 reportTimezone();
 initPush();
 initPasskeys();
+initFollowForms();
+initNavigation();
