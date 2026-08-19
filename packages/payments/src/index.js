@@ -94,21 +94,32 @@ export function verifyWebhook({ rawBody, signatureHeader, toleranceSeconds = 300
  * and both get a seat that only exists once. The conditional UPDATE ... WHERE
  * sold < capacity is what makes the last seat go to exactly one of them.
  */
+/** Statuses that mean money actually arrived. Everything else records and grants nothing. */
+const SETTLED = new Set(['paid', 'completed', 'confirmed', 'succeeded', 'settled']);
+
 export async function grantFromWebhook(payload) {
   const meta = payload.metadata ?? {};
   const userId = meta.user_id;
   const eventId = Number(meta.event_id);
   const offerId = Number(meta.offer_id);
   const ref = payload.id ?? payload.payment_id;
+  const status = String(payload.status ?? '').toLowerCase();
 
   if (!userId || !Number.isFinite(eventId)) throw new Error('webhook missing metadata');
+  if (!ref) throw new Error('webhook missing payment reference');
 
   return sql.begin(async (tx) => {
     const [payment] = await tx`
-      update payments set status = ${payload.status ?? 'paid'}, raw = ${payload}, updated_at = now()
+      update payments set status = ${status || 'unknown'}, raw = ${payload}, updated_at = now()
       where provider = 'coinpay' and provider_ref = ${ref}
       returning id, status
     `;
+
+    // A webhook fires for failures and cancellations too. Granting on any verified
+    // webhook would consume a seat and hand out a free stream for a payment that
+    // never settled -- the signature proves the message is genuine, not that money
+    // arrived.
+    if (!SETTLED.has(status)) return { granted: false, reason: `not settled (${status})` };
 
     const [claimed] = await tx`
       update stream_offers set sold = sold + 1

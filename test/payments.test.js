@@ -51,3 +51,24 @@ describe('coinpay webhook verification', () => {
     expect(verifyWebhook({ rawBody: body, signatureHeader: `t=${now()},v1=aa` })).toBe(false);
   });
 });
+
+describe('settlement gating', () => {
+  test('only settled statuses are treated as paid', async () => {
+    const src = await Bun.file(
+      new URL('../packages/payments/src/index.js', import.meta.url).pathname,
+    ).text();
+
+    // A verified signature proves the message is genuine, not that money arrived.
+    // Granting on any webhook would hand out a free stream on payment.failed.
+    expect(src).toContain('SETTLED.has(status)');
+    for (const good of ['paid', 'completed', 'confirmed', 'succeeded', 'settled']) {
+      expect(src).toContain(`'${good}'`);
+    }
+    // The grant must be gated BEFORE capacity is consumed, or a failed payment
+    // still burns a seat that a real buyer then cannot have.
+    const gate = src.indexOf('SETTLED.has(status)');
+    const claim = src.indexOf('sold = sold + 1');
+    expect(gate).toBeGreaterThan(0);
+    expect(claim).toBeGreaterThan(gate);
+  });
+});
