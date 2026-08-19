@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TipoffWatch">
-  <title>TipoffWatch</title>
-  <rect width="64" height="64" rx="14" fill="#0b0f17"/>
-  <circle cx="32" cy="30" r="14" fill="none" stroke="#ff6b35" stroke-width="4"/>
-  <path d="M32 16v28M18 30h28" stroke="#ff6b35" stroke-width="3" stroke-linecap="round"/>
-  <path d="M14 50h36" stroke="#e8eef8" stroke-width="4" stroke-linecap="round"/>
-</svg>
