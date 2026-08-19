@@ -38,6 +38,17 @@ function respond(c, { json, redirectTo }) {
   return c.redirect(redirectTo ?? c.req.header('referer') ?? '/', 303);
 }
 
+/**
+ * Render a page.
+ *
+ * Every HTML response goes through here for one reason: hono/jsx does not emit a
+ * doctype, and a page served without one puts the browser in quirks mode, where
+ * the box model and several of this stylesheet's assumptions quietly change.
+ * Centralising it is the only way it cannot be forgotten on the one route nobody
+ * checks.
+ */
+export const render = async (node) => `<!doctype html>${await node.toString()}`;
+
 app.use('*', async (c, next) => {
   const sid = getCookie(c, config.session.cookie);
   c.set('user', sid ? await auth.userFromRequest(sid) : null);
@@ -97,35 +108,33 @@ app.get('/', async (c) => {
   const today = new Date().toISOString().slice(0, 10);
   return cached(c, `page:home:${today}`, config.cache.scheduleTtlSeconds, async () => {
     const events = await q.scheduleForDay({ day: today, limit: 40 });
-    return (
-      <Landing user={c.get('user')} today={events} tz={tzOf(c)} vapidKey={config.push.publicKey} />
-    ).toString();
+    return render(
+      <Landing user={c.get('user')} today={events} tz={tzOf(c)} vapidKey={config.push.publicKey} />,
+    );
   });
 });
 
 app.get('/sports', async (c) =>
   cached(c, 'page:sports', 300, async () => {
     const [sports, leagues] = await Promise.all([q.listSports(), q.listLeagues({ limit: 30 })]);
-    return (<SportsIndex user={c.get('user')} sports={sports} leagues={leagues} />).toString();
+    return render(<SportsIndex user={c.get('user')} sports={sports} leagues={leagues} />);
   }),
 );
 
 app.get('/sports/:sport', async (c) => {
   const sport = c.req.param('sport');
   const leagues = await q.listLeagues({ sport, limit: 500 });
-  if (leagues.length === 0) return c.html(<NotFound user={c.get('user')} />, 404);
-  return c.html(<SportPage user={c.get('user')} sport={sport} leagues={leagues} />);
+  if (leagues.length === 0) return c.html(await render(<NotFound user={c.get('user')} />), 404);
+  return c.html(await render(<SportPage user={c.get('user')} sport={sport} leagues={leagues} />));
 });
 
 app.get('/leagues/:slug', async (c) => {
   const slug = c.req.param('slug');
   const league = await q.getLeagueBySlug(slug);
-  if (!league) return c.html(<NotFound user={c.get('user')} />, 404);
+  if (!league) return c.html(await render(<NotFound user={c.get('user')} />), 404);
   return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
     const events = await q.upcomingForLeague(league.id);
-    return (
-      <LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />
-    ).toString();
+    return render(<LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />);
   });
 });
 
@@ -133,33 +142,47 @@ app.get('/following', async (c) => {
   const user = requireUser(c);
   const [events, follows] = await Promise.all([q.upcomingForUser(user.id), q.listFollows(user.id)]);
   return c.html(
-    <Following
-      user={user}
-      events={events}
-      follows={follows}
-      tz={user.timezone}
-      vapidKey={config.push.publicKey}
-    />,
+    await render(
+      <Following
+        user={user}
+        events={events}
+        follows={follows}
+        tz={user.timezone}
+        vapidKey={config.push.publicKey}
+      />,
+    ),
   );
 });
 
 app.get('/events/:id', async (c) => {
   const user = c.get('user');
   const event = await q.getEvent(Number(c.req.param('id')));
-  if (!event) return c.html(<NotFound user={user} />, 404);
+  if (!event) return c.html(await render(<NotFound user={user} />), 404);
   const [offers, entitlement] = await Promise.all([
     pay.offersForEvent(event.id),
     user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
   ]);
   return c.html(
-    <EventPage user={user} event={event} tz={tzOf(c)} offers={offers} entitlement={entitlement} />,
+    await render(
+      <EventPage
+        user={user}
+        event={event}
+        tz={tzOf(c)}
+        offers={offers}
+        entitlement={entitlement}
+      />,
+    ),
   );
 });
 
 /* -------------------------------------------------------------------- auth -- */
 
-app.get('/login', (c) => c.html(<SignIn mode="login" next={c.req.query('next')} />));
-app.get('/signup', (c) => c.html(<SignIn mode="signup" next={c.req.query('next')} />));
+app.get('/login', async (c) =>
+  c.html(await render(<SignIn mode="login" next={c.req.query('next')} />)),
+);
+app.get('/signup', async (c) =>
+  c.html(await render(<SignIn mode="signup" next={c.req.query('next')} />)),
+);
 
 /**
  * Request a sign-in link.
@@ -183,14 +206,14 @@ app.post('/api/auth/magic', async (c) => {
   }
   const accept = c.req.header('accept') ?? '';
   if (accept.includes('application/json')) return c.json({ ok: true });
-  return c.html(<SignIn mode="login" sent />);
+  return c.html(await render(<SignIn mode="login" sent />));
 });
 
 app.get('/auth/magic', async (c) => {
   const token = c.req.query('t');
   if (!token) return c.redirect('/login', 303);
   const result = await auth.consumeLoginLink(token, { userAgent: c.req.header('user-agent') });
-  if (!result) return c.html(<SignIn mode="login" next="/following" />, 400);
+  if (!result) return c.html(await render(<SignIn mode="login" next="/following" />), 400);
   c.header('set-cookie', auth.sessionCookie(result.sessionId));
   return c.redirect(c.req.query('next') ?? '/following', 303);
 });
@@ -311,16 +334,18 @@ app.get('/settings', async (c) => {
   const user = requireUser(c);
   const [prefs, passkeys] = await Promise.all([q.getPrefs(user.id), q.listPasskeys(user.id)]);
   return c.html(
-    <Settings
-      user={user}
-      prefs={
-        prefs ?? {
-          offsets_minutes: config.reminders.defaultOffsets,
-          channels: ['webpush', 'email'],
+    await render(
+      <Settings
+        user={user}
+        prefs={
+          prefs ?? {
+            offsets_minutes: config.reminders.defaultOffsets,
+            channels: ['webpush', 'email'],
+          }
         }
-      }
-      passkeys={passkeys}
-    />,
+        passkeys={passkeys}
+      />,
+    ),
   );
 });
 
@@ -430,7 +455,7 @@ app.get('/api/v1/events', async (c) => {
 
 app.get('/about', async (c) => {
   const stats = await q.catalogueStats();
-  return c.html(<About user={c.get('user')} stats={stats} />);
+  return c.html(await render(<About user={c.get('user')} stats={stats} />));
 });
 
 /* ------------------------------------------------------------------ static -- */
@@ -467,4 +492,4 @@ for (const [route, file, type] of [
   });
 }
 
-app.notFound((c) => c.html(<NotFound user={c.get('user')} />, 404));
+app.notFound(async (c) => c.html(await render(<NotFound user={c.get('user')} />), 404));
