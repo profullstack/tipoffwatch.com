@@ -24,7 +24,15 @@ const fmtDayUtc = (d) =>
     day: 'numeric',
   });
 
-export const LocalTime = ({ at }) => {
+/**
+ * @param zone  also print which timezone the time is in. Worth it where someone
+ *              is deciding whether they can watch (a single fixture); noise on a
+ *              list, where every row would repeat the same word.
+ *
+ * The server renders UTC because it has no browser; localiseTimes() in app.js
+ * rewrites all three spans to the visitor's zone on load.
+ */
+export const LocalTime = ({ at, zone = false }) => {
   const iso = new Date(at).toISOString();
   return (
     <time datetime={iso} data-local>
@@ -34,6 +42,11 @@ export const LocalTime = ({ at }) => {
       <span class="d" data-local-day>
         {fmtDayUtc(at)}
       </span>
+      {zone ? (
+        <span class="z" data-tz-label>
+          UTC
+        </span>
+      ) : null}
     </time>
   );
 };

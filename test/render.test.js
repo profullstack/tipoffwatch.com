@@ -97,3 +97,32 @@ test('every page carries the crawlproof tracker', async () => {
   // async, or it blocks first paint on a third-party host.
   expect(/crawlproof\.com\/stats\.js"\s*\n?\s*async/.test(layout)).toBe(true);
 });
+
+/**
+ * The event hero had no CSS at all, so `<time>` fell back to inline spans and the
+ * page rendered "3:00 PMFri, Aug 21" run together. Only `li.event time` was ever
+ * laid out as a column, which is why every schedule row looked fine and the one
+ * page showing a single fixture did not.
+ */
+test('the event hero lays its time out as a column, and names the timezone', async () => {
+  const css = await readFile(
+    new URL('../apps/web/public/styles.css', import.meta.url).pathname,
+    'utf8',
+  );
+  const components = await readFile(
+    new URL('../apps/web/src/views/components.jsx', import.meta.url).pathname,
+    'utf8',
+  );
+  const pages = await readFile(
+    new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
+    'utf8',
+  );
+
+  // The container the hero actually uses must be styled, not just list rows.
+  expect(css).toContain('.scoreboard {');
+  expect(/\.middle time \{[^}]*flex-direction: column/s.test(css)).toBe(true);
+
+  // The zone is opt-in, and the event page opts in.
+  expect(components).toContain('data-tz-label');
+  expect(pages).toContain('<LocalTime at={event.starts_at} zone />');
+});

@@ -367,7 +367,7 @@ export const EventPage = ({
               {event.status_detail ?? 'Final'}
             </span>
           ) : (
-            <LocalTime at={event.starts_at} />
+            <LocalTime at={event.starts_at} zone />
           )}
           {showScore ? null : <span class="vs">vs</span>}
         </div>
