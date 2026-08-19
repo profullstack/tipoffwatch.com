@@ -77,3 +77,23 @@ test('every value a route awaits is actually used', async () => {
 
   expect(unused).toEqual([]);
 });
+
+/**
+ * The analytics tag lives in the shared layout, so it is on every page or on none.
+ *
+ * Worth a test because a missing tag is invisible from the site itself: pages look
+ * perfect and the dashboard simply stays at zero, which reads as "no traffic"
+ * rather than as a bug. The site id is asserted literally — a tag pointing at the
+ * wrong property collects nothing and looks exactly the same.
+ */
+test('every page carries the crawlproof tracker', async () => {
+  const layout = await readFile(
+    new URL('../apps/web/src/views/Layout.jsx', import.meta.url).pathname,
+    'utf8',
+  );
+
+  expect(layout).toContain('https://crawlproof.com/stats.js');
+  expect(layout).toContain('6b0f55e8-5760-430e-a988-ee04b7519d11');
+  // async, or it blocks first paint on a third-party host.
+  expect(/crawlproof\.com\/stats\.js"\s*\n?\s*async/.test(layout)).toBe(true);
+});

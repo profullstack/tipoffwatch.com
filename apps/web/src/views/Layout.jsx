@@ -69,6 +69,16 @@ export const Layout = (props) => (
       <meta property="og:type" content="website" />
       <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
       <meta name="twitter:card" content="summary" />
+
+      {/* Crawlproof analytics. In the head with `async` so a page view is counted
+          even if the reader leaves before the rest of the document finishes, and
+          `async` so it never delays first paint. Every page goes through this
+          layout, which is the point -- there is no second place to forget it. */}
+      <script
+        data-site="6b0f55e8-5760-430e-a988-ee04b7519d11"
+        src="https://crawlproof.com/stats.js"
+        async
+      />
     </head>
     {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens
