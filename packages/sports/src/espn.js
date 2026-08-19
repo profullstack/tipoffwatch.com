@@ -13,6 +13,8 @@
  * Verified 2026-08-19: 17 sports, 354 leagues, 216 of them soccer.
  */
 
+import { config } from '@tipoff/config';
+
 const CORE = 'https://sports.core.api.espn.com/v2';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
 
@@ -59,13 +61,51 @@ const PRIORITY = new Map([
  */
 const USER_AGENT = 'curl/8.5.0 (+https://tipoffwatch.com)';
 
-async function getJson(url, { timeoutMs = 20000 } = {}) {
-  const res = await fetch(url, {
+/**
+ * ESPN blocks datacenter egress, so requests fall back to a residential proxy.
+ *
+ * The same request that returns JSON from a laptop returns 403 Access Denied from
+ * Railway -- it is the source IP, not the User-Agent, and it took production's
+ * sync down silently for two hours.
+ *
+ * Direct first, proxy only on a block. Residential bandwidth is metered and a full
+ * sweep is hundreds of requests, so routing everything through it would be
+ * expensive; this pays only when we have to, and starts working again on its own
+ * if the block is lifted.
+ */
+let proxyOnly = false;
+
+async function attempt(url, timeoutMs, useProxy) {
+  return fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
     headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+    ...(useProxy ? { proxy: config.sports.proxyUrl } : {}),
   });
+}
+
+/** 403 is the block; 429 is rate limiting, which a different IP also clears. */
+const isBlocked = (status) => status === 403 || status === 429;
+
+async function getJson(url, { timeoutMs = 20000 } = {}) {
+  const canProxy = Boolean(config.sports.proxyUrl);
+
+  let res = await attempt(url, timeoutMs, canProxy && proxyOnly);
+
+  if (isBlocked(res.status) && canProxy && !proxyOnly) {
+    // Latch on, so the rest of a 700-request sweep does not each pay a wasted
+    // direct attempt first.
+    proxyOnly = true;
+    console.warn(`[espn] ${res.status} direct; falling back to the residential proxy`);
+    res = await attempt(url, timeoutMs, true);
+  }
+
   if (!res.ok) throw new Error(`espn ${res.status} ${url}`);
   return res.json();
+}
+
+/** Lets a later sweep discover the block has lifted rather than proxying forever. */
+export function resetTransport() {
+  proxyOnly = false;
 }
 
 /** The `$ref` links carry the slug in the path; parsing it beats a fetch per league. */
@@ -247,11 +287,19 @@ function normaliseEvent(e, providerKey) {
       abbreviation: t.abbreviation ?? null,
       logoUrl: t.logo ?? t.logos?.[0]?.href ?? null,
       score: c.score === undefined ? null : Number.parseInt(c.score, 10),
+      // The first record is the overall season one; later entries are splits
+      // (home/away, conference) that mean nothing without their labels.
+      record: c.records?.[0]?.summary ?? null,
     };
   };
 
   const home = side('home');
   const away = side('away');
+
+  // Broadcasters come grouped by market (national / home / away). Flattened and
+  // de-duplicated, because "MLB.TV, Tigers.TV" is what a viewer wants to read.
+  const broadcast =
+    [...new Set((comp.broadcasts ?? []).flatMap((b) => b.names ?? []))].join(', ') || null;
 
   return {
     providerKey: `${providerKey}/${e.id}`,
@@ -261,9 +309,16 @@ function normaliseEvent(e, providerKey) {
     name: e.name ?? e.shortName ?? 'Fixture',
     shortName: e.shortName ?? null,
     venue: comp.venue?.fullName ?? null,
+    venueCity: comp.venue?.address?.city ?? null,
+    broadcast,
+    attendance: Number.isFinite(comp.attendance) ? comp.attendance : null,
+    period: Number.isFinite(e.status?.period) ? e.status.period : null,
+    displayClock: e.status?.displayClock ?? null,
     home,
     away,
     homeScore: Number.isFinite(home?.score) ? home.score : null,
     awayScore: Number.isFinite(away?.score) ? away.score : null,
+    homeRecord: home?.record ?? null,
+    awayRecord: away?.record ?? null,
   };
 }

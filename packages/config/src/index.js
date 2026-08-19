@@ -72,6 +72,14 @@ export const config = {
       .map((s) => s.trim())
       .filter(Boolean),
     apiSportsKey: opt('API_SPORTS_KEY'),
+    /**
+     * Residential proxy, used only when the provider blocks us directly.
+     *
+     * ESPN blocks datacenter egress: the same request that works from a laptop
+     * returns 403 Access Denied from Railway. Residential bandwidth is metered, so
+     * this is a fallback rather than the default route -- see packages/sports.
+     */
+    proxyUrl: opt('SPORTS_PROXY_URL'),
     /** How far ahead to keep the calendar populated. */
     horizonDays: num('SPORTS_HORIZON_DAYS', 14),
     syncConcurrency: num('SPORTS_SYNC_CONCURRENCY', 6),

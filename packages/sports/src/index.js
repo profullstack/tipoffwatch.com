@@ -15,6 +15,9 @@ export function adapters() {
 
 /** Refresh the league catalogue. Cheap, and how new competitions appear without a deploy. */
 export async function syncCatalogue({ log = console.log } = {}) {
+  // A new sweep re-tests the direct route: the block may have been a rate limit
+  // that has since expired, and proxy bandwidth is metered.
+  espn.resetTransport?.();
   let n = 0;
   for (const adapter of adapters()) {
     const leagues = await adapter.listLeagues();
@@ -140,6 +143,13 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
     name: f.name,
     short_name: f.shortName,
     venue: f.venue,
+    venue_city: f.venueCity,
+    broadcast: f.broadcast,
+    attendance: f.attendance,
+    period: f.period,
+    display_clock: f.displayClock,
+    home_record: f.homeRecord,
+    away_record: f.awayRecord,
     home_team_id: f.home ? (teamId.get(f.home.providerKey) ?? null) : null,
     away_team_id: f.away ? (teamId.get(f.away.providerKey) ?? null) : null,
     home_score: f.homeScore,
@@ -178,6 +188,10 @@ export async function syncLeagueScores(league) {
       status_detail: f.statusDetail,
       home_score: f.homeScore,
       away_score: f.awayScore,
+      period: f.period,
+      display_clock: f.displayClock,
+      attendance: f.attendance,
+      broadcast: f.broadcast,
     })),
   );
   return { events: fixtures.length };

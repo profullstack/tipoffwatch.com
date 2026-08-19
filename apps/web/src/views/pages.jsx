@@ -221,49 +221,169 @@ export const Following = ({ user, events, follows, vapidKey }) => (
   </Layout>
 );
 
-export const EventPage = ({ user, event, offers, entitlement }) => (
-  <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
-    <h1>
-      {event.away_name && event.home_name ? `${event.away_name} at ${event.home_name}` : event.name}
-    </h1>
-    <p class="muted">
-      {event.league_name}
-      {event.venue ? ` · ${event.venue}` : ''}
-    </p>
-    <p>
-      <LocalTime at={event.starts_at} />
-    </p>
-
-    <section class="stream">
-      <h2>Watch</h2>
-      {entitlement ? (
-        <p class="ok">
-          You have access to this game.{' '}
-          <a class="cta" href={`/events/${event.id}/watch`}>
-            Open the stream
-          </a>
-        </p>
-      ) : offers.length === 0 ? (
-        <p class="muted">Nobody is sharing a stream for this game yet.</p>
-      ) : (
-        <ul class="offers">
-          {offers.map((o) => (
-            <li>
-              <span>${(o.price_cents / 100).toFixed(2)}</span>
-              <span class="muted">{o.remaining} left</span>
-              <form method="post" action={`/api/events/${event.id}/buy`} class="inline">
-                <input type="hidden" name="offer_id" value={o.id} />
-                <button class="cta" type="submit" disabled={!user}>
-                  {user ? 'Buy access' : 'Sign in to buy'}
-                </button>
-              </form>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  </Layout>
+/** One side of the scoreboard. */
+const Side = ({ name, slug, logo, score, record, showScore }) => (
+  <div class="side">
+    {logo ? <img src={logo} alt="" width="56" height="56" /> : <span class="team-blank big" />}
+    <div class="side-name">
+      {slug ? <a href={`/teams/${slug}`}>{name}</a> : <span>{name}</span>}
+      {record ? <span class="meta">{record}</span> : null}
+    </div>
+    {showScore ? <span class="side-score num">{score ?? '—'}</span> : null}
+  </div>
 );
+
+export const EventPage = ({ user, event, offers, entitlement, followingHome, followingAway }) => {
+  const live = event.state === 'in';
+  const done = event.state === 'post';
+  const showScore = live || done;
+
+  return (
+    <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
+      <ol class="crumbs" aria-label="Breadcrumb">
+        <li>
+          <a href="/sports">Sports</a>
+        </li>
+        {event.sport ? (
+          <li>
+            <a href={`/sports/${event.sport}`}>{event.sport.replace(/-/g, ' ')}</a>
+          </li>
+        ) : null}
+        {event.league_slug ? (
+          <li>
+            <a href={`/leagues/${event.league_slug}`}>{event.league_name}</a>
+          </li>
+        ) : null}
+        <li aria-current="page">{event.short_name ?? event.name}</li>
+      </ol>
+
+      {/* data-event-id and data-live let the client refresh this block in place
+          while a game is on, instead of showing a score that stopped moving. */}
+      <section
+        class={`scoreboard${live ? ' live' : ''}`}
+        data-event-id={event.id}
+        data-live={live ? 'true' : null}
+      >
+        <Side
+          name={event.away_name ?? 'Away'}
+          slug={event.away_slug}
+          logo={event.away_logo}
+          score={event.away_score}
+          record={event.away_record}
+          showScore={showScore}
+        />
+
+        <div class="middle">
+          {live ? (
+            <span class="badge live" data-status>
+              {event.status_detail ?? 'Live'}
+            </span>
+          ) : done ? (
+            <span class="badge done" data-status>
+              {event.status_detail ?? 'Final'}
+            </span>
+          ) : (
+            <LocalTime at={event.starts_at} />
+          )}
+          {showScore ? null : <span class="vs">vs</span>}
+        </div>
+
+        <Side
+          name={event.home_name ?? 'Home'}
+          slug={event.home_slug}
+          logo={event.home_logo}
+          score={event.home_score}
+          record={event.home_record}
+          showScore={showScore}
+        />
+      </section>
+
+      <ul class="stat">
+        <li>
+          <strong>{event.league_name}</strong>
+          <span>Competition</span>
+        </li>
+        {event.venue ? (
+          <li>
+            <strong>{event.venue}</strong>
+            <span>{event.venue_city ?? 'Venue'}</span>
+          </li>
+        ) : null}
+        {event.broadcast ? (
+          <li>
+            <strong>{event.broadcast}</strong>
+            <span>Watch on TV</span>
+          </li>
+        ) : null}
+        {event.attendance ? (
+          <li>
+            <strong class="num">{event.attendance.toLocaleString('en-US')}</strong>
+            <span>Attendance</span>
+          </li>
+        ) : null}
+      </ul>
+
+      <h2>Follow</h2>
+      <p class="muted small">
+        Following either side puts this game — and the rest of their season — in your reminders.
+      </p>
+      <div class="follow-pair">
+        {event.away_team_id ? (
+          <FollowButton
+            user={user}
+            subjectType="team"
+            subjectId={event.away_team_id}
+            following={followingAway}
+            next={`/events/${event.id}`}
+            label={event.away_name}
+          />
+        ) : null}
+        {event.home_team_id ? (
+          <FollowButton
+            user={user}
+            subjectType="team"
+            subjectId={event.home_team_id}
+            following={followingHome}
+            next={`/events/${event.id}`}
+            label={event.home_name}
+          />
+        ) : null}
+      </div>
+
+      <section class="stream">
+        <h2>Watch</h2>
+        {entitlement ? (
+          <p class="ok">
+            You have access to this game.{' '}
+            <a class="cta" href={`/events/${event.id}/watch`}>
+              Open the stream
+            </a>
+          </p>
+        ) : offers.length === 0 ? (
+          <p class="muted">
+            Nobody is sharing a stream for this game yet.
+            {event.broadcast ? ` It is on ${event.broadcast}.` : ''}
+          </p>
+        ) : (
+          <ul class="offers">
+            {offers.map((o) => (
+              <li>
+                <span>${(o.price_cents / 100).toFixed(2)}</span>
+                <span class="muted">{o.remaining} left</span>
+                <form method="post" action={`/api/events/${event.id}/buy`} class="inline">
+                  <input type="hidden" name="offer_id" value={o.id} />
+                  <button class="cta" type="submit" disabled={!user}>
+                    {user ? 'Buy access' : 'Sign in to buy'}
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </Layout>
+  );
+};
 
 export const SignIn = ({ mode, sent, next }) => (
   <Layout title={mode === 'signup' ? 'Create your account' : 'Sign in'}>

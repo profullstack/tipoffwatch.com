@@ -300,3 +300,23 @@ describe('provider access', () => {
     expect(ua[1]).toContain('tipoffwatch.com');
   });
 });
+
+describe('blocked-egress fallback', () => {
+  test('a 403 flips to the proxy instead of failing the sweep', async () => {
+    const src = await Bun.file(
+      new URL('../packages/sports/src/espn.js', import.meta.url).pathname,
+    ).text();
+
+    // ESPN blocks datacenter IPs: the identical request works from a laptop and
+    // 403s from Railway. That took production's sync down silently for two hours,
+    // because fetchTeams turns a throw into an empty array.
+    expect(src).toContain('isBlocked');
+    expect(src).toMatch(/status === 403/);
+    expect(src).toMatch(/status === 429/);
+
+    // Direct first: residential bandwidth is metered and a sweep is hundreds of
+    // requests, so proxying everything unconditionally would be expensive.
+    expect(src).toContain('canProxy && proxyOnly');
+    expect(src).toContain('resetTransport');
+  });
+});

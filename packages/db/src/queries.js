@@ -175,6 +175,13 @@ export async function upsertEvents(events) {
       -- cannot wipe a reference we already resolved.
       home_team_id = coalesce(excluded.home_team_id, events.home_team_id),
       away_team_id = coalesce(excluded.away_team_id, events.away_team_id),
+      venue_city = coalesce(excluded.venue_city, events.venue_city),
+      broadcast = coalesce(excluded.broadcast, events.broadcast),
+      attendance = coalesce(excluded.attendance, events.attendance),
+      period = excluded.period,
+      display_clock = excluded.display_clock,
+      home_record = coalesce(excluded.home_record, events.home_record),
+      away_record = coalesce(excluded.away_record, events.away_record),
       updated_at = now()
     returning id, provider_key
   `;
@@ -284,8 +291,9 @@ export async function scheduleForDay({ day, sport = null, limit = 300 }) {
 
 export async function getEvent(eventId) {
   const [row] = await sql`
-    select e.*, l.name as league_name, l.sport,
-           ht.display_name as home_name, at.display_name as away_name
+    select e.*, l.name as league_name, l.slug as league_slug, l.sport,
+           ht.display_name as home_name, ht.logo_url as home_logo, ht.slug as home_slug,
+           at.display_name as away_name, at.logo_url as away_logo, at.slug as away_slug
     from events e
     join leagues l on l.id = e.league_id
     left join teams ht on ht.id = e.home_team_id
@@ -675,6 +683,10 @@ export async function updateEventScores(rows) {
       status_detail = v.status_detail,
       home_score = v.home_score,
       away_score = v.away_score,
+      period = v.period,
+      display_clock = v.display_clock,
+      attendance = coalesce(v.attendance, e.attendance),
+      broadcast = coalesce(v.broadcast, e.broadcast),
       updated_at = now()
     from (values ${sql(
       rows.map((r) => [
@@ -684,8 +696,12 @@ export async function updateEventScores(rows) {
         r.status_detail ?? null,
         r.home_score ?? null,
         r.away_score ?? null,
+        r.period ?? null,
+        r.display_clock ?? null,
+        r.attendance ?? null,
+        r.broadcast ?? null,
       ]),
-    )}) as v(provider, provider_key, state, status_detail, home_score, away_score)
+    )}) as v(provider, provider_key, state, status_detail, home_score, away_score, period, display_clock, attendance, broadcast)
     where e.provider = v.provider and e.provider_key = v.provider_key
     returning e.id
   `;
