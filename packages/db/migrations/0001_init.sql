@@ -1,7 +1,6 @@
 -- Accounts. Magic link + passkey only: there is no password column on purpose,
 -- so there is nothing to reset, rotate or leak.
 create extension if not exists citext;
-create extension if not exists pgcrypto;
 create extension if not exists pg_trgm;
 
 create table users (
