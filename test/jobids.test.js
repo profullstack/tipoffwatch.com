@@ -30,7 +30,9 @@ describe('bullmq job ids', () => {
     const src = await readFile(files[1], 'utf8');
     // Guards against "fixing" the colon by dropping the interpolations that make
     // the id unique, which would silently collapse every page onto one job.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on source text
     expect(src).toContain('`fo-${e.id}-${offsetMinutes}`');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on source text
     expect(src).toContain('`bt-${eventId}-${offsetMinutes}-${after}`');
   });
 });

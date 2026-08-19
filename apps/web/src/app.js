@@ -515,8 +515,15 @@ app.get('/sitemaps/leagues.xml', async (c) => {
   );
 });
 
-app.get('/sitemaps/events-:month{[0-9]{4}-[0-9]{2}}.xml', async (c) => {
-  const events = await q.eventsForMonth(c.req.param('month'));
+// One plain param rather than a regex route: Hono's inline pattern syntax uses braces
+// for the constraint, so a {4} quantifier inside it terminates the pattern early and
+// the route silently never matches. Validating in the handler is unambiguous.
+app.get('/sitemaps/:file', async (c) => {
+  const file = c.req.param('file');
+  const m = /^events-(\d{4}-\d{2})\.xml$/.exec(file);
+  if (!m) return c.notFound();
+
+  const events = await q.eventsForMonth(m[1]);
   c.header('content-type', 'application/xml');
   return c.body(
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${events
