@@ -227,6 +227,28 @@ export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
             Raw .ics
           </a>
         </p>
+
+        {/* The same feed as a plain URL. The buttons above only reach the clients we
+            can link into; everything else -- Outlook, Thunderbird, Fastmail, a phone's
+            stock calendar -- subscribes by pasting a URL, and had nothing to paste. */}
+        <div class="copy-row">
+          <input
+            id="calendar-url"
+            type="text"
+            readonly
+            value={calendarUrl}
+            spellcheck="false"
+            aria-label="Calendar feed URL"
+          />
+          <button type="button" class="ghost" data-copy="#calendar-url">
+            Copy
+          </button>
+        </div>
+        <p class="muted small">
+          Paste it into any calendar that subscribes by URL. Google Calendar: Other calendars → From
+          URL. Apple Calendar: File → New Calendar Subscription. Outlook: Add calendar → Subscribe
+          from web.
+        </p>
         <p class="muted small">
           Anyone with this link can see the games you follow.{' '}
           <form method="post" action="/api/calendar/rotate" class="inline">

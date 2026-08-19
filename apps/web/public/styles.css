@@ -982,3 +982,28 @@ ul.comments li {
   font-size: 0.85em;
   line-height: 1;
 }
+
+/* A URL meant to be copied: readable at a glance, selectable, and never wider than
+   its column -- an ICS feed URL carries a token and would otherwise blow out the
+   layout on a phone. */
+.copy-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.85rem 0 0.5rem;
+}
+.copy-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+}
+.copy-row button {
+  flex: 0 0 auto;
+}

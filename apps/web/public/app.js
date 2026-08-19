@@ -453,6 +453,48 @@ async function initPasskeys() {
   }
 }
 
+/* ------------------------------------------------------------------ copy -- */
+
+/**
+ * Copy buttons: `data-copy="<selector>"` copies that field's value.
+ *
+ * The field is a real readonly input, so the URL is visible and selectable with no
+ * script at all; this is only the shortcut. navigator.clipboard is absent outside a
+ * secure context and can be refused outright, so the fallback leaves the text
+ * selected -- one keystroke from copied rather than a dead button.
+ */
+function initCopyButtons() {
+  // Clicking into the field selects the whole URL: nobody wants to drag-select a
+  // token by hand, and a partial copy produces a calendar that never loads.
+  document.addEventListener('focusin', (event) => {
+    if (event.target?.closest?.('.copy-row')) event.target.select?.();
+  });
+
+  document.addEventListener('click', async (event) => {
+    const btn = event.target?.closest?.('[data-copy]');
+    if (!btn) return;
+    const field = document.querySelector(btn.getAttribute('data-copy'));
+    if (!field) return;
+
+    const flash = (label) => {
+      btn.dataset.idle = btn.dataset.idle ?? btn.textContent;
+      btn.textContent = label;
+      setTimeout(() => {
+        btn.textContent = btn.dataset.idle;
+      }, 1600);
+    };
+
+    field.focus?.();
+    field.select?.();
+    try {
+      await navigator.clipboard.writeText(field.value ?? field.textContent);
+      flash('Copied');
+    } catch {
+      flash('Press Ctrl-C');
+    }
+  });
+}
+
 /* ------------------------------------------------------------------ ajax -- */
 
 /**
@@ -585,4 +627,5 @@ reportTimezone();
 initPush();
 initPasskeys();
 initFollowForms();
+initCopyButtons();
 initNavigation();
