@@ -215,3 +215,24 @@ describe('team rosters', () => {
     await expect(espn.fetchTeams('racing/f1')).resolves.toEqual(expect.any(Array));
   }, 40000);
 });
+
+describe('out-of-season leagues', () => {
+  test('falls back to the undated scoreboard when a date window 404s', async () => {
+    // Most leagues are out of season most of the year: in August the dated
+    // scoreboard 404s for college basketball while the undated one returns the
+    // season opener. Without the fallback the league looks broken rather than idle.
+    const { events, league } = await espn.fetchSchedule({
+      providerKey: 'basketball/mens-college-basketball',
+      from: new Date(),
+      to: new Date(Date.now() + 14 * 86400000),
+    });
+    expect(league?.name).toBeTruthy();
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect(Number.isNaN(+e.startsAt)).toBe(false);
+  }, 45000);
+
+  test('an out-of-season league still has a roster to follow', async () => {
+    const teams = await espn.fetchTeams('basketball/mens-college-basketball');
+    expect(teams.length).toBeGreaterThan(0);
+  }, 45000);
+});

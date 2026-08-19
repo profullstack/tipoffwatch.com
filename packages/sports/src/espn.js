@@ -147,7 +147,24 @@ const yyyymmdd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
  */
 export async function fetchSchedule({ providerKey, from, to, depth = 0 }) {
   const url = `${SITE}/${providerKey}/scoreboard?dates=${yyyymmdd(from)}-${yyyymmdd(to)}&limit=1000`;
-  const data = await getJson(url);
+
+  let data;
+  try {
+    data = await getJson(url);
+  } catch (err) {
+    // A 404 on a date window means nothing is scheduled inside it, which is the
+    // normal state of most leagues most of the year -- in August, college
+    // basketball, the NFL regular season and half of Europe are all "missing".
+    // The undated scoreboard answers with the NEXT fixtures instead, so an
+    // out-of-season league shows its season opener rather than an empty page.
+    //
+    // Only at the top level: inside the window-splitting recursion a 404 means
+    // that half genuinely has nothing, and refetching undated there would drag
+    // the same far-future fixtures into every branch.
+    if (depth > 0) throw err;
+    data = await getJson(`${SITE}/${providerKey}/scoreboard`);
+  }
+
   const events = data.events ?? [];
 
   // The scoreboard carries the league's real display name, abbreviation and logos.

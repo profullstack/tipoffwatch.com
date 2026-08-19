@@ -41,12 +41,25 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
   const from = new Date(Date.now() - 6 * 3600_000);
   const to = new Date(Date.now() + horizonDays * 86_400_000);
 
-  // Roster and fixtures in parallel. The roster is what the follow picker lists;
-  // without it the picker only shows clubs with a game inside the horizon.
-  const [{ league: meta, events: fixtures }, roster] = await Promise.all([
+  // Roster and fixtures are fetched independently on purpose.
+  //
+  // Promise.all here meant a failing schedule threw away a perfectly good roster,
+  // so an out-of-season league ended up with no fixtures AND no teams -- a blank
+  // page for most of the catalogue for most of the year. They are different
+  // questions and one failing should not erase the other's answer.
+  const [scheduleResult, rosterResult] = await Promise.allSettled([
     adapter.fetchSchedule({ providerKey: league.provider_key, from, to }),
     adapter.fetchTeams ? adapter.fetchTeams(league.provider_key) : Promise.resolve([]),
   ]);
+
+  const roster = rosterResult.status === 'fulfilled' ? rosterResult.value : [];
+  const meta = scheduleResult.status === 'fulfilled' ? scheduleResult.value.league : null;
+  const fixtures = scheduleResult.status === 'fulfilled' ? scheduleResult.value.events : [];
+
+  // Only a league that gave us neither is a failure worth reporting.
+  if (scheduleResult.status === 'rejected' && roster.length === 0) {
+    throw scheduleResult.reason;
+  }
 
   // Upgrade the row from the slug the catalogue gave us to the real display name.
   if (meta?.name && meta.name !== league.name) {

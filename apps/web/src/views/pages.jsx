@@ -122,7 +122,16 @@ export const LeaguePage = ({ user, league, teams, events, following }) => (
     )}
 
     <h2>Upcoming fixtures</h2>
-    <EventList events={events} emptyText="No fixtures in the next two weeks." />
+    {/* Most leagues are out of season most of the year, which is not the same as
+        broken. Say which one it is, and keep the follow controls useful either way. */}
+    <EventList
+      events={events}
+      emptyText={
+        teams.length > 0
+          ? 'Nothing scheduled yet — this competition is between seasons. Follow its teams now and you will be told when they play.'
+          : 'No fixtures scheduled.'
+      }
+    />
   </Layout>
 );
 
