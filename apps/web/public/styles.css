@@ -730,3 +730,11 @@ body[data-loading]::before {
 .score.live {
   color: var(--live);
 }
+
+/* A live game's clock replaces its kickoff time in the row. Sized down from the
+   time it replaces: "Bot 6th" is wider than "19:00" and must not reflow the row. */
+li.event time .t.live-clock {
+  font-size: 1.15rem;
+  color: var(--live);
+  letter-spacing: 0.01em;
+}

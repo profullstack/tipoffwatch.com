@@ -116,3 +116,22 @@ describe('RSS', () => {
     expect(out).not.toContain('&amp;amp;');
   });
 });
+
+describe('live period display', () => {
+  test('the badge shows where the game is, not a flat "Live"', async () => {
+    const src = await Bun.file(
+      new URL('../apps/web/src/views/components.jsx', import.meta.url).pathname,
+    ).text();
+
+    // "Live" is the one thing a viewer looking at a live row already knows. The
+    // provider phrases the period per sport -- Bot 6th, Top 9th, 68', Q3 -- so it
+    // is passed through rather than rebuilt, which would get at least one wrong.
+    expect(src).toContain("{detail ?? 'Live'}");
+    expect(src).not.toContain('>● Live<');
+
+    // And the row's time column shows the clock once play starts.
+    expect(src).toContain('export const RowTime');
+    expect(src).toContain("event.status_detail ?? 'Live'");
+    expect(src).toContain('<RowTime event={event} />');
+  });
+});

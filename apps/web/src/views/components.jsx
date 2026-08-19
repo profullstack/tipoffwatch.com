@@ -38,8 +38,35 @@ export const LocalTime = ({ at }) => {
   );
 };
 
+/**
+ * The time column for a fixture row.
+ *
+ * Once a game is under way its kickoff time is the least interesting thing about
+ * it, so the column shows how far in it is instead -- with the scheduled time kept
+ * underneath for anyone checking they are watching the right one.
+ */
+export const RowTime = ({ event }) => {
+  if (event.state !== 'in') return <LocalTime at={event.starts_at} />;
+  return (
+    <time datetime={new Date(event.starts_at).toISOString()} data-local>
+      <span class="t live-clock">{event.status_detail ?? 'Live'}</span>
+      <span class="d" data-local-time>
+        {fmtTimeUtc(event.starts_at)}
+      </span>
+    </time>
+  );
+};
+
+/**
+ * Where a live game actually is: "Bot 6th", "Top 9th", "68'", "Q3 04:12".
+ *
+ * The provider already phrases this per sport, so it is passed through rather than
+ * reassembled from period and clock -- an inning, a quarter and a football minute
+ * are not the same shape and any generic formatting gets one of them wrong. The
+ * badge used to say a flat "Live", which is the one thing the viewer already knows.
+ */
 export const StateBadge = ({ state, detail }) => {
-  if (state === 'in') return <span class="badge live">● Live</span>;
+  if (state === 'in') return <span class="badge live">{detail ?? 'Live'}</span>;
   if (state === 'post') return <span class="badge done">{detail ?? 'Final'}</span>;
   return null;
 };
@@ -80,7 +107,7 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
 
 export const EventRow = ({ event }) => (
   <li class={`event ${event.state}`}>
-    <LocalTime at={event.starts_at} />
+    <RowTime event={event} />
 
     <div class="matchup">
       <a href={`/events/${event.id}`}>
