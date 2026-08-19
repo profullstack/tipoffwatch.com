@@ -1,5 +1,6 @@
-import { EventList, FollowButton, LocalTime, TeamRow } from './components.jsx';
+import { EventList, FollowButton, KickoffTime, LocalTime, TeamRow } from './components.jsx';
 import { Layout } from './Layout.jsx';
+import { assetUrl } from '../lib/asset-version.js';
 
 export const Landing = ({ user, today, vapidKey }) => (
   <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
@@ -395,9 +396,8 @@ export const EventPage = ({
               {event.status_detail ?? 'Final'}
             </span>
           ) : (
-            <LocalTime at={event.starts_at} zone />
+            <span class="vs">vs</span>
           )}
-          {showScore ? null : <span class="vs">vs</span>}
         </div>
 
         <Side
@@ -409,6 +409,16 @@ export const EventPage = ({
           showScore={showScore}
         />
       </section>
+
+      {/* Under the matchup rather than between the teams. The middle column is
+          narrow, and stacking a time, a date and a zone into it put three lines
+          of small text in the gap between two team names -- which is also why it
+          read as one run-on string the moment the stylesheet did not reach it. */}
+      {live || done ? null : (
+        <p class="kickoff">
+          <KickoffTime at={event.starts_at} />
+        </p>
+      )}
 
       <ul class="stat">
         <li>
@@ -883,7 +893,7 @@ export const PushCheck = ({ user, vapidKey }) => (
     user={user}
     vapidKey={vapidKey}
     canonical="/push-check"
-    script="/push-check.js"
+    script={assetUrl("push-check.js")}
   >
     <h1>Notification check</h1>
     <p class="muted">

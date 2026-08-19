@@ -1,5 +1,6 @@
 import { config } from '@tipoff/config';
 import { html } from 'hono/html';
+import { assetUrl } from '../lib/asset-version.js';
 
 /**
  * The single HTML shell. Everything renders through here, including the signed-out
@@ -61,7 +62,7 @@ export const Layout = (props) => (
         />
       ) : null}
 
-      <link rel="stylesheet" href="/styles.css" />
+      <link rel="stylesheet" href={assetUrl("styles.css")} />
       {props.canonical ? (
         <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
       ) : null}
@@ -141,8 +142,8 @@ export const Layout = (props) => (
 
       {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}
-      <script src="/vendor-webauthn.js" defer />
-      <script src="/app.js" defer />
+      <script src={assetUrl("vendor-webauthn.js")} defer />
+      <script src={assetUrl("app.js")} defer />
       {props.vapidKey ? html`<script>window.__VAPID = "${props.vapidKey}";</script>` : null}
       {/* One page needs a script of its own; the rest must not carry it. */}
       {props.script ? <script src={props.script} defer /> : null}

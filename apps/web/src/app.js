@@ -1,5 +1,6 @@
 import * as auth from '@tipoff/auth';
 import { config } from '@tipoff/config';
+import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
@@ -849,19 +850,34 @@ app.get('/robots.txt', (c) =>
   c.text(`User-agent: *\nAllow: /\nSitemap: ${config.siteUrl}/sitemap.xml\n`),
 );
 
-for (const [route, file, type] of [
+const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],
   ['/app.js', 'app.js', 'text/javascript'],
   ['/push-check.js', 'push-check.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
   ['/sw.js', 'sw.js', 'text/javascript'],
   ['/logo.png', 'logo.png', 'image/png'],
-]) {
+];
+
+// Hashed once at boot so pages can link /styles.css?v=<hash>. See lib/asset-version.js.
+await loadAssetVersions(STATIC_FILES.map(([, file]) => file));
+
+for (const [route, file, type] of STATIC_FILES) {
   app.get(route, async (c) => {
     const f = Bun.file(new URL(`../public/${file}`, import.meta.url).pathname);
     c.header('content-type', type);
-    // The service worker must never be served stale or a bad version pins itself.
-    c.header('cache-control', file === 'sw.js' ? 'no-cache' : 'public, max-age=3600');
+    if (file === 'sw.js') {
+      // The service worker must never be served stale or a bad version pins itself.
+      c.header('cache-control', 'no-cache');
+    } else if (isCurrentVersion(file, c.req.query('v'))) {
+      // The URL carries the content hash, so these bytes can never change under
+      // it — a new build is a new URL. Safe to cache hard.
+      c.header('cache-control', 'public, max-age=31536000, immutable');
+    } else {
+      // An unversioned (or stale-versioned) request: someone's cached HTML, or a
+      // direct hit. Keep it short so they pick up the next deploy quickly.
+      c.header('cache-control', 'public, max-age=60, must-revalidate');
+    }
     return c.body(await f.arrayBuffer());
   });
 }

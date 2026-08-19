@@ -99,16 +99,15 @@ test('every page carries the crawlproof tracker', async () => {
 });
 
 /**
- * The event hero had no CSS at all, so `<time>` fell back to inline spans and the
- * page rendered "3:00 PMFri, Aug 21" run together. Only `li.event time` was ever
- * laid out as a column, which is why every schedule row looked fine and the one
- * page showing a single fixture did not.
+ * The kickoff line must read correctly with NO stylesheet at all.
+ *
+ * The stacked <time> has no whitespace between its spans -- it cannot, or a flex
+ * container turns the gaps into stray anonymous items -- so anywhere the CSS did
+ * not reach it rendered as "4:30 PMWed, Aug 19UTC". That happened on the event
+ * page, and then happened again to readers holding an hour-old cached
+ * stylesheet. Separators in the markup remove the dependency entirely.
  */
-test('the event hero lays its time out as a column, and names the timezone', async () => {
-  const css = await readFile(
-    new URL('../apps/web/public/styles.css', import.meta.url).pathname,
-    'utf8',
-  );
+test('the kickoff time carries its own separators', async () => {
   const components = await readFile(
     new URL('../apps/web/src/views/components.jsx', import.meta.url).pathname,
     'utf8',
@@ -117,12 +116,60 @@ test('the event hero lays its time out as a column, and names the timezone', asy
     new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
     'utf8',
   );
+  const css = await readFile(
+    new URL('../apps/web/public/styles.css', import.meta.url).pathname,
+    'utf8',
+  );
 
-  // The container the hero actually uses must be styled, not just list rows.
-  expect(css).toContain('.scoreboard {');
-  expect(/\.middle time \{[^}]*flex-direction: column/s.test(css)).toBe(true);
-
-  // The zone is opt-in, and the event page opts in.
+  // Real text between the parts, not a border or a flex gap.
+  expect(components).toContain("{' \u00b7 '}");
   expect(components).toContain('data-tz-abbr');
-  expect(pages).toContain('<LocalTime at={event.starts_at} zone />');
+  // Below the matchup, not squeezed into the middle column.
+  expect(pages).toContain('<KickoffTime at={event.starts_at} />');
+  expect(pages).toContain('class="kickoff"');
+  // And it must stay on one line, overriding the stacking default.
+  expect(/time\.line \{[^}]*display: inline/s.test(css)).toBe(true);
+  // The stacking default still exists for the schedule rows that rely on it.
+  expect(/time\[data-local\] \{[^}]*flex-direction: column/s.test(css)).toBe(true);
+  expect(css).toContain('.scoreboard {');
+});
+
+/**
+ * A CSS fix that nobody can see is not a fix.
+ *
+ * styles.css and app.js were linked by bare path and served with max-age=3600,
+ * so a deploy did not reach anyone who had visited in the last hour -- their
+ * browser kept the old stylesheet, and a shipped fix was indistinguishable from
+ * one that had not worked. Hashing the contents into the URL means a new build
+ * is a new URL.
+ */
+test('static assets are linked with a content version', async () => {
+  const layout = await readFile(
+    new URL('../apps/web/src/views/Layout.jsx', import.meta.url).pathname,
+    'utf8',
+  );
+  const app = await readFile(APP, 'utf8');
+
+  // Linked through the helper, never by bare path.
+  expect(layout).toContain('assetUrl("styles.css")');
+  expect(layout).toContain('assetUrl("app.js")');
+  expect(layout).not.toContain('href="/styles.css"');
+  expect(layout).not.toContain('src="/app.js"');
+
+  // And a versioned URL is worth caching hard, since its bytes cannot change.
+  expect(app).toContain('max-age=31536000, immutable');
+  // The service worker is the one thing that must never be pinned.
+  expect(app).toContain("c.header('cache-control', 'no-cache')");
+});
+
+test('asset versions change when the file does', async () => {
+  const { loadAssetVersions, assetUrl } = await import('../apps/web/src/lib/asset-version.js');
+  await loadAssetVersions(['styles.css', 'app.js']);
+
+  const css = assetUrl('styles.css');
+  expect(css).toMatch(/^\/styles\.css\?v=[a-z0-9]+$/);
+  // Two different files must not share a version, or one would mask the other.
+  expect(assetUrl('app.js')).not.toBe(css.replace('styles.css', 'app.js'));
+  // An asset that does not exist degrades to the bare path rather than throwing.
+  expect(assetUrl('nope.css')).toBe('/nope.css');
 });

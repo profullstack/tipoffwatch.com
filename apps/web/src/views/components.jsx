@@ -52,6 +52,28 @@ export const LocalTime = ({ at, zone = false }) => {
 };
 
 /**
+ * One line: "3:00 PM · Wed, Aug 19 · PDT".
+ *
+ * The separators are real text in the markup, not borders or gaps, because the
+ * stacked version depends entirely on CSS to be legible -- there is no
+ * whitespace between its spans, so anywhere the stylesheet does not reach (a new
+ * context, or a browser still holding an old cached copy) it renders as
+ * "3:00 PMWed, Aug 19PDT". This one reads correctly with no stylesheet at all.
+ */
+export const KickoffTime = ({ at }) => {
+  const iso = new Date(at).toISOString();
+  return (
+    <time class="line" datetime={iso} data-local>
+      <span data-local-time>{fmtTimeUtc(at)}</span>
+      {' · '}
+      <span data-local-day>{fmtDayUtc(at)}</span>
+      {' · '}
+      <span data-tz-abbr>UTC</span>
+    </time>
+  );
+};
+
+/**
  * The time column for a fixture row.
  *
  * Once a game is under way its kickoff time is the least interesting thing about

@@ -247,6 +247,18 @@ li.event.in {
   background: linear-gradient(90deg, oklch(0.72 0.19 25 / 0.1), var(--panel) 42%);
 }
 
+/* Every rendered time stacks by default.
+   There is no whitespace between the spans inside <time> -- there cannot be, or
+   a flex container turns it into stray anonymous items -- so anywhere this rule
+   does NOT reach, the parts run together as "4:30 PMWed, Aug 19PDT". That is
+   what happened on the event page, which had no rule of its own: the layout was
+   opted into per context, so every new context started out broken. */
+time[data-local] {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
 li.event time {
   display: flex;
   flex-direction: column;
@@ -1083,13 +1095,8 @@ ul.comments li {
   gap: 0.4rem;
   text-align: center;
 }
-/* The fix for the squish: stack the parts of a time everywhere, not only in a
-   schedule row. */
 .middle time {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  line-height: 1.15;
   gap: 0.15rem;
 }
 .middle time .t {
@@ -1298,4 +1305,24 @@ ul.comments li {
   .card-foot {
     justify-content: flex-start;
   }
+/* The kickoff line under the matchup.
+   `display: inline` deliberately overrides the stacking default: this variant
+   carries real "·" separators in the markup, so it must stay on one line -- and
+   it stays readable even if this stylesheet never loads. */
+time.line {
+  display: inline;
+}
+
+.kickoff {
+  margin: 0.35rem 0 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.kickoff [data-local-time] {
+  color: var(--fg);
+  font-weight: 600;
 }
