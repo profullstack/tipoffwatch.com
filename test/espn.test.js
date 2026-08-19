@@ -204,7 +204,7 @@ describe('team rosters', () => {
     const teams = await espn.fetchTeams('soccer/eng.1');
     expect(teams.length).toBe(20);
     for (const t of teams) {
-      expect(t.providerKey).toMatch(/^soccer\/\d+$/);
+      expect(t.providerKey).toMatch(/^soccer\/eng\.1\/\d+$/);
       expect(t.displayName).toBeTruthy();
     }
     expect(teams.map((t) => t.displayName)).toContain('Arsenal');
@@ -235,4 +235,47 @@ describe('out-of-season leagues', () => {
     const teams = await espn.fetchTeams('basketball/mens-college-basketball');
     expect(teams.length).toBeGreaterThan(0);
   }, 45000);
+});
+
+describe('team key scoping', () => {
+  test('NFL and college football teams never share a key', async () => {
+    // The bug this exists for: ESPN team ids are unique only WITHIN a league. Id 7
+    // is the Denver Broncos in the NFL and the Amherst Mammoths in college
+    // football, and 20 of the NFL's 32 ids collide. Keying by sport merged them, so
+    // the upsert overwrote one name with the other and the NFL page rendered
+    // "Cal Poly Mustangs at Houston Texans" -- a real fixture with the wrong team.
+    const [nfl, college] = await Promise.all([
+      espn.fetchTeams('football/nfl'),
+      espn.fetchTeams('football/college-football'),
+    ]);
+    expect(nfl.length).toBe(32);
+    expect(college.length).toBeGreaterThan(100);
+
+    const nflKeys = new Set(nfl.map((t) => t.providerKey));
+    const shared = college.filter((t) => nflKeys.has(t.providerKey));
+    expect(shared).toEqual([]);
+
+    // And the bare ids really do collide, so the scoping is load-bearing rather
+    // than belt-and-braces.
+    const bareNfl = new Set(nfl.map((t) => t.providerKey.split('/').pop()));
+    const bareShared = college.filter((t) => bareNfl.has(t.providerKey.split('/').pop()));
+    expect(bareShared.length).toBeGreaterThan(0);
+  }, 60000);
+
+  test('a fixture participant keys the same way its roster entry does', async () => {
+    // If these disagree, a fixture's teams simply never resolve to the roster rows.
+    const [{ events }, roster] = await Promise.all([
+      espn.fetchSchedule({
+        providerKey: 'football/nfl',
+        from: new Date(),
+        to: new Date(Date.now() + 21 * 86400000),
+      }),
+      espn.fetchTeams('football/nfl'),
+    ]);
+    const rosterKeys = new Set(roster.map((t) => t.providerKey));
+    const participants = events.flatMap((e) => [e.home, e.away]).filter(Boolean);
+    expect(participants.length).toBeGreaterThan(0);
+    for (const p of participants) expect(p.providerKey).toMatch(/^football\/nfl\/\d+$/);
+    expect(participants.some((p) => rosterKeys.has(p.providerKey))).toBe(true);
+  }, 60000);
 });

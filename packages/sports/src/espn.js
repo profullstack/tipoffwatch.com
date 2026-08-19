@@ -109,19 +109,26 @@ export async function listLeagues() {
 export async function fetchTeams(providerKey) {
   let data;
   try {
-    data = await getJson(`${SITE}/${providerKey}/teams`);
+    // Without an explicit limit the teams endpoint returns only the first 50, so
+    // college football silently synced 50 of its 759 programmes and the picker was
+    // missing most of the league rather than obviously broken.
+    data = await getJson(`${SITE}/${providerKey}/teams?limit=1000`);
   } catch {
     return [];
   }
 
   const entries = data?.sports?.[0]?.leagues?.[0]?.teams ?? [];
-  const sport = providerKey.split('/')[0];
 
   return entries
     .map((entry) => entry.team)
     .filter(Boolean)
     .map((t) => ({
-      providerKey: `${sport}/${t.id}`,
+      // Keyed by LEAGUE, not sport. ESPN team ids are only unique within a league:
+      // id 7 is the Denver Broncos in the NFL and the Amherst Mammoths in college
+      // football, and 20 NFL ids collide with college ones. Keying by sport merged
+      // them, so the upsert overwrote the names and the NFL page listed college
+      // teams playing each other.
+      providerKey: `${providerKey}/${t.id}`,
       name: t.name ?? t.displayName ?? t.shortDisplayName ?? 'Unknown',
       displayName: t.displayName ?? t.name ?? 'Unknown',
       abbreviation: t.abbreviation ?? null,
@@ -217,7 +224,9 @@ function normaliseEvent(e, providerKey) {
     if (!c?.team) return null;
     const t = c.team;
     return {
-      providerKey: `${providerKey.split('/')[0]}/${t.id}`,
+      // Same league scoping as fetchTeams -- these must agree or a fixture's teams
+      // will not resolve to the rows the roster created.
+      providerKey: `${providerKey}/${t.id}`,
       name: t.name ?? t.displayName ?? t.shortDisplayName ?? 'Unknown',
       displayName: t.displayName ?? t.name ?? 'Unknown',
       abbreviation: t.abbreviation ?? null,
