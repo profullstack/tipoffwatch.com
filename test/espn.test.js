@@ -279,3 +279,24 @@ describe('team key scoping', () => {
     expect(participants.some((p) => rosterKeys.has(p.providerKey))).toBe(true);
   }, 60000);
 });
+
+describe('provider access', () => {
+  test('requests carry a User-Agent ESPN accepts', async () => {
+    // ESPN 403s Bun's default UA with an HTML body, and fetchTeams swallows the
+    // error into an empty array -- so this failed as "0 teams" with no clue why,
+    // and would have quietly emptied production on the next sweep.
+    const teams = await espn.fetchTeams('football/nfl');
+    expect(teams.length).toBe(32);
+  }, 30000);
+
+  test('the UA is curl-prefixed and still identifies us', async () => {
+    const src = await Bun.file(
+      new URL('../packages/sports/src/espn.js', import.meta.url).pathname,
+    ).text();
+    const ua = /const USER_AGENT = '([^']+)'/.exec(src);
+    expect(ua).toBeTruthy();
+    // Both halves matter: the prefix clears the filter, the URL keeps us honest.
+    expect(ua[1]).toMatch(/^curl\//);
+    expect(ua[1]).toContain('tipoffwatch.com');
+  });
+});

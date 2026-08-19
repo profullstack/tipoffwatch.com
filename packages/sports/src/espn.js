@@ -44,10 +44,25 @@ const PRIORITY = new Map([
   ['ufc', 3],
 ]);
 
+/**
+ * ESPN filters on User-Agent, and Bun's default is on the wrong side of it.
+ *
+ * Verified 2026-08-19: no UA, a browser UA, `node-fetch/*`, `Wget/*` and a plain
+ * custom app string all get `403 Access Denied` with an HTML body, while `curl/*`,
+ * `okhttp/*`, `python-requests/*` and `Go-http-client/*` get JSON. It is an
+ * allowlist of recognised API clients, not a bot block.
+ *
+ * So the UA is curl-prefixed to clear the filter, with our own URL appended so we
+ * are still identifiable and contactable rather than pretending to be something we
+ * are not. Both halves are load-bearing: drop the prefix and every request 403s,
+ * which is silent because the catch below turns it into an empty result.
+ */
+const USER_AGENT = 'curl/8.5.0 (+https://tipoffwatch.com)';
+
 async function getJson(url, { timeoutMs = 20000 } = {}) {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { accept: 'application/json' },
+    headers: { accept: 'application/json', 'user-agent': USER_AGENT },
   });
   if (!res.ok) throw new Error(`espn ${res.status} ${url}`);
   return res.json();
