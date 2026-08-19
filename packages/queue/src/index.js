@@ -119,9 +119,10 @@ export async function installSchedules({ log = console.log } = {}) {
   // but only the clubs that happened to be playing. One backfill, then never again.
   const rosterless = await q.leaguesMissingRosters();
 
-  const stale = staleBy(ev.synced, 6 * 3600_000);
+  const stale = staleBy(ev.synced, config.sync.staleHours * 3600_000);
+  const forced = config.sync.onBoot;
 
-  if (stale || unnamed > 0 || rosterless > 0) {
+  if (stale || forced || unnamed > 0 || rosterless > 0) {
     /**
      * The job id has to describe WHY we are syncing, not just when.
      *
@@ -150,10 +151,17 @@ export async function installSchedules({ log = console.log } = {}) {
      * the deduplication was ever for, and can never block a later backfill. The
      * routine sweep keeps its hour bucket: that one genuinely is periodic.
      */
+    // A forced sweep buckets by minute like a backfill does: its whole purpose is to
+    // run now, and an hour bucket would match a sweep already done this hour and
+    // silently skip the one that was asked for.
     const reason =
-      rosterless > 0 || unnamed > 0 ? `backfill-${minuteStamp()}` : `seed-all-${hourStamp()}`;
+      forced || rosterless > 0 || unnamed > 0
+        ? `backfill-${minuteStamp()}`
+        : `seed-all-${hourStamp()}`;
 
-    log(`[queue] syncing now (stale: ${stale}, unnamed: ${unnamed}, rosterless: ${rosterless})`);
+    log(
+      `[queue] syncing now (stale: ${stale}, forced: ${forced}, unnamed: ${unnamed}, rosterless: ${rosterless})`,
+    );
     await queues.sync.add('sync-all', { kind: 'all' }, { jobId: reason, delay: 20_000 });
   }
 

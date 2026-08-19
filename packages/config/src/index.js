@@ -140,6 +140,21 @@ export const config = {
     maxLatenessSeconds: num('REMINDER_MAX_LATENESS_SECONDS', 300),
   },
 
+  sync: {
+    /** Hours before the fixture sweep counts as overdue at boot. */
+    staleHours: num('SYNC_STALE_HOURS', 6),
+    /**
+     * Sweep on the next boot whatever the clock says.
+     *
+     * The escape hatch for the case the staleness check cannot cover: code that
+     * reads a NEW field from the provider ships, every league was swept an hour
+     * ago, and so nothing is due for another five -- during which the new column
+     * is null everywhere and the feature looks broken. Turn it on, deploy, turn it
+     * off. Left on, it sweeps once per boot, which is ~354 upstream requests.
+     */
+    onBoot: bool('SYNC_ON_BOOT', false),
+  },
+
   cache: {
     /** Schedule pages are identical for every visitor, so they are rendered once and
      *  served from Redis. Personalisation is layered client-side. */

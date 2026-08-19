@@ -69,6 +69,29 @@ describe('fixture sweep staleness', () => {
     expect(staleBy(await readingFromLeagues(), 6 * 3600_000)).toBe(true);
   });
 
+  test('a forced sweep does not have to wait for the window', async () => {
+    // The case staleness cannot cover: code that reads a new provider field ships
+    // an hour after the last sweep, so nothing is due for another five and the new
+    // column is null everywhere in the meantime.
+    const src = await readFile(
+      new URL('../packages/queue/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(src).toContain('config.sync.onBoot');
+    expect(src).toContain('stale || forced');
+    // It must bucket by minute: an hour bucket would match a sweep already run this
+    // hour and skip the one that was explicitly asked for.
+    expect(src).toContain('forced || rosterless > 0 || unnamed > 0');
+  });
+
+  test('the threshold is configurable rather than a literal', async () => {
+    const src = await readFile(
+      new URL('../packages/queue/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(src).toContain('config.sync.staleHours');
+  });
+
   test('the boot reads leagues, not events', async () => {
     const src = await readFile(
       new URL('../packages/queue/src/index.js', import.meta.url).pathname,
