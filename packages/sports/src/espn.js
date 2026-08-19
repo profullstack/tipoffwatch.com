@@ -96,6 +96,39 @@ export async function listLeagues() {
   return out;
 }
 
+/**
+ * Every team in a league, whether or not it plays soon.
+ *
+ * The fixture sweep only ever sees teams with a game inside the horizon, so a
+ * follow picker built from fixtures alone shows whoever happens to be playing this
+ * fortnight -- eight Premier League clubs instead of twenty. This is the roster.
+ *
+ * Individual sports (tennis, golf, racing) have no teams endpoint and 404 here,
+ * which is expected rather than an error.
+ */
+export async function fetchTeams(providerKey) {
+  let data;
+  try {
+    data = await getJson(`${SITE}/${providerKey}/teams`);
+  } catch {
+    return [];
+  }
+
+  const entries = data?.sports?.[0]?.leagues?.[0]?.teams ?? [];
+  const sport = providerKey.split('/')[0];
+
+  return entries
+    .map((entry) => entry.team)
+    .filter(Boolean)
+    .map((t) => ({
+      providerKey: `${sport}/${t.id}`,
+      name: t.name ?? t.displayName ?? t.shortDisplayName ?? 'Unknown',
+      displayName: t.displayName ?? t.name ?? 'Unknown',
+      abbreviation: t.abbreviation ?? null,
+      logoUrl: t.logos?.[0]?.href ?? t.logo ?? null,
+    }));
+}
+
 /** ESPN's status states are already pre/in/post; anything unknown is treated as pre. */
 function normaliseState(competition) {
   const state = competition?.status?.type?.state;

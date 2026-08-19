@@ -196,3 +196,22 @@ describe('window splitting', () => {
     }
   });
 });
+
+describe('team rosters', () => {
+  test('returns the full league, not just clubs playing this fortnight', async () => {
+    // The bug: the picker listed 8 Premier League clubs because teams were only
+    // discovered from fixtures inside the 14-day horizon.
+    const teams = await espn.fetchTeams('soccer/eng.1');
+    expect(teams.length).toBe(20);
+    for (const t of teams) {
+      expect(t.providerKey).toMatch(/^soccer\/\d+$/);
+      expect(t.displayName).toBeTruthy();
+    }
+    expect(teams.map((t) => t.displayName)).toContain('Arsenal');
+  }, 40000);
+
+  test('an individual sport with no teams endpoint returns empty, not an error', async () => {
+    // Tennis/golf/racing 404 here; that is expected and must not fail the sweep.
+    await expect(espn.fetchTeams('racing/f1')).resolves.toEqual(expect.any(Array));
+  }, 40000);
+});

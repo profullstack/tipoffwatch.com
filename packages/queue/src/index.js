@@ -93,10 +93,14 @@ export async function installSchedules({ log = console.log } = {}) {
   // Display names only arrive with a fixture sweep, so a catalogue that has never
   // been swept shows raw slugs however fresh its fixtures are.
   const unnamed = await q.leaguesMissingRealName();
+  // Rosters arrived after the first sweeps, so an existing catalogue has fixtures
+  // but only the clubs that happened to be playing. One backfill, then never again.
+  const rosterless = await q.leaguesMissingRosters();
 
-  if (staleBy(ev.synced, 6 * 3600_000) || unnamed > 0) {
+  if (staleBy(ev.synced, 6 * 3600_000) || unnamed > 0 || rosterless > 0) {
     log(
-      `[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, unnamed leagues: ${unnamed})`,
+      `[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, ` +
+        `unnamed: ${unnamed}, rosterless: ${rosterless})`,
     );
     await queues.sync.add(
       'sync-all',

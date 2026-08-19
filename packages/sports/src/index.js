@@ -41,11 +41,12 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
   const from = new Date(Date.now() - 6 * 3600_000);
   const to = new Date(Date.now() + horizonDays * 86_400_000);
 
-  const { league: meta, events: fixtures } = await adapter.fetchSchedule({
-    providerKey: league.provider_key,
-    from,
-    to,
-  });
+  // Roster and fixtures in parallel. The roster is what the follow picker lists;
+  // without it the picker only shows clubs with a game inside the horizon.
+  const [{ league: meta, events: fixtures }, roster] = await Promise.all([
+    adapter.fetchSchedule({ providerKey: league.provider_key, from, to }),
+    adapter.fetchTeams ? adapter.fetchTeams(league.provider_key) : Promise.resolve([]),
+  ]);
 
   // Upgrade the row from the slug the catalogue gave us to the real display name.
   if (meta?.name && meta.name !== league.name) {
@@ -57,11 +58,30 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
     });
   }
 
-  if (fixtures.length === 0) return { events: 0, teams: 0 };
-
-  // Deduplicate teams across the window before writing -- a league sends the same
-  // twenty clubs on every fixture, and upserting each occurrence is pure waste.
+  // Seed from the roster first, so a club with no fixture this fortnight still
+  // appears in the picker. Fixture participants are merged in below, which also
+  // covers leagues whose teams endpoint 404s.
   const teamRows = new Map();
+  for (const t of roster) {
+    teamRows.set(t.providerKey, {
+      provider: league.provider,
+      provider_key: t.providerKey,
+      league_id: league.id,
+      slug: `${league.slug}-${t.providerKey.split('/').pop()}`,
+      name: t.name,
+      display_name: t.displayName,
+      abbreviation: t.abbreviation,
+      logo_url: t.logoUrl,
+    });
+  }
+
+  if (fixtures.length === 0) {
+    if (teamRows.size > 0) await q.upsertTeams([...teamRows.values()]);
+    await q.markRostersSynced(league.id);
+    return { events: 0, teams: teamRows.size };
+  }
+
+  // A league sends the same clubs on every fixture, so deduplicate before writing.
   for (const f of fixtures) {
     for (const t of [f.home, f.away]) {
       if (t && !teamRows.has(t.providerKey)) {
@@ -99,6 +119,7 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
   }));
 
   await q.upsertEvents(eventRows);
+  await q.markRostersSynced(league.id);
   return { events: eventRows.length, teams: teamRows.size };
 }
 

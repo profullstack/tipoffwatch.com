@@ -600,3 +600,16 @@ export async function leaguesForSport(sport, userId = null) {
     order by l.priority, l.name
   `;
 }
+
+/** Stamp a league as roster-checked, whether or not it had one. */
+export async function markRostersSynced(leagueId) {
+  await sql`update leagues set rosters_synced_at = now() where id = ${leagueId}`;
+}
+
+/** How many active leagues have never had their roster fetched. */
+export async function leaguesMissingRosters() {
+  const [row] = await sql`
+    select count(*)::int as n from leagues where active and rosters_synced_at is null
+  `;
+  return row.n;
+}
