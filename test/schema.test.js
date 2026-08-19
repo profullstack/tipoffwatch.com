@@ -140,19 +140,41 @@ describe('reminder fan-out', () => {
     expect(new Set(rows.map((r) => r.user_id)).size).toBe(rows.length);
   });
 
+  const claimFor = (uid) =>
+    db.query(
+      `insert into reminder_deliveries (event_id, user_id, offset_minutes, channel)
+       values ($1,$2,60,'webpush')
+       on conflict (event_id, user_id, offset_minutes, channel) do update
+         set status = 'sent', sent_at = now()
+         where reminder_deliveries.status = 'failed'
+       returning user_id`,
+      [eventId, uid],
+    );
+
   test('claiming a delivery twice sends once', async () => {
     const uid = userIds[0];
-    const claim = () =>
-      db.query(
-        `insert into reminder_deliveries (event_id, user_id, offset_minutes, channel)
-         values ($1,$2,60,'webpush')
-         on conflict (event_id, user_id, offset_minutes, channel) do nothing
-         returning user_id`,
-        [eventId, uid],
-      );
-    expect((await claim()).rows.length).toBe(1);
+    expect((await claimFor(uid)).rows.length).toBe(1);
     // The retry -- BullMQ redelivering the same batch -- must win nothing.
-    expect((await claim()).rows.length).toBe(0);
+    expect((await claimFor(uid)).rows.length).toBe(0);
+  });
+
+  test('a failed delivery can be re-claimed, a sent one cannot', async () => {
+    const uid = userIds[1];
+    expect((await claimFor(uid)).rows.length).toBe(1);
+
+    // The send blew up, so the row is marked failed and the job will be retried.
+    await db.query(
+      `update reminder_deliveries set status = 'failed'
+       where event_id = $1 and user_id = $2 and offset_minutes = 60 and channel = 'webpush'`,
+      [eventId, uid],
+    );
+
+    // Without the do-update clause this returns nothing and the reminder is lost
+    // for good on the first transient push error.
+    expect((await claimFor(uid)).rows.length).toBe(1);
+
+    // And now that it succeeded, it is closed again.
+    expect((await claimFor(uid)).rows.length).toBe(0);
   });
 
   test('the due window opens when the threshold is crossed, not before', async () => {

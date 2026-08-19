@@ -336,16 +336,24 @@ export async function deliveryTargets(userIds) {
 /**
  * Claim the right to send, before sending.
  *
- * `on conflict do nothing ... returning` makes the database the arbiter: whichever
- * worker inserts the row first owns that delivery, and a duplicate or retried job
- * gets an empty set back and sends nothing. Doing this after the send instead would
- * make every retry a second notification to a real person's phone.
+ * The database is the arbiter: whichever worker inserts the row first owns that
+ * delivery, and a concurrent or duplicated job gets an empty set back and sends
+ * nothing. Claiming after the send instead would make every retry a second
+ * notification to a real person's phone.
+ *
+ * The one exception is a delivery that already failed. Without it the claim row
+ * from a failed send blocks every retry, so BullMQ's five attempts would re-claim
+ * nothing and the reminder would be lost on the first transient push error --
+ * retries that exist but cannot do anything. A row already marked `sent` is never
+ * re-claimed, so this can resurrect a failure without ever duplicating a success.
  */
 export async function claimDeliveries(rows) {
   if (rows.length === 0) return [];
   return sql`
     insert into reminder_deliveries ${sql(rows)}
-    on conflict (event_id, user_id, offset_minutes, channel) do nothing
+    on conflict (event_id, user_id, offset_minutes, channel) do update
+      set status = 'sent', sent_at = now()
+      where reminder_deliveries.status = 'failed'
     returning event_id, user_id, offset_minutes, channel
   `;
 }
