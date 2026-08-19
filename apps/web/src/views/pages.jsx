@@ -195,66 +195,94 @@ export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
 
     {/* Rendered always and revealed by script once it knows the real state, so the
         control can report on / off / blocked rather than only offering to turn on. */}
-    <div id="push-optin" hidden class="notice">
-      <p id="push-state">Get a notification an hour before kickoff, and one minute out.</p>
-      <button type="button" id="enable-push">
-        Turn on notifications
-      </button>
+    <section id="push-optin" hidden class="card">
+      <div class="card-head">
+        <h2 class="card-title">Notifications</h2>
+        <p class="card-desc" id="push-state">
+          Get a notification an hour before kickoff, and one minute out.
+        </p>
+      </div>
+      <div class="card-actions">
+        <button type="button" id="enable-push" class="cta">
+          Turn on notifications
+        </button>
+        <a class="link-quiet" href="/push-check">
+          Not working?
+        </a>
+      </div>
       <p id="push-msg" class="feedback" hidden />
-    </div>
+    </section>
 
     {/* Calendar subscription. The URL carries a per-user token because calendar
         clients poll without cookies; rotating it invalidates every copy. */}
     {calendarUrl ? (
-      <section class="notice">
-        <h2 style="margin-top:0">Add to your calendar</h2>
-        <p class="muted small">
-          Every game you follow, kept up to date automatically, with an alert an hour before
-          kickoff.
-        </p>
-        <p class="hero-actions">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Add to your calendar</h2>
+          <p class="card-desc">
+            Every game you follow, kept up to date automatically, with an alert an hour before
+            kickoff.
+          </p>
+        </div>
+
+        {/* The feed as a plain URL, first. The buttons below only reach the clients we
+            can link into; everything else -- Outlook, Thunderbird, Fastmail, a phone's
+            stock calendar -- subscribes by having a URL pasted into it. */}
+        <div class="field">
+          <label class="field-label" for="calendar-url">
+            Feed URL
+          </label>
+          <div class="copy-row">
+            <input
+              id="calendar-url"
+              class="input mono"
+              type="text"
+              readonly
+              value={calendarUrl}
+              spellcheck="false"
+              aria-label="Calendar feed URL"
+            />
+            <button type="button" class="ghost" data-copy="#calendar-url">
+              Copy
+            </button>
+          </div>
+          <ul class="hints">
+            <li>
+              <span>Google Calendar</span> Other calendars → From URL
+            </li>
+            <li>
+              <span>Apple Calendar</span> File → New Calendar Subscription
+            </li>
+            <li>
+              <span>Outlook</span> Add calendar → Subscribe from web
+            </li>
+          </ul>
+        </div>
+
+        <div class="card-actions">
           <a
-            class="cta"
+            class="ghost"
             href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(calendarUrl.replace(/^https:/, 'webcal:'))}`}
             rel="noopener"
           >
-            Google Calendar
+            Open in Google Calendar
           </a>
           <a class="ghost" href={calendarUrl.replace(/^https:/, 'webcal:')}>
-            Apple / Outlook
+            Open in Apple / Outlook
           </a>
-          <a class="ghost" href={calendarUrl}>
-            Raw .ics
+          <a class="link-quiet" href={calendarUrl}>
+            Download .ics
           </a>
-        </p>
-
-        {/* The same feed as a plain URL. The buttons above only reach the clients we
-            can link into; everything else -- Outlook, Thunderbird, Fastmail, a phone's
-            stock calendar -- subscribes by pasting a URL, and had nothing to paste. */}
-        <div class="copy-row">
-          <input
-            id="calendar-url"
-            type="text"
-            readonly
-            value={calendarUrl}
-            spellcheck="false"
-            aria-label="Calendar feed URL"
-          />
-          <button type="button" class="ghost" data-copy="#calendar-url">
-            Copy
-          </button>
         </div>
-        <p class="muted small">
-          Paste it into any calendar that subscribes by URL. Google Calendar: Other calendars → From
-          URL. Apple Calendar: File → New Calendar Subscription. Outlook: Add calendar → Subscribe
-          from web.
-        </p>
-        <p class="muted small">
-          Anyone with this link can see the games you follow.{' '}
+
+        <div class="card-foot">
+          <p class="muted small">Anyone with this link can see the games you follow.</p>
           <form method="post" action="/api/calendar/rotate" class="inline">
-            <button type="submit">Reset the link</button>
+            <button type="submit" class="ghost small-btn">
+              Reset the link
+            </button>
           </form>
-        </p>
+        </div>
       </section>
     ) : null}
 
@@ -863,13 +891,22 @@ export const PushCheck = ({ user, vapidKey }) => (
       says which one failed, in plain words.
     </p>
 
-    <div class="notice">
-      <button type="button" id="run-check" class="cta">
-        Run the check
-      </button>
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">What this does</h2>
+        <p class="card-desc">
+          Registers the service worker, asks for permission if it has not been given, and tries to
+          subscribe — the same three things the button on your games page does.
+        </p>
+      </div>
+      <div class="card-actions">
+        <button type="button" id="run-check" class="cta">
+          Run the check
+        </button>
+      </div>
       <p id="check-verdict" class="feedback" hidden />
       <ol id="check-steps" class="check-steps" hidden />
-    </div>
+    </section>
 
     <p class="muted small">
       Nothing here is stored against your account. The result is logged so it can be looked at if
