@@ -725,3 +725,65 @@ export async function updateEventScores(rows) {
 export async function deletePushSubscription({ userId, endpoint }) {
   await sql`delete from push_subscriptions where user_id = ${userId} and endpoint = ${endpoint}`;
 }
+
+/* ------------------------------------------------------------- feeds/ics -- */
+
+/** Resolve a calendar subscription URL back to its owner. */
+export async function userByCalendarToken(token) {
+  const [row] = await sql`select * from users where calendar_token = ${token}::uuid`;
+  return row ?? null;
+}
+
+/** Issue a new token, invalidating every calendar URL already handed out. */
+export async function rotateCalendarToken(userId) {
+  const [row] = await sql`
+    update users set calendar_token = gen_random_uuid() where id = ${userId}
+    returning calendar_token
+  `;
+  return row?.calendar_token ?? null;
+}
+
+/**
+ * Public feed of upcoming fixtures, optionally scoped.
+ *
+ * Ordered by start time and bounded: a feed is a window on what is next, not a
+ * dump of the catalogue. Includes team names and the league so an item reads
+ * standalone in a reader that shows nothing else.
+ */
+export async function feedEvents({
+  sport = null,
+  leagueSlug = null,
+  teamSlug = null,
+  limit = 100,
+}) {
+  const cap = Math.min(Math.max(Number(limit) || 100, 1), 200);
+  return sql`
+    select e.id, e.starts_at, e.name, e.short_name, e.venue, e.state,
+           e.home_score, e.away_score, e.status_detail, e.broadcast, e.updated_at,
+           l.name as league_name, l.slug as league_slug, l.sport,
+           ht.display_name as home_name, at.display_name as away_name
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.starts_at > now() - interval '3 hours'
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueSlug}::text is null or l.slug = ${leagueSlug})
+      and (${teamSlug}::text is null or ht.slug = ${teamSlug} or at.slug = ${teamSlug})
+    order by e.starts_at
+    limit ${cap}
+  `;
+}
+
+/** Leagues with something upcoming, for the feed directory. */
+export async function leaguesWithUpcoming(limit = 400) {
+  return sql`
+    select l.slug, l.name, l.sport, count(e.id)::int as upcoming
+    from leagues l
+    join events e on e.league_id = l.id and e.starts_at > now()
+    where l.active
+    group by l.slug, l.name, l.sport
+    order by count(e.id) desc, l.name
+    limit ${limit}
+  `;
+}

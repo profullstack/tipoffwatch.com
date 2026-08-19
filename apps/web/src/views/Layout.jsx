@@ -44,6 +44,23 @@ export const Layout = (props) => (
       <meta name="msapplication-config" content="/icons/browserconfig.xml" />
       <meta name="msapplication-TileImage" content="/icons/apple-touch-icon-144x144.png" />
 
+      {/* Autodiscovery: a reader pointed at any page finds the feed without being
+          told where it is. props.feedUrl narrows it to the league or team in view. */}
+      <link
+        rel="alternate"
+        type="application/rss+xml"
+        title="TipoffWatch — every sport"
+        href="/feeds/all.xml"
+      />
+      {props.feedUrl ? (
+        <link
+          rel="alternate"
+          type="application/rss+xml"
+          title={props.feedTitle ?? 'Fixtures'}
+          href={props.feedUrl}
+        />
+      ) : null}
+
       <link rel="stylesheet" href="/styles.css" />
       {props.canonical ? (
         <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
@@ -108,7 +125,7 @@ export const Layout = (props) => (
         </p>
         <p class="muted">
           <a href="/sports">Browse sports</a> · <a href="/about">About</a> ·{' '}
-          <a href="/api/v1">Public API</a>
+          <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
         </p>
       </footer>
 

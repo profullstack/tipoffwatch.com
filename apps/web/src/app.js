@@ -6,6 +6,9 @@ import * as pay from '@tipoff/payments';
 import { connection } from '@tipoff/queue';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
+import { buildCalendar } from './lib/ics.js';
+import { buildFeed } from './lib/rss.js';
+import { Feeds } from './views/feeds.jsx';
 import {
   About,
   EventPage,
@@ -168,7 +171,13 @@ app.get('/following', async (c) => {
   const [events, follows] = await Promise.all([q.upcomingForUser(user.id), q.listFollows(user.id)]);
   return c.html(
     await render(
-      <Following user={user} events={events} follows={follows} vapidKey={config.push.publicKey} />,
+      <Following
+        user={user}
+        events={events}
+        follows={follows}
+        vapidKey={config.push.publicKey}
+        calendarUrl={`${config.siteUrl}/calendar/me/${user.calendar_token}.ics`}
+      />,
     ),
   );
 });
@@ -504,6 +513,124 @@ app.get('/about', async (c) => {
   return c.html(await render(<About user={c.get('user')} stats={stats} />));
 });
 
+/* ------------------------------------------------------------ calendar --- */
+
+/**
+ * Calendar subscriptions.
+ *
+ * Calendar clients poll a URL on a schedule with no cookies, so the URL itself
+ * carries the authority: a per-user token, separate from the session so it can be
+ * rotated without signing anyone out.
+ *
+ * The path uses a plain param validated in the handler rather than an inline
+ * pattern -- Hono's brace syntax swallows a {n} quantifier and the route then
+ * silently never matches.
+ */
+app.get('/calendar/me/:file', async (c) => {
+  const m = /^([0-9a-f-]{36})\.ics$/i.exec(c.req.param('file'));
+  if (!m) return c.notFound();
+
+  const user = await q.userByCalendarToken(m[1]);
+  // Deliberately identical to a bad token: a 401 here would confirm which tokens
+  // exist to anyone enumerating them.
+  if (!user) return c.notFound();
+
+  const events = await q.upcomingForUser(user.id, { limit: 200 });
+  c.header('content-type', 'text/calendar; charset=utf-8');
+  c.header('cache-control', 'private, max-age=300');
+  c.header('content-disposition', 'inline; filename="tipoffwatch.ics"');
+  return c.body(buildCalendar(events, { name: 'TipoffWatch — my games', siteUrl: config.siteUrl }));
+});
+
+/** A whole league's fixtures, public and shareable. */
+app.get('/calendar/league/:file', async (c) => {
+  const m = /^([a-z0-9._-]+)\.ics$/i.exec(c.req.param('file'));
+  if (!m) return c.notFound();
+  const league = await q.getLeagueBySlug(m[1]);
+  if (!league) return c.notFound();
+
+  const events = await q.upcomingForLeague(league.id, { limit: 200 });
+  c.header('content-type', 'text/calendar; charset=utf-8');
+  c.header('cache-control', 'public, max-age=900');
+  return c.body(
+    buildCalendar(events, { name: `TipoffWatch — ${league.name}`, siteUrl: config.siteUrl }),
+  );
+});
+
+/** Rotating invalidates every calendar URL already handed out. */
+app.post('/api/calendar/rotate', async (c) => {
+  const user = requireUser(c);
+  await q.rotateCalendarToken(user.id);
+  return respond(c, { redirectTo: '/following' });
+});
+
+/* ---------------------------------------------------------------- feeds -- */
+
+const feedHeaders = (c, seconds) => {
+  c.header('content-type', 'application/rss+xml; charset=utf-8');
+  c.header('cache-control', `public, max-age=${seconds}`);
+};
+
+app.get('/feeds/all.xml', async (c) => {
+  const events = await q.feedEvents({ limit: 150 });
+  feedHeaders(c, 300);
+  return c.body(
+    buildFeed(events, {
+      title: 'TipoffWatch — every sport',
+      description: 'Upcoming fixtures across 354 leagues and 17 sports.',
+      feedUrl: `${config.siteUrl}/feeds/all.xml`,
+      siteUrl: config.siteUrl,
+    }),
+  );
+});
+
+/**
+ * One route for sport, league and team feeds.
+ *
+ * Separate routes would be three near-identical handlers; the scope is validated
+ * against a fixed set so the path cannot select an arbitrary column.
+ */
+app.get('/feeds/:scope/:file', async (c) => {
+  const scope = c.req.param('scope');
+  const m = /^([a-z0-9._-]+)\.xml$/i.exec(c.req.param('file'));
+  if (!m || !['sport', 'league', 'team'].includes(scope)) return c.notFound();
+  const key = m[1];
+
+  const events = await q.feedEvents({
+    sport: scope === 'sport' ? key : null,
+    leagueSlug: scope === 'league' ? key : null,
+    teamSlug: scope === 'team' ? key : null,
+    limit: 150,
+  });
+  // An empty feed for a name nobody publishes is a 404, not a valid empty channel.
+  if (events.length === 0) return c.notFound();
+
+  const label =
+    scope === 'league'
+      ? (events[0].league_name ?? key)
+      : scope === 'team'
+        ? key.replace(/-/g, ' ')
+        : key.replace(/-/g, ' ');
+
+  feedHeaders(c, 300);
+  return c.body(
+    buildFeed(events, {
+      title: `TipoffWatch — ${label}`,
+      description: `Upcoming fixtures for ${label}.`,
+      feedUrl: `${config.siteUrl}/feeds/${scope}/${key}.xml`,
+      siteUrl: config.siteUrl,
+      link: scope === 'league' ? `${config.siteUrl}/leagues/${key}` : config.siteUrl,
+    }),
+  );
+});
+
+app.get('/feeds', async (c) =>
+  cached(c, 'page:feeds', 900, async () => {
+    const [sports, leagues] = await Promise.all([q.listSports(), q.leaguesWithUpcoming(120)]);
+    return render(<Feeds user={c.get('user')} sports={sports} leagues={leagues} />);
+  }),
+);
+
 /* ---------------------------------------------------------------- sitemaps -- */
 
 /**
@@ -522,6 +649,7 @@ app.get('/sitemap.xml', async (c) => {
   const urls = [
     `<sitemap><loc>${config.siteUrl}/sitemaps/static.xml</loc></sitemap>`,
     `<sitemap><loc>${config.siteUrl}/sitemaps/leagues.xml</loc></sitemap>`,
+    `<sitemap><loc>${config.siteUrl}/sitemaps/feeds.xml</loc></sitemap>`,
     ...months.map(
       (m) =>
         `<sitemap><loc>${config.siteUrl}/sitemaps/events-${m.month}.xml</loc>` +
@@ -544,6 +672,26 @@ app.get('/sitemaps/static.xml', (c) => {
         (p) =>
           `<url><loc>${config.siteUrl}${p}</loc><changefreq>${p === '/' ? 'hourly' : 'weekly'}</changefreq><priority>${p === '/' ? '1.0' : '0.6'}</priority></url>`,
       )
+      .join('')}</urlset>`,
+  );
+});
+
+/**
+ * Feeds are the distribution surface, so a crawler should find them as pages
+ * rather than stumble on them.
+ */
+app.get('/sitemaps/feeds.xml', async (c) => {
+  const [sports, leagues] = await Promise.all([q.listSports(), q.leaguesWithUpcoming(400)]);
+  const urls = [
+    '/feeds',
+    '/feeds/all.xml',
+    ...sports.map((s) => `/feeds/sport/${s.sport}.xml`),
+    ...leagues.map((l) => `/feeds/league/${l.slug}.xml`),
+  ];
+  c.header('content-type', 'application/xml');
+  return c.body(
+    `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls
+      .map((u) => `<url><loc>${config.siteUrl}${u}</loc><changefreq>hourly</changefreq></url>`)
       .join('')}</urlset>`,
   );
 });

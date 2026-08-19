@@ -81,7 +81,13 @@ export const SportPage = ({ user, sport, leagues }) => (
 
 /** Step 3: teams. This is the page that was missing entirely. */
 export const LeaguePage = ({ user, league, teams, events, following }) => (
-  <Layout title={league.name} user={user} canonical={`/leagues/${league.slug}`}>
+  <Layout
+    title={league.name}
+    user={user}
+    canonical={`/leagues/${league.slug}`}
+    feedUrl={`/feeds/league/${league.slug}.xml`}
+    feedTitle={`${league.name} fixtures`}
+  >
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
         <a href="/sports">Sports</a>
@@ -136,7 +142,13 @@ export const LeaguePage = ({ user, league, teams, events, following }) => (
 );
 
 export const TeamPage = ({ user, team, events, following }) => (
-  <Layout title={team.display_name} user={user} canonical={`/teams/${team.slug}`}>
+  <Layout
+    title={team.display_name}
+    user={user}
+    canonical={`/teams/${team.slug}`}
+    feedUrl={`/feeds/team/${team.slug}.xml`}
+    feedTitle={`${team.display_name} fixtures`}
+  >
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
         <a href="/sports">Sports</a>
@@ -177,7 +189,7 @@ export const TeamPage = ({ user, team, events, following }) => (
   </Layout>
 );
 
-export const Following = ({ user, events, follows, vapidKey }) => (
+export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
   <Layout title="My games" user={user} vapidKey={vapidKey}>
     <h1>My games</h1>
 
@@ -190,6 +202,39 @@ export const Following = ({ user, events, follows, vapidKey }) => (
       </button>
       <p id="push-msg" class="feedback" hidden />
     </div>
+
+    {/* Calendar subscription. The URL carries a per-user token because calendar
+        clients poll without cookies; rotating it invalidates every copy. */}
+    {calendarUrl ? (
+      <section class="notice">
+        <h2 style="margin-top:0">Add to your calendar</h2>
+        <p class="muted small">
+          Every game you follow, kept up to date automatically, with an alert an hour before
+          kickoff.
+        </p>
+        <p class="hero-actions">
+          <a
+            class="cta"
+            href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(calendarUrl.replace(/^https:/, 'webcal:'))}`}
+            rel="noopener"
+          >
+            Google Calendar
+          </a>
+          <a class="ghost" href={calendarUrl.replace(/^https:/, 'webcal:')}>
+            Apple / Outlook
+          </a>
+          <a class="ghost" href={calendarUrl}>
+            Raw .ics
+          </a>
+        </p>
+        <p class="muted small">
+          Anyone with this link can see the games you follow.{' '}
+          <form method="post" action="/api/calendar/rotate" class="inline">
+            <button type="submit">Reset the link</button>
+          </form>
+        </p>
+      </section>
+    ) : null}
 
     {follows.length === 0 ? (
       <p class="empty">
