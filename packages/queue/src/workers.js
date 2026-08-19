@@ -18,7 +18,7 @@ const log = (...a) => console.log('[worker]', ...a);
  */
 async function runScan() {
   const offsets = await q.distinctReminderOffsets(config.reminders.defaultOffsets);
-  let queued = 0;
+  let matched = 0;
 
   for (const offsetMinutes of offsets) {
     // The lookback must exceed the scan interval or a tick that runs late leaves a
@@ -29,16 +29,24 @@ async function runScan() {
     });
 
     for (const e of events) {
+      // The deterministic job id is doing the deduplication here. An event stays
+      // inside the lookback window for several minutes, so it matches on ten
+      // consecutive ticks; BullMQ returns the existing job for a known id rather
+      // than creating a second fan-out, and completed jobs are retained long
+      // enough (removeOnComplete.age) to outlive the window.
       await queues.fanout.add(
         'fanout',
         { eventId: e.id, offsetMinutes, startsAt: e.startsAt },
         { jobId: `fo:${e.id}:${offsetMinutes}` },
       );
-      queued++;
+      matched++;
     }
   }
-  if (queued) log(`scan queued ${queued} fan-out(s)`);
-  return queued;
+  // Says "matched", not "queued": most of these are the same events re-matching on
+  // a later tick and being deduplicated away. Logging them as queued work makes a
+  // quiet scanner look like a busy one.
+  if (matched) log(`scan matched ${matched} due (event, offset) pair(s)`);
+  return matched;
 }
 
 /* ------------------------------------------------------------------ fanout -- */
