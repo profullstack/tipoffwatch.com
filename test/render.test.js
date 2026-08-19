@@ -123,6 +123,6 @@ test('the event hero lays its time out as a column, and names the timezone', asy
   expect(/\.middle time \{[^}]*flex-direction: column/s.test(css)).toBe(true);
 
   // The zone is opt-in, and the event page opts in.
-  expect(components).toContain('data-tz-label');
+  expect(components).toContain('data-tz-abbr');
   expect(pages).toContain('<LocalTime at={event.starts_at} zone />');
 });

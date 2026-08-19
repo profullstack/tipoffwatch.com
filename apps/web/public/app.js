@@ -42,6 +42,26 @@ function localiseTimes(root = document) {
   }
 
   for (const el of document.querySelectorAll('[data-tz-label]')) el.textContent = zone;
+
+  // Two forms, because they read in different places. Prose wants the full IANA
+  // name ("America/Los_Angeles"); a scoreboard wants the abbreviation people
+  // actually say ("PDT"), which is short enough to sit under the time.
+  const abbr = shortZone(zone, inZone);
+  for (const el of root.querySelectorAll('[data-tz-abbr]')) el.textContent = abbr;
+}
+
+/** "PDT" for a zone, falling back to its IANA name where there is no short form. */
+function shortZone(zone, inZone) {
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, {
+      timeZoneName: 'short',
+      ...inZone,
+    }).formatToParts(new Date());
+    const name = parts.find((p) => p.type === 'timeZoneName')?.value;
+    return name || zone;
+  } catch {
+    return zone;
+  }
 }
 
 /**

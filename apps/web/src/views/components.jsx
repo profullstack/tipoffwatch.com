@@ -43,7 +43,7 @@ export const LocalTime = ({ at, zone = false }) => {
         {fmtDayUtc(at)}
       </span>
       {zone ? (
-        <span class="z" data-tz-label>
+        <span class="z" data-tz-abbr>
           UTC
         </span>
       ) : null}
