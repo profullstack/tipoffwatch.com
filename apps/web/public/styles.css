@@ -344,6 +344,32 @@ ol.crumbs [aria-current="page"] {
   border-radius: 8px;
 }
 
+.stat {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  margin: 1rem 0 1.5rem;
+}
+.stat li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.stat strong {
+  font-family: var(--disp);
+  font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+}
+.stat span {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 ul.sports {
   list-style: none;
   padding: 0;
@@ -476,32 +502,6 @@ button.following {
 }
 
 /* ------------------------------------------------------------------ misc -- */
-
-.stat {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2rem;
-  margin: 1rem 0 1.5rem;
-}
-.stat li {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.stat strong {
-  font-family: var(--disp);
-  font-size: 1.7rem;
-  font-variant-numeric: tabular-nums;
-}
-.stat span {
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
 
 .auth {
   max-width: 26rem;

@@ -48,7 +48,9 @@ describe('sync job ids', () => {
     // sync, then a count-derived id collided with the previous backfill because the
     // counts reset to the same numbers. Both times BullMQ matched a completed job
     // and the work silently never ran while the queue reported success.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on source text
     expect(src).toContain('backfill-${minuteStamp()}');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on source text
     expect(src).not.toContain('u${unnamed}-r${rosterless}');
   });
 
@@ -57,6 +59,7 @@ describe('sync job ids', () => {
       new URL('../packages/queue/src/index.js', import.meta.url).pathname,
       'utf8',
     );
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: asserting on source text
     expect(src).toContain('seed-all-${hourStamp()}');
   });
 });
