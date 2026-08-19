@@ -57,20 +57,42 @@ export async function installSchedules({ log = console.log } = {}) {
   await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });
   await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { repeat: { every: 24 * 3600_000 } });
 
-  // A repeatable job first runs one interval from now, not immediately -- so on a
-  // fresh database the catalogue would sit empty for a full day and the site would
-  // serve an empty calendar to everyone who arrived first. Seed it once, but only
-  // when there is nothing there: firing this on every restart would re-sync 354
-  // leagues each time a deploy rolls.
-  const [{ count }] = await sql`select count(*)::int as count from leagues`;
-  if (count === 0) {
-    log('[queue] empty catalogue, seeding now');
-    await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { jobId: 'seed-catalogue' });
-    await queues.sync.add('sync-all', { kind: 'all' }, { jobId: 'seed-all', delay: 30_000 });
+  // Two problems solved by the same check.
+  //
+  // First, a repeatable job runs one interval from NOW, not immediately -- so a
+  // fresh database would serve an empty calendar for a full day.
+  //
+  // Second, and less obvious: clearing and re-adding the repeatables above resets
+  // their timers, so on a day of frequent deploys the six-hour sync is pushed six
+  // hours into the future every time and never actually fires.
+  //
+  // So the trigger is data staleness rather than a fresh timer, which is
+  // self-correcting in both cases and idles harmlessly when the data is current.
+  const [cat] = await sql`
+    select count(*)::int as leagues,
+           max(created_at) as newest
+    from leagues
+  `;
+  const [ev] = await sql`select max(updated_at) as synced from events`;
+
+  const staleBy = (ts, ms) => !ts || Date.now() - new Date(ts).getTime() > ms;
+
+  if (staleBy(cat.newest, 24 * 3600_000) || cat.leagues === 0) {
+    log('[queue] catalogue stale, refreshing now');
+    await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { jobId: `seed-cat:${dayStamp()}` });
+  }
+  if (staleBy(ev.synced, 6 * 3600_000)) {
+    log('[queue] fixtures stale, syncing now');
+    await queues.sync.add('sync-all', { kind: 'all' }, { jobId: `seed-all:${hourStamp()}`, delay: 20_000 });
   }
 
   log('[queue] schedules installed');
 }
+
+/* Job ids are bucketed by time so that several instances booting together -- or one
+   instance restarting twice in a minute -- enqueue the same job rather than one each. */
+const dayStamp = () => new Date().toISOString().slice(0, 10);
+const hourStamp = () => new Date().toISOString().slice(0, 13);
 
 export async function closeQueues() {
   await Promise.all(Object.values(queues).map((q) => q.close()));
