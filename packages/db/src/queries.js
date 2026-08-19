@@ -167,6 +167,14 @@ export async function upsertEvents(events) {
       venue = coalesce(excluded.venue, events.venue),
       home_score = excluded.home_score,
       away_score = excluded.away_score,
+      -- Must be updated, not just set on insert. Rebuilding the team rows leaves
+      -- existing fixtures pointing at nothing, and without this they stay that way
+      -- forever: the league page falls back to the provider's own title string and
+      -- looks fine, while every team reports "no fixtures scheduled" and each team
+      -- page is empty. coalesce so a provider omitting a side (individual sports)
+      -- cannot wipe a reference we already resolved.
+      home_team_id = coalesce(excluded.home_team_id, events.home_team_id),
+      away_team_id = coalesce(excluded.away_team_id, events.away_team_id),
       updated_at = now()
     returning id, provider_key
   `;

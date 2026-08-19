@@ -347,3 +347,85 @@ describe('team ↔ league membership', () => {
     expect(rows[0].n).toBe(1);
   });
 });
+
+describe('fixture ↔ team re-linking', () => {
+  test('an upsert re-attaches teams to a fixture whose references were cleared', async () => {
+    const l = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','football/nfl','football','football-nfl','NFL') returning id`,
+    );
+    const home = await one(
+      `insert into teams (provider, provider_key, league_id, slug, name, display_name)
+       values ('espn','football/nfl/34',$1,'nfl-34','Texans','Houston Texans') returning id`,
+      [l.id],
+    );
+    const away = await one(
+      `insert into teams (provider, provider_key, league_id, slug, name, display_name)
+       values ('espn','football/nfl/13',$1,'nfl-13','Raiders','Las Vegas Raiders') returning id`,
+      [l.id],
+    );
+    const ev = await one(
+      `insert into events (provider, provider_key, league_id, starts_at, name, home_team_id, away_team_id)
+       values ('espn','football/nfl/999',$1, now() + interval '2 days','Raiders at Texans',$2,$3)
+       returning id`,
+      [l.id, home.id, away.id],
+    );
+
+    // What migration 0005 did when it rebuilt every team row.
+    await db.query(`update events set home_team_id = null, away_team_id = null where id = $1`, [
+      ev.id,
+    ]);
+
+    // The next sweep re-upserts the same fixture. Without home_team_id/away_team_id
+    // in the ON CONFLICT set, this updated the name and time and left the references
+    // null -- the list still rendered "Raiders at Texans" from the provider's title
+    // string while every team page sat empty.
+    await db.query(
+      `insert into events (provider, provider_key, league_id, starts_at, name, home_team_id, away_team_id)
+       values ('espn','football/nfl/999',$1, now() + interval '2 days','Raiders at Texans',$2,$3)
+       on conflict (provider, provider_key) do update set
+         name = excluded.name,
+         home_team_id = coalesce(excluded.home_team_id, events.home_team_id),
+         away_team_id = coalesce(excluded.away_team_id, events.away_team_id)`,
+      [l.id, home.id, away.id],
+    );
+
+    const row = await one(`select home_team_id, away_team_id from events where id = $1`, [ev.id]);
+    expect(row.home_team_id).toBe(home.id);
+    expect(row.away_team_id).toBe(away.id);
+
+    // And the team now reports its fixture instead of "no fixtures scheduled".
+    const cnt = await one(
+      `select count(*)::int as n from events
+       where (home_team_id = $1 or away_team_id = $1) and starts_at > now()`,
+      [home.id],
+    );
+    expect(cnt.n).toBe(1);
+  });
+
+  test('a provider omitting one side cannot wipe a reference already resolved', async () => {
+    const l = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','racing/f1b','racing','racing-f1b','F1') returning id`,
+    );
+    const t = await one(
+      `insert into teams (provider, provider_key, league_id, slug, name, display_name)
+       values ('espn','racing/f1b/1',$1,'f1b-1','X','X') returning id`,
+      [l.id],
+    );
+    const ev = await one(
+      `insert into events (provider, provider_key, league_id, starts_at, name, home_team_id)
+       values ('espn','racing/f1b/1',$1, now() + interval '1 day','GP',$2) returning id`,
+      [l.id, t.id],
+    );
+    await db.query(
+      `insert into events (provider, provider_key, league_id, starts_at, name, home_team_id)
+       values ('espn','racing/f1b/1',$1, now() + interval '1 day','GP', null)
+       on conflict (provider, provider_key) do update set
+         home_team_id = coalesce(excluded.home_team_id, events.home_team_id)`,
+      [l.id],
+    );
+    const row = await one(`select home_team_id from events where id = $1`, [ev.id]);
+    expect(row.home_team_id).toBe(t.id);
+  });
+});

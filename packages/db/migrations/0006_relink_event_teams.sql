@@ -1,0 +1,13 @@
+-- Re-link fixtures to the rebuilt team rows.
+--
+-- 0005 dropped and rebuilt every team, nulling each fixture's team references. The
+-- events upsert did not carry home_team_id/away_team_id in its ON CONFLICT clause,
+-- so the following sweep updated everything about those fixtures except the two
+-- columns that needed it, and they stayed null.
+--
+-- The page still looked plausible -- the fixture list falls back to the provider's
+-- own "X at Y" title string -- while every team reported "no fixtures scheduled"
+-- and every team page was empty.
+--
+-- The upsert now carries those columns; this forces the one sweep that applies it.
+update leagues set rosters_synced_at = null where active;
