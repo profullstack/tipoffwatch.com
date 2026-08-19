@@ -15,9 +15,6 @@ export function adapters() {
 
 /** Refresh the league catalogue. Cheap, and how new competitions appear without a deploy. */
 export async function syncCatalogue({ log = console.log } = {}) {
-  // A new sweep re-tests the direct route: the block may have been a rate limit
-  // that has since expired, and proxy bandwidth is metered.
-  espn.resetTransport?.();
   let n = 0;
   for (const adapter of adapters()) {
     const leagues = await adapter.listLeagues();

@@ -62,63 +62,29 @@ const PRIORITY = new Map([
 const USER_AGENT = 'curl/8.5.0 (+https://tipoffwatch.com)';
 
 /**
- * ESPN blocks datacenter egress, so requests fall back to a residential proxy.
+ * ESPN requests go through the residential proxy whenever one is configured.
  *
- * The same request that returns JSON from a laptop returns 403 Access Denied from
- * Railway -- it is the source IP, not the User-Agent, and it took production's
- * sync down silently for two hours.
+ * ESPN blocks datacenter egress: the identical request that returns JSON from a
+ * laptop returns 403 Access Denied from Railway, and it silently took production's
+ * sync down for two hours. A fallback was tried first and was the wrong shape --
+ * a block does not always arrive as a status, so the direct attempt could throw,
+ * and every request paid a doomed round trip before the one that worked.
  *
- * Direct first, proxy only on a block. Residential bandwidth is metered and a full
- * sweep is hundreds of requests, so routing everything through it would be
- * expensive; this pays only when we have to, and starts working again on its own
- * if the block is lifted.
+ * Straight through the proxy is simpler and predictable. It costs metered
+ * bandwidth, so if that ever matters the lever is SPORTS_PROXY_URL: unset it and
+ * every request goes direct again, no code change.
  */
-let proxyOnly = false;
+async function getJson(url, { timeoutMs = 20000 } = {}) {
+  const proxy = config.sports.proxyUrl;
 
-async function attempt(url, timeoutMs, useProxy) {
-  return fetch(url, {
+  const res = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
     headers: { accept: 'application/json', 'user-agent': USER_AGENT },
-    ...(useProxy ? { proxy: config.sports.proxyUrl } : {}),
+    ...(proxy ? { proxy } : {}),
   });
-}
 
-/** 403 is the block; 429 is rate limiting, which a different IP also clears. */
-const isBlocked = (status) => status === 403 || status === 429;
-
-async function getJson(url, { timeoutMs = 20000 } = {}) {
-  const canProxy = Boolean(config.sports.proxyUrl);
-
-  let res = null;
-  let directError = null;
-  try {
-    res = await attempt(url, timeoutMs, canProxy && proxyOnly);
-  } catch (err) {
-    // A block does not always arrive as a status. It can be a reset connection or
-    // a TLS failure, which makes fetch throw -- and checking only res.status meant
-    // the proxy fallback never ran for exactly the cases that needed it most.
-    directError = err;
-  }
-
-  const blocked = directError !== null || isBlocked(res?.status);
-  if (blocked && canProxy && !proxyOnly) {
-    // Latch on, so the rest of a 700-request sweep does not each pay a wasted
-    // direct attempt first.
-    proxyOnly = true;
-    const why = directError ? directError.message : `HTTP ${res.status}`;
-    console.warn(`[espn] blocked directly (${why}); falling back to the residential proxy`);
-    res = await attempt(url, timeoutMs, true);
-  } else if (directError) {
-    throw directError;
-  }
-
-  if (!res.ok) throw new Error(`espn ${res.status} ${url}`);
+  if (!res.ok) throw new Error(`espn ${res.status}${proxy ? ' (via proxy)' : ' (direct)'} ${url}`);
   return res.json();
-}
-
-/** Lets a later sweep discover the block has lifted rather than proxying forever. */
-export function resetTransport() {
-  proxyOnly = false;
 }
 
 /** The `$ref` links carry the slug in the path; parsing it beats a fetch per league. */

@@ -301,22 +301,22 @@ describe('provider access', () => {
   });
 });
 
-describe('blocked-egress fallback', () => {
-  test('a 403 flips to the proxy instead of failing the sweep', async () => {
+describe('provider transport', () => {
+  test('requests go through the proxy whenever one is configured', async () => {
     const src = await Bun.file(
       new URL('../packages/sports/src/espn.js', import.meta.url).pathname,
     ).text();
 
-    // ESPN blocks datacenter IPs: the identical request works from a laptop and
-    // 403s from Railway. That took production's sync down silently for two hours,
-    // because fetchTeams turns a throw into an empty array.
-    expect(src).toContain('isBlocked');
-    expect(src).toMatch(/status === 403/);
-    expect(src).toMatch(/status === 429/);
-
-    // Direct first: residential bandwidth is metered and a sweep is hundreds of
-    // requests, so proxying everything unconditionally would be expensive.
-    expect(src).toContain('canProxy && proxyOnly');
-    expect(src).toContain('resetTransport');
+    // ESPN blocks datacenter egress: the identical request works from a laptop and
+    // 403s from Railway, which silently took production's sync down for two hours.
+    expect(src).toContain('config.sports.proxyUrl');
+    expect(src).toContain('...(proxy ? { proxy } : {})');
+    // Unsetting the env var is the whole off-switch; no code path should decide.
+    expect(src).not.toContain('proxyOnly');
   });
+
+  test('a live fetch still returns real data', async () => {
+    const teams = await espn.fetchTeams('football/nfl');
+    expect(teams.length).toBe(32);
+  }, 45000);
 });
