@@ -87,7 +87,7 @@ export async function installSchedules({ log = console.log } = {}) {
     await queues.sync.add(
       'sync-catalogue',
       { kind: 'catalogue' },
-      { jobId: `seed-cat:${dayStamp()}` },
+      { jobId: `seed-cat-${dayStamp()}` },
     );
   }
   // Display names only arrive with a fixture sweep, so a catalogue that has never
@@ -101,7 +101,7 @@ export async function installSchedules({ log = console.log } = {}) {
     await queues.sync.add(
       'sync-all',
       { kind: 'all' },
-      { jobId: `seed-all:${hourStamp()}`, delay: 20_000 },
+      { jobId: `seed-all-${hourStamp()}`, delay: 20_000 },
     );
   }
 
@@ -109,7 +109,8 @@ export async function installSchedules({ log = console.log } = {}) {
 }
 
 /* Job ids are bucketed by time so that several instances booting together -- or one
-   instance restarting twice in a minute -- enqueue the same job rather than one each. */
+   instance restarting twice in a minute -- enqueue the same job rather than one each.
+   Separated by '-' and never ':' -- see the note on job ids in workers.js. */
 const dayStamp = () => new Date().toISOString().slice(0, 10);
 const hourStamp = () => new Date().toISOString().slice(0, 13);
 

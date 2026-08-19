@@ -37,7 +37,7 @@ async function runScan() {
       await queues.fanout.add(
         'fanout',
         { eventId: e.id, offsetMinutes, startsAt: e.startsAt },
-        { jobId: `fo:${e.id}:${offsetMinutes}` },
+        { jobId: `fo-${e.id}-${offsetMinutes}` },
       );
       matched++;
     }
@@ -53,6 +53,11 @@ async function runScan() {
 
 /**
  * Turn one event into pages of recipients.
+ *
+ * NB: no ':' in any job id. BullMQ reserves that character for its own repeatable-job
+ * keys and throws "Custom Id cannot contain :" for anything that does not split into
+ * exactly three parts -- so a four-part id here crashed the fan-out outright, and a
+ * two-part id elsewhere killed the container on boot.
  *
  * This is the part that has to survive going viral. The queue never holds one job
  * per follower -- it holds one job per *page* of followers, so a fixture with two
@@ -88,7 +93,7 @@ async function runFanout(job) {
     await queues.batch.add(
       'batch',
       { eventId, offsetMinutes, userIds },
-      { jobId: `bt:${eventId}:${offsetMinutes}:${after}` },
+      { jobId: `bt-${eventId}-${offsetMinutes}-${after}` },
     );
 
     after = userIds[userIds.length - 1];
