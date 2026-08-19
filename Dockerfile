@@ -19,7 +19,15 @@ RUN bun install --frozen-lockfile || bun install
 
 FROM base AS runtime
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
+# Copy the whole deps stage, not just /app/node_modules. Bun's isolated linker puts
+# each workspace's dependencies in ITS OWN node_modules (apps/web/node_modules,
+# packages/*/node_modules) rather than hoisting them to the root, so copying only
+# the root directory leaves every workspace import unresolvable at build time.
+# Listing the nested directories individually is not an option either: a package
+# with no dependencies has no node_modules at all and the COPY would fail.
+COPY --from=deps /app /app
+# .dockerignore excludes node_modules, so this overlays source without clobbering
+# anything installed above.
 COPY . .
 RUN bun apps/web/build-client.js
 
