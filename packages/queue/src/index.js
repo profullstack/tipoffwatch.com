@@ -114,10 +114,22 @@ export async function installSchedules({ log = console.log } = {}) {
      * which is all the bucket was ever for. The counts shrink to zero as the work
      * lands, so this settles rather than looping.
      */
+    /**
+     * Backfills bucket by MINUTE, not by their outstanding counts.
+     *
+     * Keying on the counts looked like it described the need, but successive
+     * backfills reset the same leagues and so produced a byte-identical id --
+     * `u0-r354` twice running. BullMQ matched the completed job and skipped the
+     * second: the same silent no-op the hour bucket caused, reached from a
+     * different direction. Twice now, so the lesson is that a job id must not be
+     * derived from state the work itself resets.
+     *
+     * A minute bucket still collapses a boot storm across instances, which is all
+     * the deduplication was ever for, and can never block a later backfill. The
+     * routine sweep keeps its hour bucket: that one genuinely is periodic.
+     */
     const reason =
-      rosterless > 0 || unnamed > 0
-        ? `backfill-${dayStamp()}-u${unnamed}-r${rosterless}`
-        : `seed-all-${hourStamp()}`;
+      rosterless > 0 || unnamed > 0 ? `backfill-${minuteStamp()}` : `seed-all-${hourStamp()}`;
 
     log(`[queue] syncing now (stale: ${stale}, unnamed: ${unnamed}, rosterless: ${rosterless})`);
     await queues.sync.add('sync-all', { kind: 'all' }, { jobId: reason, delay: 20_000 });
@@ -131,6 +143,7 @@ export async function installSchedules({ log = console.log } = {}) {
    Separated by '-' and never ':' -- see the note on job ids in workers.js. */
 const dayStamp = () => new Date().toISOString().slice(0, 10);
 const hourStamp = () => new Date().toISOString().slice(0, 13);
+const minuteStamp = () => new Date().toISOString().slice(0, 16).replace(':', '-');
 
 export async function closeQueues() {
   await Promise.all(Object.values(queues).map((q) => q.close()));

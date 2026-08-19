@@ -36,3 +36,27 @@ describe('bullmq job ids', () => {
     expect(src).toContain('`bt-${eventId}-${offsetMinutes}-${after}`');
   });
 });
+
+describe('sync job ids', () => {
+  test('a backfill id is not derived from state the backfill itself resets', async () => {
+    const src = await readFile(
+      new URL('../packages/queue/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+
+    // The regression, twice over: an hour bucket collided with an earlier routine
+    // sync, then a count-derived id collided with the previous backfill because the
+    // counts reset to the same numbers. Both times BullMQ matched a completed job
+    // and the work silently never ran while the queue reported success.
+    expect(src).toContain('backfill-${minuteStamp()}');
+    expect(src).not.toContain('u${unnamed}-r${rosterless}');
+  });
+
+  test('the routine sweep keeps an hour bucket, which is genuinely periodic', async () => {
+    const src = await readFile(
+      new URL('../packages/queue/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(src).toContain('seed-all-${hourStamp()}');
+  });
+});
