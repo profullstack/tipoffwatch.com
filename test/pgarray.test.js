@@ -63,3 +63,41 @@ describe('pgArray', () => {
     expect(rows[0].ids).toEqual(ids);
   });
 });
+
+describe('score updates', () => {
+  test('nulls arrive as SQL NULL, not the string "null"', async () => {
+    // A score before kickoff, or a clock for a sport that has none, is null. Quoted
+    // as "null" it either fails the int[] cast or stores a bogus value.
+    const { rows } = await db.query('select $1::int[] as scores', [pgArray([3, null, 0])]);
+    expect(rows[0].scores).toEqual([3, null, 0]);
+  });
+
+  test('column-wise unnest updates the right rows', async () => {
+    await db.exec(`
+      create table ev (id serial primary key, provider text, provider_key text,
+                       state text, home_score int, away_score int);
+      insert into ev (provider, provider_key, state, home_score, away_score) values
+        ('espn','a/1','pre',null,null),
+        ('espn','a/2','pre',null,null),
+        ('espn','a/3','pre',null,null);
+    `);
+
+    // The shape that replaced `from (values ${sql(rows)})`, which failed at runtime
+    // with "Cannot use array of objects for UPDATE" and froze every live score.
+    await db.query(
+      `update ev e set state = v.state, home_score = v.home_score, away_score = v.away_score
+       from (select * from unnest($1::text[], $2::text[], $3::int[], $4::int[])
+             as t(provider_key, state, home_score, away_score)) v
+       where e.provider_key = v.provider_key`,
+      [pgArray(['a/1', 'a/3']), pgArray(['in', 'post']), pgArray([2, 5]), pgArray([1, null])],
+    );
+
+    const { rows } = await db.query(
+      'select provider_key, state, home_score, away_score from ev order by id',
+    );
+    expect(rows[0]).toMatchObject({ state: 'in', home_score: 2, away_score: 1 });
+    // Untouched: an update must only hit the keys it was given.
+    expect(rows[1]).toMatchObject({ state: 'pre', home_score: null });
+    expect(rows[2]).toMatchObject({ state: 'post', home_score: 5, away_score: null });
+  });
+});

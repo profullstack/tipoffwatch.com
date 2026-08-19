@@ -17,7 +17,11 @@ import { sql } from './index.js';
  * on how the driver decides to encode a parameter.
  */
 export function pgArray(values) {
-  const items = (values ?? []).map((v) => `"${String(v).replace(/(["\\])/g, '\\$1')}"`);
+  const items = (values ?? []).map((v) =>
+    // Unquoted NULL, not the string "null": a nullable column (a score before
+    // kickoff, a clock for a sport that has none) must arrive as SQL NULL.
+    v === null || v === undefined ? 'NULL' : `"${String(v).replace(/(["\\])/g, '\\$1')}"`,
+  );
   return `{${items.join(',')}}`;
 }
 
@@ -677,6 +681,14 @@ export async function leaguesWithLiveGames() {
  */
 export async function updateEventScores(rows) {
   if (rows.length === 0) return [];
+
+  // Column-wise arrays through unnest, not a row-wise VALUES list.
+  //
+  // `from (values ${sql(rows)})` looks natural and fails at runtime with "Cannot
+  // use array of objects for UPDATE" -- Bun's helper builds VALUES for INSERT, not
+  // for an UPDATE ... FROM. The live tick caught that, counted it as a failure and
+  // printed nothing, so every score froze for two hours and it read like an
+  // upstream block.
   return sql`
     update events e set
       state = v.state,
@@ -688,20 +700,21 @@ export async function updateEventScores(rows) {
       attendance = coalesce(v.attendance, e.attendance),
       broadcast = coalesce(v.broadcast, e.broadcast),
       updated_at = now()
-    from (values ${sql(
-      rows.map((r) => [
-        r.provider,
-        r.provider_key,
-        r.state,
-        r.status_detail ?? null,
-        r.home_score ?? null,
-        r.away_score ?? null,
-        r.period ?? null,
-        r.display_clock ?? null,
-        r.attendance ?? null,
-        r.broadcast ?? null,
-      ]),
-    )}) as v(provider, provider_key, state, status_detail, home_score, away_score, period, display_clock, attendance, broadcast)
+    from (
+      select * from unnest(
+        ${pgArray(rows.map((r) => r.provider))}::text[],
+        ${pgArray(rows.map((r) => r.provider_key))}::text[],
+        ${pgArray(rows.map((r) => r.state))}::text[],
+        ${pgArray(rows.map((r) => r.status_detail ?? null))}::text[],
+        ${pgArray(rows.map((r) => r.home_score ?? null))}::int[],
+        ${pgArray(rows.map((r) => r.away_score ?? null))}::int[],
+        ${pgArray(rows.map((r) => r.period ?? null))}::int[],
+        ${pgArray(rows.map((r) => r.display_clock ?? null))}::text[],
+        ${pgArray(rows.map((r) => r.attendance ?? null))}::int[],
+        ${pgArray(rows.map((r) => r.broadcast ?? null))}::text[]
+      ) as t(provider, provider_key, state, status_detail, home_score, away_score,
+             period, display_clock, attendance, broadcast)
+    ) v
     where e.provider = v.provider and e.provider_key = v.provider_key
     returning e.id
   `;
