@@ -458,6 +458,76 @@ app.get('/about', async (c) => {
   return c.html(await render(<About user={c.get('user')} stats={stats} />));
 });
 
+/* ---------------------------------------------------------------- sitemaps -- */
+
+/**
+ * A sitemap index, not one file.
+ *
+ * The house pattern: chunks are keyed by month because a past month is immutable,
+ * so a crawler can skip it on <lastmod> alone. Chunking by position instead would
+ * shift every URL into a different file the moment one fixture is added, and every
+ * chunk would look changed on every crawl.
+ */
+const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+const iso = (d) => new Date(d).toISOString();
+
+app.get('/sitemap.xml', async (c) => {
+  const months = await q.eventMonths();
+  const urls = [
+    `<sitemap><loc>${config.siteUrl}/sitemaps/static.xml</loc></sitemap>`,
+    `<sitemap><loc>${config.siteUrl}/sitemaps/leagues.xml</loc></sitemap>`,
+    ...months.map(
+      (m) =>
+        `<sitemap><loc>${config.siteUrl}/sitemaps/events-${m.month}.xml</loc>` +
+        (m.lastmod ? `<lastmod>${iso(m.lastmod)}</lastmod>` : '') +
+        '</sitemap>',
+    ),
+  ];
+  c.header('content-type', 'application/xml');
+  return c.body(
+    `${xmlHeader}<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.join('')}</sitemapindex>`,
+  );
+});
+
+app.get('/sitemaps/static.xml', (c) => {
+  const paths = ['/', '/sports', '/about', '/login', '/signup'];
+  c.header('content-type', 'application/xml');
+  return c.body(
+    `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths
+      .map(
+        (p) =>
+          `<url><loc>${config.siteUrl}${p}</loc><changefreq>${p === '/' ? 'hourly' : 'weekly'}</changefreq><priority>${p === '/' ? '1.0' : '0.6'}</priority></url>`,
+      )
+      .join('')}</urlset>`,
+  );
+});
+
+app.get('/sitemaps/leagues.xml', async (c) => {
+  const leagues = await q.listLeagues({ limit: 1000 });
+  c.header('content-type', 'application/xml');
+  return c.body(
+    `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${leagues
+      .map(
+        (l) =>
+          `<url><loc>${config.siteUrl}/leagues/${l.slug}</loc><changefreq>daily</changefreq></url>`,
+      )
+      .join('')}</urlset>`,
+  );
+});
+
+app.get('/sitemaps/events-:month{[0-9]{4}-[0-9]{2}}.xml', async (c) => {
+  const events = await q.eventsForMonth(c.req.param('month'));
+  c.header('content-type', 'application/xml');
+  return c.body(
+    `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${events
+      .map(
+        (e) =>
+          `<url><loc>${config.siteUrl}/events/${e.id}</loc><lastmod>${iso(e.updated_at)}</lastmod></url>`,
+      )
+      .join('')}</urlset>`,
+  );
+});
+
 /* ------------------------------------------------------------------ static -- */
 
 app.get('/manifest.webmanifest', (c) =>

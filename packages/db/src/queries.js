@@ -486,3 +486,25 @@ export async function publicEvents({ leagueSlug = null, sport = null, from = nul
     limit ${cap}
   `;
 }
+
+/** Months that actually contain fixtures, for the sitemap index. */
+export async function eventMonths() {
+  return sql`
+    select to_char(starts_at, 'YYYY-MM') as month, count(*)::int as n, max(updated_at) as lastmod
+    from events
+    group by 1 order by 1
+  `;
+}
+
+/** One month of events for a sitemap chunk. Ordered by (starts_at, id): ordering by
+ *  the timestamp alone leaves rows stamped in the same bulk write in an undefined
+ *  order, and paginating an undefined order can repeat a row in one chunk while
+ *  dropping it from another. */
+export async function eventsForMonth(month, { limit = 45000, offset = 0 } = {}) {
+  return sql`
+    select id, updated_at from events
+    where to_char(starts_at, 'YYYY-MM') = ${month}
+    order by starts_at, id
+    limit ${limit} offset ${offset}
+  `;
+}
