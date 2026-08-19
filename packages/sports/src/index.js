@@ -141,6 +141,8 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
     short_name: f.shortName,
     venue: f.venue,
     venue_city: f.venueCity,
+    venue_region: f.venueRegion,
+    neutral_site: f.neutralSite,
     broadcast: f.broadcast,
     attendance: f.attendance,
     period: f.period,

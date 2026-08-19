@@ -1337,3 +1337,52 @@ time.line {
   color: var(--fg);
   font-weight: 600;
 }
+
+/* ------------------------------------------------------- home and away -- */
+
+/* Which side is at home, said outright. The ordering convention differs by sport
+   -- visitor first in North America, host first almost everywhere else -- so a
+   position in a row cannot carry this on its own. */
+.role-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  margin-bottom: 0.25rem;
+}
+.role-tag.home {
+  color: var(--accent);
+  border-color: oklch(0.72 0.19 45 / 0.45);
+}
+
+/* The row version: one letter, because a schedule line has no room for a word.
+   The title carries the full meaning for anyone who needs it. */
+.ha {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.12rem 0.25rem;
+  margin-right: 0.3rem;
+  vertical-align: 0.08em;
+}
+/* Home in the accent on both surfaces, so the same colour means the same thing
+   whether you are reading a schedule row or a scoreboard. */
+.ha.home {
+  color: var(--accent);
+  border-color: oklch(0.72 0.19 45 / 0.45);
+}
+.matchup .join {
+  color: var(--muted);
+  margin: 0 0.4rem;
+  font-size: 0.9em;
+}

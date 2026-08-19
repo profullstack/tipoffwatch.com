@@ -1,6 +1,6 @@
+import { assetUrl } from '../lib/asset-version.js';
 import { EventList, FollowButton, KickoffTime, LocalTime, TeamRow } from './components.jsx';
 import { Layout } from './Layout.jsx';
-import { assetUrl } from '../lib/asset-version.js';
 
 export const Landing = ({ user, today, vapidKey }) => (
   <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
@@ -318,10 +318,22 @@ export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
 );
 
 /** One side of the scoreboard. */
-const Side = ({ name, slug, logo, score, record, showScore }) => (
+/**
+ * One side of the scoreboard.
+ *
+ * `role` is spelled out rather than left to the ordering. Which side is at home is
+ * read from position alone in every sport -- and the position differs: North
+ * America writes the visitor first ("Tigers at Pirates"), most of the world writes
+ * the host first ("Arsenal vs Coventry"). Nothing on the page said which
+ * convention it was using, so the answer depended on the reader's sport.
+ *
+ * At a neutral ground the question has no answer, so nothing is claimed.
+ */
+const Side = ({ name, slug, logo, score, record, showScore, role }) => (
   <div class="side">
     {logo ? <img src={logo} alt="" width="56" height="56" /> : <span class="team-blank big" />}
     <div class="side-name">
+      {role ? <span class={`role-tag ${role}`}>{role === 'home' ? 'Home' : 'Away'}</span> : null}
       {slug ? <a href={`/teams/${slug}`}>{name}</a> : <span>{name}</span>}
       {record ? <span class="meta">{record}</span> : null}
     </div>
@@ -384,6 +396,7 @@ export const EventPage = ({
           score={event.away_score}
           record={event.away_record}
           showScore={showScore}
+          role={event.neutral_site ? null : 'away'}
         />
 
         <div class="middle">
@@ -407,6 +420,7 @@ export const EventPage = ({
           score={event.home_score}
           record={event.home_record}
           showScore={showScore}
+          role={event.neutral_site ? null : 'home'}
         />
       </section>
 
@@ -428,7 +442,10 @@ export const EventPage = ({
         {event.venue ? (
           <li>
             <strong>{event.venue}</strong>
-            <span>{event.venue_city ?? 'Venue'}</span>
+            <span>
+              {[event.venue_city, event.venue_region].filter(Boolean).join(', ') || 'Venue'}
+              {event.neutral_site ? ' · neutral ground' : ''}
+            </span>
           </li>
         ) : null}
         {event.broadcast ? (
@@ -893,7 +910,7 @@ export const PushCheck = ({ user, vapidKey }) => (
     user={user}
     vapidKey={vapidKey}
     canonical="/push-check"
-    script={assetUrl("push-check.js")}
+    script={assetUrl('push-check.js')}
   >
     <h1>Notification check</h1>
     <p class="muted">

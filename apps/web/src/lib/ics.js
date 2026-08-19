@@ -101,7 +101,11 @@ export function buildCalendar(events, { name, siteUrl, defaultMinutes = 150 }) {
       `DTEND:${stamp(end)}`,
       `SUMMARY:${esc(title(e))}`,
       `DESCRIPTION:${esc(desc)}`,
-      e.venue ? `LOCATION:${esc(e.venue)}` : null,
+      // The arena plus where it is: a calendar entry that says only "PNC Park" is
+      // useless to the phone trying to work out how long it takes to get there.
+      e.venue
+        ? `LOCATION:${esc([e.venue, e.venue_city, e.venue_region].filter(Boolean).join(', '))}`
+        : null,
       `URL:${siteUrl}/events/${e.id}`,
       // Duration is a guess for most sports, so mark it as such rather than
       // blocking out someone's calendar as if it were a confirmed meeting.

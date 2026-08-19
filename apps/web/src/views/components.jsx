@@ -165,13 +165,37 @@ export const EventRow = ({ event }) => (
             ★
           </span>
         ) : null}
-        {event.away_name && event.home_name
-          ? `${event.away_name} at ${event.home_name}`
-          : event.name}
+        {event.away_name && event.home_name ? (
+          <>
+            {/* Which side is at home cannot be read from the order: North America
+                writes the visitor first, most of the world writes the host first,
+                and a row mixing both conventions in one list settles nothing. The
+                tags say it outright -- except at a neutral ground, where there is
+                nothing to say. */}
+            {event.neutral_site ? null : (
+              <abbr class="ha away" title="Away team">
+                A
+              </abbr>
+            )}
+            {event.away_name}
+            <span class="join">{event.neutral_site ? 'vs' : 'at'}</span>
+            {event.neutral_site ? null : (
+              <abbr class="ha home" title="Home team">
+                H
+              </abbr>
+            )}
+            {event.home_name}
+          </>
+        ) : (
+          event.name
+        )}
       </a>
       <span class="meta">
         {event.league_name}
         {event.venue ? ` · ${event.venue}` : ''}
+        {/* The arena name alone only means something to people who already know the
+            city, which is nobody browsing 354 leagues. */}
+        {event.venue_city ? `, ${event.venue_city}` : ''}
         <StateBadge state={event.state} detail={event.status_detail} />
       </span>
     </div>

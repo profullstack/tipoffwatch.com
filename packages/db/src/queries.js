@@ -180,6 +180,10 @@ export async function upsertEvents(events) {
       home_team_id = coalesce(excluded.home_team_id, events.home_team_id),
       away_team_id = coalesce(excluded.away_team_id, events.away_team_id),
       venue_city = coalesce(excluded.venue_city, events.venue_city),
+      venue_region = coalesce(excluded.venue_region, events.venue_region),
+      -- Not coalesced: a fixture moved to or from a neutral ground must be able to
+      -- go back to false, and false is a real value rather than an absent one.
+      neutral_site = excluded.neutral_site,
       broadcast = coalesce(excluded.broadcast, events.broadcast),
       attendance = coalesce(excluded.attendance, events.attendance),
       period = excluded.period,
@@ -532,6 +536,7 @@ export async function publicEvents({ leagueSlug = null, sport = null, from = nul
   const cap = Math.min(Math.max(Number(limit) || 100, 1), 200);
   return sql`
     select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name, e.venue,
+           e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score,
            l.slug as league, l.name as league_name, l.sport,
            ht.display_name as home, at.display_name as away
@@ -791,6 +796,7 @@ export async function feedEvents({
   const cap = Math.min(Math.max(Number(limit) || 100, 1), 200);
   return sql`
     select e.id, e.starts_at, e.name, e.short_name, e.venue, e.state,
+           e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score, e.status_detail, e.broadcast, e.updated_at,
            l.name as league_name, l.slug as league_slug, l.sport,
            ht.display_name as home_name, at.display_name as away_name

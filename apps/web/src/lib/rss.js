@@ -30,7 +30,7 @@ function title(event) {
 function description(event, siteUrl) {
   const parts = [
     event.league_name,
-    event.venue ? `at ${event.venue}` : null,
+    event.venue ? `at ${[event.venue, event.venue_city].filter(Boolean).join(', ')}` : null,
     event.broadcast ? `on ${event.broadcast}` : null,
   ].filter(Boolean);
   const when = new Date(event.starts_at).toUTCString();

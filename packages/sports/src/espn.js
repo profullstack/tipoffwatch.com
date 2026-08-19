@@ -328,6 +328,11 @@ function normaliseEvent(e, providerKey) {
     shortName: e.shortName ?? null,
     venue: comp.venue?.fullName ?? null,
     venueCity: comp.venue?.address?.city ?? null,
+    // US venues carry a state, everywhere else a country, and never both. One
+    // field, because two would leave whichever does not apply permanently null.
+    venueRegion: comp.venue?.address?.state ?? comp.venue?.address?.country ?? null,
+    // Absent on most leagues and null on soccer, so anything but true is false.
+    neutralSite: comp.neutralSite === true,
     broadcast,
     attendance: Number.isFinite(comp.attendance) ? comp.attendance : null,
     period: Number.isFinite(e.status?.period) ? e.status.period : null,
