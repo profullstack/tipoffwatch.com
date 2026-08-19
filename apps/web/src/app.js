@@ -108,8 +108,9 @@ app.get('/healthz', (c) => c.text('ok'));
 
 app.get('/', async (c) => {
   const today = new Date().toISOString().slice(0, 10);
+  const viewer = c.get('user');
   return cached(c, `page:home:${today}`, config.cache.scheduleTtlSeconds, async () => {
-    const events = await q.scheduleForDay({ day: today, limit: 40 });
+    const events = await q.scheduleForDay({ day: today, limit: 40, viewerId: viewer?.id ?? null });
     return render(<Landing user={c.get('user')} today={events} vapidKey={config.push.publicKey} />);
   });
 });
@@ -138,7 +139,7 @@ app.get('/leagues/:slug', async (c) => {
   return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
     const [teams, events, following] = await Promise.all([
       q.teamsForLeague(league.id, user?.id ?? null),
-      q.upcomingForLeague(league.id),
+      q.upcomingForLeague(league.id, { viewerId: user?.id ?? null }),
       q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
     ]);
     return render(
@@ -158,7 +159,7 @@ app.get('/teams/:slug', async (c) => {
   const team = await q.getTeamBySlug(c.req.param('slug'));
   if (!team) return c.html(await render(<NotFound user={user} />), 404);
   const [events, following] = await Promise.all([
-    q.upcomingForTeam(team.id),
+    q.upcomingForTeam(team.id, { viewerId: user?.id ?? null }),
     q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
   ]);
   return c.html(
@@ -195,7 +196,18 @@ app.get('/events/:id', async (c) => {
     q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.away_team_id }),
   ]);
   return c.html(
-    await render(<EventPage user={user} event={event} offers={offers} entitlement={entitlement} />),
+    await render(
+      <EventPage
+        user={user}
+        event={event}
+        offers={offers}
+        entitlement={entitlement}
+        plays={plays}
+        comments={comments}
+        followingHome={followingHome}
+        followingAway={followingAway}
+      />,
+    ),
   );
 });
 

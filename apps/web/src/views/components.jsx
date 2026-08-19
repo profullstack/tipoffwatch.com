@@ -106,11 +106,24 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
 };
 
 export const EventRow = ({ event }) => (
-  <li class={`event ${event.state}`}>
+  <li class={`event ${event.state}${event.following ? ' followed' : ''}`}>
     <RowTime event={event} />
 
     <div class="matchup">
       <a href={`/events/${event.id}`}>
+        {/* The star marks a fixture the viewer already follows, so a schedule page
+            reads the same way as the My games list. It is decorative for a signed-out
+            visitor, who never has one. */}
+        {event.following ? (
+          <span
+            class="followed-star"
+            role="img"
+            title="You follow one of these teams"
+            aria-label="Following"
+          >
+            ★
+          </span>
+        ) : null}
         {event.away_name && event.home_name
           ? `${event.away_name} at ${event.home_name}`
           : event.name}

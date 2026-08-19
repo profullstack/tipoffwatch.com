@@ -246,7 +246,7 @@ export async function listFollows(userId) {
 /** The signed-in calendar: every upcoming game involving anything the user follows. */
 export async function upcomingForUser(userId, { limit = 100 } = {}) {
   return sql`
-    select distinct e.*, l.name as league_name, l.sport,
+    select distinct e.*, l.name as league_name, l.sport, true as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -265,10 +265,18 @@ export async function upcomingForUser(userId, { limit = 100 } = {}) {
 }
 
 /** The public calendar, identical for every visitor, so it is cacheable wholesale. */
-export async function scheduleForDay({ day, sport = null, limit = 300 }) {
+export async function scheduleForDay({ day, sport = null, limit = 300, viewerId = null }) {
   if (sport) {
     return sql`
       select e.*, l.name as league_name, l.sport,
+             exists (
+               select 1 from follows vf
+               where vf.user_id = ${viewerId}
+                 and (
+                   (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                   or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+                 )
+             ) as following,
              ht.display_name as home_name, ht.logo_url as home_logo,
              at.display_name as away_name, at.logo_url as away_logo
       from events e
@@ -282,6 +290,14 @@ export async function scheduleForDay({ day, sport = null, limit = 300 }) {
   }
   return sql`
     select e.*, l.name as league_name, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -475,9 +491,17 @@ export async function getLeagueBySlug(slug) {
  * Not "today's schedule filtered to this league" -- that was the first cut, and it
  * told anyone visiting a league with no game today that it had no fixtures at all.
  */
-export async function upcomingForLeague(leagueId, { limit = 200 } = {}) {
+export async function upcomingForLeague(leagueId, { limit = 200, viewerId = null } = {}) {
   return sql`
     select e.*, l.name as league_name, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -589,9 +613,17 @@ export async function isFollowing({ userId, subjectType, subjectId }) {
 }
 
 /** A single team's upcoming fixtures, home or away. */
-export async function upcomingForTeam(teamId, { limit = 60 } = {}) {
+export async function upcomingForTeam(teamId, { limit = 60, viewerId = null } = {}) {
   return sql`
     select e.*, l.name as league_name, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
            ht.display_name as home_name, at.display_name as away_name
     from events e
     join leagues l on l.id = e.league_id

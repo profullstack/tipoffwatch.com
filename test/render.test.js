@@ -39,3 +39,41 @@ describe('html rendering', () => {
     }
   });
 });
+
+/**
+ * Fetching data and then not passing it to the view.
+ *
+ * The /events/:id handler awaited six values and rendered with two. Follow state,
+ * the play-by-play log and the comments were all queried on every request and
+ * silently dropped -- the page rendered its empty states instead, which is exactly
+ * what an event with no comments looks like. Nothing failed.
+ *
+ * So: anything a route destructures out of its Promise.all has to be referenced
+ * again somewhere in that handler.
+ */
+test('every value a route awaits is actually used', async () => {
+  const source = await Bun.file(new URL('../apps/web/src/app.js', import.meta.url).pathname).text();
+
+  // Each `const [a, b] = await Promise.all([...])` and the handler body after it.
+  const pattern = /const \[([^\]]+)\] = await Promise\.all\(\[/g;
+  const unused = [];
+
+  for (const match of source.matchAll(pattern)) {
+    const names = match[1]
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    // The handler ends at the next top-level `app.` route registration.
+    const after = source.slice(match.index + match[0].length);
+    const end = after.search(/\napp\.(get|post|put|delete)\(/);
+    const body = end === -1 ? after : after.slice(0, end);
+    // Skip the destructuring line itself so a name does not match its own declaration.
+    const rest = body.slice(body.indexOf(']'));
+
+    for (const name of names) {
+      if (!new RegExp(`\\b${name}\\b`).test(rest)) unused.push(name);
+    }
+  }
+
+  expect(unused).toEqual([]);
+});

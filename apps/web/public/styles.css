@@ -930,3 +930,17 @@ ul.comments li {
   overflow: hidden;
   clip: rect(0 0 0 0);
 }
+
+/* A fixture the signed-in viewer follows. The star sits inside the link so it
+   wraps with the team names rather than stranding itself on its own line, and the
+   left border gives the row a scannable edge in a long schedule. */
+.event.followed {
+  border-left: 2px solid var(--accent);
+}
+
+.followed-star {
+  color: var(--accent);
+  margin-right: 0.35rem;
+  font-size: 0.85em;
+  line-height: 1;
+}
