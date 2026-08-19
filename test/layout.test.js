@@ -30,3 +30,30 @@ describe('Layout', () => {
     expect(out).toContain('ESPN');
   });
 });
+
+describe('timezone precedence', () => {
+  test('the chosen zone rides on the body so it can win over the browser', async () => {
+    const out = await html({ user: { timezone: 'America/Los_Angeles' }, children: 'x' });
+    expect(out).toContain('data-tz="America/Los_Angeles"');
+  });
+
+  test('a signed-out visitor carries no zone at all', async () => {
+    // Signed-out pages are cached and served byte-identical, so one visitor's zone
+    // must never be baked in for the next.
+    const out = await html({ user: null, children: 'x' });
+    expect(out).not.toContain('data-tz=');
+  });
+
+  test('the client prefers the chosen zone and will not overwrite it', async () => {
+    const src = await Bun.file(
+      new URL('../apps/web/public/app.js', import.meta.url).pathname,
+    ).text();
+
+    // The bug: the setting applied only to email, so someone who set PST still saw
+    // their device's zone on every page and concluded the app ignored them.
+    expect(src).toContain('document.body?.dataset?.tz');
+    expect(src).toContain('const zone = chosen ||');
+    // And auto-detection must stop once a zone has actually been set.
+    expect(src).toContain("known !== 'UTC'");
+  });
+});

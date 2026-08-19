@@ -13,12 +13,22 @@
  * shows a correct time, labelled UTC.
  */
 function localiseTimes(root = document) {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+  // A zone the visitor picked in settings beats the browser's. Without this the
+  // setting only affected email, so someone who set PST still saw their device's
+  // zone on every page and reasonably concluded the app ignored them.
+  const chosen = document.body?.dataset?.tz || null;
+  const zone = chosen || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const inZone = chosen ? { timeZone: chosen } : {};
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    ...inZone,
+  });
   const day = new Intl.DateTimeFormat(undefined, {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
+    ...inZone,
   });
 
   for (const el of root.querySelectorAll('time[data-local]')) {
@@ -28,7 +38,7 @@ function localiseTimes(root = document) {
     const d = el.querySelector('[data-local-day]');
     if (t) t.textContent = time.format(at);
     if (d) d.textContent = day.format(at);
-    el.title = `${at.toLocaleString()} (${zone})`;
+    el.title = `${at.toLocaleString(undefined, inZone)} (${zone})`;
   }
 
   for (const el of document.querySelectorAll('[data-tz-label]')) el.textContent = zone;
@@ -44,8 +54,15 @@ function localiseTimes(root = document) {
 async function reportTimezone() {
   const el = document.querySelector('[data-known-tz]');
   if (!el) return;
+  const known = el.getAttribute('data-known-tz');
+
+  // Auto-detect only while the account is still on the untouched default. Once a
+  // zone has been set, the device must not quietly overwrite it -- that is how
+  // "my timezone is set to PST" ends up displaying something else entirely.
+  if (known && known !== 'UTC') return;
+
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!zone || zone === el.getAttribute('data-known-tz')) return;
+  if (!zone || zone === known) return;
   await fetch('/api/timezone', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

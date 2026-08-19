@@ -56,7 +56,14 @@ export const Layout = (props) => (
     {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens
         settings would otherwise get every reminder email stamped in UTC. */}
-    <body data-known-tz={props.user ? (props.user.timezone ?? 'UTC') : null}>
+    {/* data-tz is the zone the visitor CHOSE, and wins over the browser's when set:
+        a setting that does not change what you see is not a setting. data-known-tz
+        is what the server currently has on file, so the client only reports a
+        correction when it genuinely differs. */}
+    <body
+      data-tz={props.user?.timezone ?? null}
+      data-known-tz={props.user ? (props.user.timezone ?? 'UTC') : null}
+    >
       <a class="skip" href="#main">
         Skip to content
       </a>

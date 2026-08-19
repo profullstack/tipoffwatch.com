@@ -503,11 +503,12 @@ export const Settings = ({ user, prefs, passkeys }) => (
 
     <section>
       <h2>Time zone</h2>
-      {/* Pages show times in your browser's zone automatically. This is only for
-          email, which is rendered on a server with no browser to ask. */}
+      {/* This zone drives the whole site, not just email. It used to apply to email
+          only, so someone who set PST here still saw their device's zone on every
+          page and reasonably concluded the app was ignoring them. */}
       <p class="muted small">
-        Times on the site follow your browser (<span data-tz-label>your device</span>). This setting
-        is what emailed reminders use.
+        Every time on the site, and in emailed reminders, is shown in this zone. Leave it as
+        detected and it follows your device (<span data-tz-label>your device</span>).
       </p>
       <form method="post" action="/api/timezone">
         <label>
