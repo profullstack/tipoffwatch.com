@@ -72,11 +72,14 @@ async function reportTimezone() {
 
 /* --------------------------------------------------------------- helpers -- */
 
-const postJson = (url, body) =>
+const postJson = (url, body, { timeoutMs } = {}) =>
   fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    // A request with no ceiling is another way for a button to sit on a message
+    // forever. AbortSignal.timeout is missing on older Safari; there it just waits.
+    signal: timeoutMs && AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined,
   });
 
 /** Say what happened. The passkey button used to fail in total silence. */
@@ -121,6 +124,9 @@ const PERMISSION_DEADLINE_MS = 90_000;
 /** How often the browser's own permission state is re-read while the prompt is up. */
 const PERMISSION_POLL_MS = 400;
 const SUBSCRIBE_DEADLINE_MS = 20_000;
+/** Reading back an existing subscription is local, so it gets a short one. */
+const READBACK_DEADLINE_MS = 3_000;
+const SAVE_DEADLINE_MS = 15_000;
 
 /** Race a promise against a deadline, so no branch can leave the button waiting forever. */
 const withDeadline = (promise, ms) =>
@@ -210,7 +216,11 @@ async function initPush() {
   }
 
   async function paint() {
-    const sub = await reg.pushManager.getSubscription();
+    // Bounded: this read is what reveals the control, so a wedged push manager must
+    // not be able to hide the whole thing behind a promise that never settles.
+    const sub = await withDeadline(reg.pushManager.getSubscription(), READBACK_DEADLINE_MS).catch(
+      () => null,
+    );
     box.hidden = false;
 
     if (Notification.permission === 'denied') {
@@ -247,7 +257,16 @@ async function initPush() {
 
   /** Hand the subscription to the server, and say so if it will not take it. */
   async function save(sub) {
-    const res = await postJson('/api/push/subscribe', sub.toJSON());
+    say(msg, 'Saving…', 'info');
+    let res;
+    try {
+      res = await postJson('/api/push/subscribe', sub.toJSON(), { timeoutMs: SAVE_DEADLINE_MS });
+    } catch (err) {
+      console.warn('[push] save failed', err);
+      await sub.unsubscribe().catch(() => {});
+      say(msg, 'Could not reach the server. Try again in a moment.', 'error');
+      return;
+    }
     // A redirect means the session went away: fetch follows it and hands back a
     // perfectly fine 200 for the sign-in page, which used to read as success.
     if (res.redirected || !res.ok) {
@@ -313,12 +332,16 @@ async function initPush() {
         );
       } catch (err) {
         if (!err?.timedOut) throw err;
-        // It may still have completed after the deadline; take that if it did.
-        sub = await reg.pushManager.getSubscription();
+        console.warn('[push] subscribe did not finish within', SUBSCRIBE_DEADLINE_MS, 'ms');
+        // It may still have completed after the deadline; take that if it did. Bounded
+        // too, because a wedged push manager makes this read hang alongside subscribe.
+        sub = await withDeadline(reg.pushManager.getSubscription(), READBACK_DEADLINE_MS).catch(
+          () => null,
+        );
         if (!sub) {
           say(
             msg,
-            'Your browser could not reach its notification service. Email reminders still work.',
+            'Your browser never finished subscribing — its push service is unreachable. Some Chromium builds ship without one, and some networks block it. Email reminders still work.',
             'error',
           );
           return;

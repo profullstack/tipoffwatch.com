@@ -45,6 +45,8 @@ async function loadApp({ notification, pushManager, fetchImpl }) {
   src = src
     .replace('const PERMISSION_DEADLINE_MS = 90_000;', 'const PERMISSION_DEADLINE_MS = 600;')
     .replace('const SUBSCRIBE_DEADLINE_MS = 20_000;', 'const SUBSCRIBE_DEADLINE_MS = 300;')
+    .replace('const READBACK_DEADLINE_MS = 3_000;', 'const READBACK_DEADLINE_MS = 100;')
+    .replace('const SAVE_DEADLINE_MS = 15_000;', 'const SAVE_DEADLINE_MS = 300;')
     .replace('const PERMISSION_POLL_MS = 400;', 'const PERMISSION_POLL_MS = 25;');
 
   const box = el();
@@ -181,7 +183,41 @@ describe('notification toggle', () => {
     await btn.click();
 
     expect(msg.className).toBe('feedback error');
-    expect(msg.textContent).toContain('could not reach its notification service');
+    expect(msg.textContent).toContain('never finished subscribing');
+    expect(btn.disabled).toBe(false);
+  });
+
+  test('does not claim success when the save never lands', async () => {
+    // The POST is bounded too: an aborted or failed save used to be the one await
+    // left that could sit on a message with no ceiling.
+    const notification = { permission: 'granted', requestPermission: async () => 'granted' };
+    let dropped = false;
+    const subscription = {
+      endpoint: 'https://push.example/abc',
+      toJSON: () => ({ endpoint: 'https://push.example/abc', keys: { p256dh: 'p', auth: 'a' } }),
+      unsubscribe: async () => {
+        dropped = true;
+        return true;
+      },
+    };
+
+    const { btn, msg } = await loadApp({
+      notification,
+      pushManager: {
+        getSubscription: async () => null,
+        subscribe: async () => subscription,
+      },
+      fetchImpl: async () => {
+        throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' });
+      },
+    });
+
+    await until(() => btn.textContent === 'Turn on notifications');
+    await btn.click();
+
+    expect(msg.className).toBe('feedback error');
+    expect(msg.textContent).toContain('Could not reach the server');
+    expect(dropped).toBe(true);
     expect(btn.disabled).toBe(false);
   });
 
