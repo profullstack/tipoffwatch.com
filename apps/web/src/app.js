@@ -6,7 +6,7 @@ import * as q from '@tipoff/db/queries';
 import * as pay from '@tipoff/payments';
 import { connection } from '@tipoff/queue';
 import { sendLoginLink } from '@tipoff/notify';
-import { Landing, SportsIndex, SportPage, LeaguePage, Following, EventPage, SignIn, Settings, NotFound } from './views/pages.jsx';
+import { About, Landing, SportsIndex, SportPage, LeaguePage, Following, EventPage, SignIn, Settings, NotFound } from './views/pages.jsx';
 
 export const app = new Hono();
 
@@ -314,6 +314,66 @@ app.post('/api/webhooks/coinpay', async (c) => {
 
   const result = await pay.grantFromWebhook(JSON.parse(raw));
   return c.json(result);
+});
+
+/* -------------------------------------------------------------- public API -- */
+
+/**
+ * Free, unauthenticated, documented at its own root.
+ *
+ * The calendar is public data we already hold; making it readable by a script costs
+ * nothing and is the cheapest distribution this app has. Every response is bounded
+ * and cacheable.
+ */
+app.get('/api/v1', async (c) => {
+  const stats = await q.catalogueStats();
+  return c.json({
+    name: 'TipoffWatch API',
+    version: 1,
+    documentation: `${config.siteUrl}/api/v1`,
+    license: 'Free to use, no key required. Be reasonable.',
+    catalogue: stats,
+    endpoints: {
+      'GET /api/v1/sports': 'Every sport, with league counts.',
+      'GET /api/v1/leagues?sport=soccer': 'Leagues, optionally filtered by sport.',
+      'GET /api/v1/events?league=soccer-eng-1&sport=soccer&limit=100':
+        'Upcoming fixtures. Both filters optional; limit caps at 200.',
+    },
+  });
+});
+
+app.get('/api/v1/sports', async (c) => {
+  c.header('cache-control', 'public, max-age=300');
+  return c.json({ sports: await q.listSports() });
+});
+
+app.get('/api/v1/leagues', async (c) => {
+  const leagues = await q.listLeagues({ sport: c.req.query('sport') ?? null, limit: 1000 });
+  c.header('cache-control', 'public, max-age=300');
+  return c.json({
+    leagues: leagues.map((l) => ({
+      slug: l.slug,
+      name: l.name,
+      sport: l.sport,
+      abbreviation: l.abbreviation,
+      logo: l.logo_url,
+    })),
+  });
+});
+
+app.get('/api/v1/events', async (c) => {
+  const events = await q.publicEvents({
+    leagueSlug: c.req.query('league') ?? null,
+    sport: c.req.query('sport') ?? null,
+    limit: c.req.query('limit') ?? 100,
+  });
+  c.header('cache-control', 'public, max-age=60');
+  return c.json({ count: events.length, events });
+});
+
+app.get('/about', async (c) => {
+  const stats = await q.catalogueStats();
+  return c.html(<About user={c.get('user')} stats={stats} />);
 });
 
 /* ------------------------------------------------------------------ static -- */

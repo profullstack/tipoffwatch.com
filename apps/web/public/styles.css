@@ -113,3 +113,7 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 1rem; color: var(--m
   li.event { grid-template-columns: 4.2rem 1fr auto; }
   li.event .score { grid-column: 3; }
 }
+
+ul.stats { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 1.5rem; }
+ul.stats li { display: flex; flex-direction: column; }
+ul.stats strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }

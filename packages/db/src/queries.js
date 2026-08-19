@@ -416,3 +416,36 @@ export async function upcomingForLeague(leagueId, { limit = 200 } = {}) {
     limit ${limit}
   `;
 }
+
+/** Counts for the public API index and the about page. */
+export async function catalogueStats() {
+  const [row] = await sql`
+    select
+      (select count(*)::int from leagues where active)                as leagues,
+      (select count(distinct sport)::int from leagues where active)   as sports,
+      (select count(*)::int from teams)                               as teams,
+      (select count(*)::int from events where starts_at > now())      as upcoming_events,
+      (select max(updated_at) from events)                            as last_sync
+  `;
+  return row;
+}
+
+/** Public API event feed. Bounded and ordered so it cannot be used to scrape the lot. */
+export async function publicEvents({ leagueSlug = null, sport = null, from = null, limit = 100 }) {
+  const cap = Math.min(Math.max(Number(limit) || 100, 1), 200);
+  return sql`
+    select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name, e.venue,
+           e.home_score, e.away_score,
+           l.slug as league, l.name as league_name, l.sport,
+           ht.display_name as home, at.display_name as away
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.starts_at > coalesce(${from}::timestamptz, now() - interval '3 hours')
+      and (${leagueSlug}::text is null or l.slug = ${leagueSlug})
+      and (${sport}::text is null or l.sport = ${sport})
+    order by e.starts_at
+    limit ${cap}
+  `;
+}

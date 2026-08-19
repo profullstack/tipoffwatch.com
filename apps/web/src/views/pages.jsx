@@ -271,3 +271,38 @@ export const NotFound = ({ user }) => (
     <p><a href="/">Back to today's games</a></p>
   </Layout>
 );
+
+export const About = ({ user, stats }) => (
+  <Layout title="About" user={user} canonical="/about">
+    <h1>About TipoffWatch</h1>
+    <p>
+      A calendar for people who keep missing the start of games. Follow any team or
+      competition and get told an hour before kickoff, and again a minute out — by web
+      notification, email, or both.
+    </p>
+
+    <h2>What's in the directory</h2>
+    <ul class="stats">
+      <li><strong>{stats.sports}</strong> sports</li>
+      <li><strong>{stats.leagues}</strong> leagues</li>
+      <li><strong>{stats.teams}</strong> teams</li>
+      <li><strong>{stats.upcoming_events}</strong> upcoming fixtures</li>
+    </ul>
+    <p class="muted small">
+      Fixtures last refreshed{' '}
+      {stats.last_sync ? new Date(stats.last_sync).toUTCString() : 'not yet'}.
+    </p>
+
+    <h2>Is it really free?</h2>
+    <p>
+      Following teams, the calendar and the reminders are free and stay free. The only
+      thing anyone pays for is a live stream, when someone is sharing one.
+    </p>
+
+    <h2>Open data</h2>
+    <p>
+      The schedule is public data, so the <a href="/api/v1">API</a> is open and needs no
+      key. Take what you need.
+    </p>
+  </Layout>
+);
