@@ -1,0 +1,14 @@
+{
+  "name": "@tipoff/notify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "dependencies": {
+    "@tipoff/config": "workspace:*",
+    "@tipoff/db": "workspace:*",
+    "web-push": "^3.6.7"
+  }
+}
