@@ -150,6 +150,10 @@ export async function syncAll({
         // that exist in the catalogue but have no current season.
         failed++;
         if (failed <= 10) log(`[sync] ${league.slug} failed: ${err.message}`);
+        // Stamp it anyway. Otherwise a permanently-404 league keeps the rosterless
+        // count above zero and re-triggers a full 354-league sweep on every single
+        // boot, forever, for leagues that will never return one.
+        await q.markRostersSynced(league.id).catch(() => {});
       }
     }
   }

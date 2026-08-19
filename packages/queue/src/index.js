@@ -97,16 +97,30 @@ export async function installSchedules({ log = console.log } = {}) {
   // but only the clubs that happened to be playing. One backfill, then never again.
   const rosterless = await q.leaguesMissingRosters();
 
-  if (staleBy(ev.synced, 6 * 3600_000) || unnamed > 0 || rosterless > 0) {
-    log(
-      `[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, ` +
-        `unnamed: ${unnamed}, rosterless: ${rosterless})`,
-    );
-    await queues.sync.add(
-      'sync-all',
-      { kind: 'all' },
-      { jobId: `seed-all-${hourStamp()}`, delay: 20_000 },
-    );
+  const stale = staleBy(ev.synced, 6 * 3600_000);
+
+  if (stale || unnamed > 0 || rosterless > 0) {
+    /**
+     * The job id has to describe WHY we are syncing, not just when.
+     *
+     * An hour bucket alone deduplicates against any sync already run in that hour
+     * -- including one that ran before the code which created the new backfill
+     * need. That is exactly what happened with rosters: the boot logged "syncing
+     * now, rosterless: 354", BullMQ matched the id of the completed fixtures-only
+     * sync from earlier the same hour, and the backfill silently never ran.
+     *
+     * Including the outstanding counts means a genuinely new backfill gets a new
+     * id, while several instances booting together still collapse onto one job --
+     * which is all the bucket was ever for. The counts shrink to zero as the work
+     * lands, so this settles rather than looping.
+     */
+    const reason =
+      rosterless > 0 || unnamed > 0
+        ? `backfill-${dayStamp()}-u${unnamed}-r${rosterless}`
+        : `seed-all-${hourStamp()}`;
+
+    log(`[queue] syncing now (stale: ${stale}, unnamed: ${unnamed}, rosterless: ${rosterless})`);
+    await queues.sync.add('sync-all', { kind: 'all' }, { jobId: reason, delay: 20_000 });
   }
 
   log('[queue] schedules installed');
