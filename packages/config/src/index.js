@@ -44,7 +44,18 @@ export const config = {
    *  every credential already registered. */
   siteUrl: opt('SITE_URL', 'http://localhost:3000').replace(/\/$/, ''),
 
-  databaseUrl: req('DATABASE_URL', 'postgres://localhost:5432/tipoffwatch'),
+  /**
+   * No fallback, deliberately.
+   *
+   * Giving `req` a default defeats the only thing it does. A service deployed
+   * without DATABASE_URL then silently dialled localhost and died several seconds
+   * later with `ERR_POSTGRES_CONNECTION_CLOSED` — a Postgres error that says
+   * nothing about the actual problem, which is a missing variable. Failing here
+   * names it.
+   */
+  databaseUrl: req('DATABASE_URL'),
+
+  /** Redis genuinely is optional: without it the cache degrades to hitting Postgres. */
   redisUrl: opt('REDIS_URL', 'redis://localhost:6379'),
 
   /** Which roles this process runs. One Railway service runs "web,worker"; splitting

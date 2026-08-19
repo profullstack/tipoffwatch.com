@@ -16,15 +16,43 @@ import { app } from './app.js';
 // Fail at boot rather than at checkout if the CoinPay credential is the wrong family.
 assertCoinpayMerchantKey();
 
+/**
+ * Turn an infrastructure failure into a sentence someone can act on.
+ *
+ * A container that cannot reach Postgres dies with `ERR_POSTGRES_CONNECTION_CLOSED`
+ * and a stack trace inside Bun's driver. That is indistinguishable from a bug in
+ * this app, and the actual cause is nearly always a variable that was never set on
+ * the service — which the deploy log should say outright rather than making someone
+ * infer it from a driver internal.
+ */
+async function preflight(what, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    const target = what === 'postgres' ? config.databaseUrl : config.redisUrl;
+    // Host only — a connection string carries the password.
+    let host = 'unparseable';
+    try {
+      host = new URL(target).host;
+    } catch {}
+    console.error(
+      `[boot] cannot reach ${what} at ${host}: ${err?.message ?? err}\n` +
+        `[boot] check the ${what === 'postgres' ? 'DATABASE_URL' : 'REDIS_URL'} variable on this service ` +
+        `(Railway does not share variables between services — a datastore in another project is not reachable).`,
+    );
+    throw err;
+  }
+}
+
 // Migrations apply themselves. An advisory lock inside makes this safe when the web
 // and worker roles boot at the same moment.
-await migrate();
+await preflight('postgres', () => migrate());
 
 if (!(await healthcheck())) throw new Error('database healthcheck failed at boot');
 
 let workers = [];
 if (config.roles.includes('worker')) {
-  await installSchedules();
+  await preflight('redis', () => installSchedules());
   workers = startWorkers();
 }
 

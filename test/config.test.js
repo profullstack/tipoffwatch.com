@@ -19,3 +19,33 @@ describe('coinpay credential family', () => {
     expect(typeof mod.config).toBe('object');
   });
 });
+
+describe('required variables', () => {
+  test('a missing DATABASE_URL fails at boot, naming itself', async () => {
+    const saved = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    try {
+      // The regression this guards: `req('DATABASE_URL', 'postgres://localhost…')`
+      // silently dialled localhost instead, so a service deployed without the
+      // variable died seconds later with ERR_POSTGRES_CONNECTION_CLOSED — a driver
+      // error that names neither the variable nor the service.
+      await expect(import(`../packages/config/src/index.js?missing=${Date.now()}`)).rejects.toThrow(
+        /DATABASE_URL/,
+      );
+    } finally {
+      process.env.DATABASE_URL = saved;
+    }
+  });
+
+  test('REDIS_URL stays optional', async () => {
+    const saved = process.env.REDIS_URL;
+    delete process.env.REDIS_URL;
+    try {
+      const mod = await import(`../packages/config/src/index.js?noredis=${Date.now()}`);
+      expect(mod.config.redisUrl).toContain('redis://');
+    } finally {
+      if (saved === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = saved;
+    }
+  });
+});
