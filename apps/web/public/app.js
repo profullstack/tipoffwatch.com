@@ -183,6 +183,22 @@ function askPermission() {
 }
 
 /**
+ * Is this Brave?
+ *
+ * Brave ships with Google's push service switched off, and `subscribe()` then never
+ * settles rather than failing -- so the generic "unreachable" message is true but
+ * useless. Brave exposes `navigator.brave.isBrave()` for exactly this kind of
+ * feature-specific advice.
+ */
+async function isBrave() {
+  try {
+    return (await navigator.brave?.isBrave?.()) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Notification toggle.
  *
  * Every branch reports what happened and re-enables the button. The two awaits
@@ -341,7 +357,9 @@ async function initPush() {
         if (!sub) {
           say(
             msg,
-            'Your browser never finished subscribing — its push service is unreachable. Some Chromium builds ship without one, and some networks block it. Email reminders still work.',
+            (await isBrave())
+              ? 'Brave keeps push notifications off until you turn on “Use Google services for push messaging” in brave://settings/privacy and restart Brave. Email reminders still work meanwhile.'
+              : 'Your browser never finished subscribing — its push service is unreachable. Some Chromium builds ship without one, and some networks block it. Email reminders still work.',
             'error',
           );
           return;

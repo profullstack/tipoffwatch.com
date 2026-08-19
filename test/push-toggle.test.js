@@ -40,7 +40,7 @@ const el = () => ({
  * The deadlines are shortened by rewriting the two named constants, because a test
  * that genuinely waits 20 seconds for the subscribe timeout is a test nobody runs.
  */
-async function loadApp({ notification, pushManager, fetchImpl }) {
+async function loadApp({ notification, pushManager, fetchImpl, brave = false }) {
   let src = await readFile(APP_JS, 'utf8');
   src = src
     .replace('const PERMISSION_DEADLINE_MS = 90_000;', 'const PERMISSION_DEADLINE_MS = 600;')
@@ -74,6 +74,8 @@ async function loadApp({ notification, pushManager, fetchImpl }) {
 
   const registration = { pushManager };
   const navigator = {
+    // Brave, and only Brave, exposes this.
+    brave: brave ? { isBrave: async () => true } : undefined,
     serviceWorker: {
       register: async () => registration,
       ready: Promise.resolve(registration),
@@ -184,6 +186,29 @@ describe('notification toggle', () => {
 
     expect(msg.className).toBe('feedback error');
     expect(msg.textContent).toContain('never finished subscribing');
+    expect(btn.disabled).toBe(false);
+  });
+
+  test('names the Brave setting when Brave is the browser', async () => {
+    // Brave keeps Google's push service off by default, and subscribe() then never
+    // settles. Saying "unreachable" is true but leaves nothing to act on.
+    const notification = { permission: 'granted', requestPermission: async () => 'granted' };
+
+    const { btn, msg } = await loadApp({
+      notification,
+      brave: true,
+      pushManager: {
+        getSubscription: async () => null,
+        subscribe: () => new Promise(() => {}),
+      },
+      fetchImpl: async () => okJson(),
+    });
+
+    await until(() => btn.textContent === 'Turn on notifications');
+    await btn.click();
+
+    expect(msg.className).toBe('feedback error');
+    expect(msg.textContent).toContain('brave://settings/privacy');
     expect(btn.disabled).toBe(false);
   });
 
