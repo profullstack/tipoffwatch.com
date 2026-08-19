@@ -284,3 +284,66 @@ describe('stream offers', () => {
     expect((await ins()).rows.length).toBe(0);
   });
 });
+
+describe('team ↔ league membership', () => {
+  test('a club in several competitions appears in every one of them', async () => {
+    const l1 = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','soccer/eng.1b','soccer','eng-1b','Premier League') returning id`,
+    );
+    const l2 = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','soccer/eng.fa','soccer','eng-fa','FA Cup') returning id`,
+    );
+    const team = await one(
+      `insert into teams (provider, provider_key, league_id, slug, name, display_name)
+       values ('espn','soccer/368',$1,'eng-1b-368','Everton','Everton') returning id`,
+      [l1.id],
+    );
+
+    // Both competitions claim the club, in either order.
+    for (const l of [l1, l2]) {
+      await db.query(
+        `insert into team_leagues (team_id, league_id) values ($1,$2) on conflict do nothing`,
+        [team.id, l.id],
+      );
+    }
+
+    const inLeague = async (leagueId) =>
+      (
+        await db.query(
+          `select t.display_name from team_leagues tl
+           join teams t on t.id = tl.team_id where tl.league_id = $1`,
+          [leagueId],
+        )
+      ).rows.map((r) => r.display_name);
+
+    // The bug: teams.league_id was a single FK, so the second competition's sweep
+    // overwrote the first and the club vanished from its own league page.
+    expect(await inLeague(l1.id)).toContain('Everton');
+    expect(await inLeague(l2.id)).toContain('Everton');
+  });
+
+  test('re-linking the same pair is idempotent', async () => {
+    const l = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','x/idem','soccer','x-idem','L') returning id`,
+    );
+    const t = await one(
+      `insert into teams (provider, provider_key, league_id, slug, name, display_name)
+       values ('espn','x/idem-1',$1,'x-idem-1','T','T') returning id`,
+      [l.id],
+    );
+    for (let i = 0; i < 3; i++) {
+      await db.query(
+        `insert into team_leagues (team_id, league_id) values ($1,$2) on conflict do nothing`,
+        [t.id, l.id],
+      );
+    }
+    const { rows } = await db.query(
+      `select count(*)::int as n from team_leagues where team_id = $1 and league_id = $2`,
+      [t.id, l.id],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+});

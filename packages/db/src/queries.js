@@ -144,8 +144,7 @@ export async function upsertTeams(teams) {
       name = excluded.name,
       display_name = excluded.display_name,
       abbreviation = excluded.abbreviation,
-      logo_url = coalesce(excluded.logo_url, teams.logo_url),
-      league_id = coalesce(excluded.league_id, teams.league_id)
+      logo_url = coalesce(excluded.logo_url, teams.logo_url)
     returning id, provider_key
   `;
 }
@@ -542,10 +541,11 @@ export async function teamsForLeague(leagueId, userId = null) {
            (select count(*)::int from events e
              where (e.home_team_id = t.id or e.away_team_id = t.id)
                and e.starts_at > now()) as upcoming
-    from teams t
+    from team_leagues tl
+    join teams t on t.id = tl.team_id
     left join follows f
       on f.subject_type = 'team' and f.subject_id = t.id and f.user_id = ${userId}::uuid
-    where t.league_id = ${leagueId}
+    where tl.league_id = ${leagueId}
     order by t.display_name
   `;
 }
@@ -612,4 +612,20 @@ export async function leaguesMissingRosters() {
     select count(*)::int as n from leagues where active and rosters_synced_at is null
   `;
   return row.n;
+}
+
+/**
+ * Record which competitions a team plays in.
+ *
+ * Separate from the teams upsert because it is many-to-many: a club appears in its
+ * league, its cup and often a continental competition, and each sweep should add
+ * its own edge rather than overwrite the others.
+ */
+export async function linkTeamsToLeague(teamIds, leagueId) {
+  if (teamIds.length === 0) return;
+  await sql`
+    insert into team_leagues (team_id, league_id)
+    select unnest(${pgArray(teamIds)}::bigint[]), ${leagueId}
+    on conflict do nothing
+  `;
 }

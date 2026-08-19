@@ -76,7 +76,13 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
   }
 
   if (fixtures.length === 0) {
-    if (teamRows.size > 0) await q.upsertTeams([...teamRows.values()]);
+    if (teamRows.size > 0) {
+      const onlyRoster = await q.upsertTeams([...teamRows.values()]);
+      await q.linkTeamsToLeague(
+        onlyRoster.map((r) => r.id),
+        league.id,
+      );
+    }
     await q.markRostersSynced(league.id);
     return { events: 0, teams: teamRows.size };
   }
@@ -101,6 +107,15 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
 
   const saved = await q.upsertTeams([...teamRows.values()]);
   const teamId = new Map(saved.map((r) => [r.provider_key, r.id]));
+
+  // Record the membership edge rather than stamping a single league onto the team.
+  // A club plays in its league, its cup and often a continental competition; the old
+  // single column meant whichever swept last owned the club and every other league
+  // page lost it.
+  await q.linkTeamsToLeague(
+    saved.map((r) => r.id),
+    league.id,
+  );
 
   const eventRows = fixtures.map((f) => ({
     provider: league.provider,
