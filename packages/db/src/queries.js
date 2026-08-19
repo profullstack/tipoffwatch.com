@@ -6,6 +6,21 @@ import { sql } from './index.js';
  * grep instead of an archaeology dig.
  */
 
+/**
+ * A Postgres array literal.
+ *
+ * Bun's parameter serialiser stringifies a JS array with Array.prototype.toString,
+ * so `['internal','hybrid']` reaches Postgres as `internal,hybrid` and is rejected
+ * as a malformed array literal — silently breaking passkey registration, saving
+ * reminder preferences, and the reminder fan-out's user lookup. Building the
+ * literal here and casting at the call site is deterministic and does not depend
+ * on how the driver decides to encode a parameter.
+ */
+export function pgArray(values) {
+  const items = (values ?? []).map((v) => `"${String(v).replace(/(["\\])/g, '\\$1')}"`);
+  return `{${items.join(',')}}`;
+}
+
 /* ---------------------------------------------------------------- accounts -- */
 
 /**
@@ -60,13 +75,14 @@ export async function endSession(sessionId) {
 /* ---------------------------------------------------------------- passkeys -- */
 
 export async function insertPasskey({ credentialId, userId, publicKey, counter, transports }) {
-  await sql`insert into passkeys ${sql({
-    credential_id: credentialId,
-    user_id: userId,
-    public_key: publicKey,
-    counter,
-    transports: transports ?? [],
-  })}`;
+  await sql`
+    insert into passkeys (credential_id, user_id, public_key, counter, transports)
+    values (${credentialId}, ${userId}, ${publicKey}, ${counter}, ${pgArray(transports)}::text[])
+    on conflict (credential_id) do update set
+      public_key = excluded.public_key,
+      counter = excluded.counter,
+      transports = excluded.transports
+  `;
 }
 
 export async function getPasskey(credentialId) {
@@ -332,7 +348,7 @@ export async function deliveryTargets(userIds) {
     from users u
     left join reminder_prefs p on p.user_id = u.id
     left join push_subscriptions ps on ps.user_id = u.id and ps.disabled_at is null
-    where u.id = any(${userIds}::uuid[])
+    where u.id = any(${pgArray(userIds)}::uuid[])
     group by u.id, p.channels, p.offsets_minutes
   `;
 }
@@ -393,7 +409,8 @@ export async function getPrefs(userId) {
 
 export async function savePrefs({ userId, offsetsMinutes, channels }) {
   await sql`
-    insert into reminder_prefs ${sql({ user_id: userId, offsets_minutes: offsetsMinutes, channels })}
+    insert into reminder_prefs (user_id, offsets_minutes, channels)
+    values (${userId}, ${pgArray(offsetsMinutes)}::int[], ${pgArray(channels)}::text[])
     on conflict (user_id) do update set
       offsets_minutes = excluded.offsets_minutes,
       channels = excluded.channels,
@@ -506,5 +523,80 @@ export async function eventsForMonth(month, { limit = 45000, offset = 0 } = {}) 
     where to_char(starts_at, 'YYYY-MM') = ${month}
     order by starts_at, id
     limit ${limit} offset ${offset}
+  `;
+}
+
+/* ------------------------------------------------------- browse + follow -- */
+
+/**
+ * Teams in a league, with whether this user already follows each.
+ *
+ * The follow state is joined rather than fetched separately so the picker can render
+ * the right button in one pass; a second round trip per team is what makes a
+ * 500-team league page crawl.
+ */
+export async function teamsForLeague(leagueId, userId = null) {
+  return sql`
+    select t.id, t.slug, t.display_name, t.logo_url,
+           (f.user_id is not null) as following,
+           (select count(*)::int from events e
+             where (e.home_team_id = t.id or e.away_team_id = t.id)
+               and e.starts_at > now()) as upcoming
+    from teams t
+    left join follows f
+      on f.subject_type = 'team' and f.subject_id = t.id and f.user_id = ${userId}::uuid
+    where t.league_id = ${leagueId}
+    order by t.display_name
+  `;
+}
+
+export async function getTeamBySlug(slug) {
+  const [row] = await sql`
+    select t.*, l.name as league_name, l.slug as league_slug, l.sport
+    from teams t left join leagues l on l.id = t.league_id
+    where t.slug = ${slug}
+  `;
+  return row ?? null;
+}
+
+export async function isFollowing({ userId, subjectType, subjectId }) {
+  if (!userId) return false;
+  const [row] = await sql`
+    select 1 from follows
+    where user_id = ${userId} and subject_type = ${subjectType} and subject_id = ${subjectId}
+  `;
+  return Boolean(row);
+}
+
+/** A single team's upcoming fixtures, home or away. */
+export async function upcomingForTeam(teamId, { limit = 60 } = {}) {
+  return sql`
+    select e.*, l.name as league_name, l.sport,
+           ht.display_name as home_name, at.display_name as away_name
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where (e.home_team_id = ${teamId} or e.away_team_id = ${teamId})
+      and e.starts_at > now() - interval '3 hours'
+    order by e.starts_at
+    limit ${limit}
+  `;
+}
+
+/** Remember the viewer's timezone, which is what email reminders are stamped in. */
+export async function setUserTimezone(userId, timezone) {
+  await sql`update users set timezone = ${timezone} where id = ${userId}`;
+}
+
+/** Leagues in a sport, with whether this user follows each. */
+export async function leaguesForSport(sport, userId = null) {
+  return sql`
+    select l.*, (f.user_id is not null) as following
+    from leagues l
+    left join follows f
+      on f.subject_type = 'league' and f.subject_id = l.id and f.user_id = ${userId}::uuid
+    where l.active and l.sport = ${sport}
+    order by l.priority, l.name
   `;
 }

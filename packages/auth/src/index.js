@@ -22,6 +22,32 @@ const TOKEN_TTL_MINUTES = 20;
 export const rpID = new URL(config.siteUrl).hostname;
 export const rpName = 'TipoffWatch';
 
+/**
+ * Every origin a credential may legitimately be created from.
+ *
+ * The apex and `www` both serve this app, and an rpID of `tipoffwatch.com` is valid
+ * for both -- so the browser happily creates the credential on `www`, the password
+ * manager saves it, and then the server rejects the response because its single
+ * expectedOrigin was the apex. The user sees a passkey in Bitwarden and no account
+ * to use it with, which is the worst of both outcomes.
+ *
+ * SimpleWebAuthn accepts an array, so list them rather than picking one.
+ */
+export const expectedOrigins = (() => {
+  const site = new URL(config.siteUrl);
+  const origins = new Set([site.origin]);
+  if (site.hostname.startsWith('www.')) {
+    origins.add(`${site.protocol}//${site.hostname.slice(4)}`);
+  } else {
+    origins.add(`${site.protocol}//www.${site.hostname}`);
+  }
+  for (const extra of (process.env.EXTRA_WEBAUTHN_ORIGINS ?? '').split(',')) {
+    const trimmed = extra.trim();
+    if (trimmed) origins.add(trimmed.replace(/\/$/, ''));
+  }
+  return [...origins];
+})();
+
 const hashToken = (t) => createHash('sha256').update(t).digest();
 
 /* ------------------------------------------------------------- magic link -- */
@@ -82,7 +108,7 @@ export async function verifyPasskeyRegistration({ user, response, expectedChalle
   const v = await verifyRegistrationResponse({
     response,
     expectedChallenge,
-    expectedOrigin: config.siteUrl,
+    expectedOrigin: expectedOrigins,
     expectedRPID: rpID,
   });
   if (!v.verified || !v.registrationInfo) return false;
@@ -111,7 +137,7 @@ export async function verifyPasskeyAuthentication({ response, expectedChallenge,
   const v = await verifyAuthenticationResponse({
     response,
     expectedChallenge,
-    expectedOrigin: config.siteUrl,
+    expectedOrigin: expectedOrigins,
     expectedRPID: rpID,
     credential: {
       id: stored.credential_id,

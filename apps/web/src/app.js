@@ -17,6 +17,7 @@ import {
   SignIn,
   SportPage,
   SportsIndex,
+  TeamPage,
 } from './views/pages.jsx';
 
 export const app = new Hono();
@@ -71,8 +72,6 @@ app.onError((err, c) => {
   return c.json({ error: 'internal' }, 500);
 });
 
-const tzOf = (c) => c.get('user')?.timezone ?? 'UTC';
-
 /* --------------------------------------------------------------- read path -- */
 
 /**
@@ -108,34 +107,60 @@ app.get('/', async (c) => {
   const today = new Date().toISOString().slice(0, 10);
   return cached(c, `page:home:${today}`, config.cache.scheduleTtlSeconds, async () => {
     const events = await q.scheduleForDay({ day: today, limit: 40 });
-    return render(
-      <Landing user={c.get('user')} today={events} tz={tzOf(c)} vapidKey={config.push.publicKey} />,
-    );
+    return render(<Landing user={c.get('user')} today={events} vapidKey={config.push.publicKey} />);
   });
 });
 
 app.get('/sports', async (c) =>
   cached(c, 'page:sports', 300, async () => {
-    const [sports, leagues] = await Promise.all([q.listSports(), q.listLeagues({ limit: 30 })]);
-    return render(<SportsIndex user={c.get('user')} sports={sports} leagues={leagues} />);
+    const sports = await q.listSports();
+    return render(<SportsIndex user={c.get('user')} sports={sports} />);
   }),
 );
 
 app.get('/sports/:sport', async (c) => {
+  const user = c.get('user');
   const sport = c.req.param('sport');
-  const leagues = await q.listLeagues({ sport, limit: 500 });
-  if (leagues.length === 0) return c.html(await render(<NotFound user={c.get('user')} />), 404);
-  return c.html(await render(<SportPage user={c.get('user')} sport={sport} leagues={leagues} />));
+  const leagues = await q.leaguesForSport(sport, user?.id ?? null);
+  if (leagues.length === 0) return c.html(await render(<NotFound user={user} />), 404);
+  return c.html(await render(<SportPage user={user} sport={sport} leagues={leagues} />));
 });
 
 app.get('/leagues/:slug', async (c) => {
+  const user = c.get('user');
   const slug = c.req.param('slug');
   const league = await q.getLeagueBySlug(slug);
-  if (!league) return c.html(await render(<NotFound user={c.get('user')} />), 404);
+  if (!league) return c.html(await render(<NotFound user={user} />), 404);
+
   return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
-    const events = await q.upcomingForLeague(league.id);
-    return render(<LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />);
+    const [teams, events, following] = await Promise.all([
+      q.teamsForLeague(league.id, user?.id ?? null),
+      q.upcomingForLeague(league.id),
+      q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
+    ]);
+    return render(
+      <LeaguePage
+        user={user}
+        league={league}
+        teams={teams}
+        events={events}
+        following={following}
+      />,
+    );
   });
+});
+
+app.get('/teams/:slug', async (c) => {
+  const user = c.get('user');
+  const team = await q.getTeamBySlug(c.req.param('slug'));
+  if (!team) return c.html(await render(<NotFound user={user} />), 404);
+  const [events, following] = await Promise.all([
+    q.upcomingForTeam(team.id),
+    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
+  ]);
+  return c.html(
+    await render(<TeamPage user={user} team={team} events={events} following={following} />),
+  );
 });
 
 app.get('/following', async (c) => {
@@ -143,13 +168,7 @@ app.get('/following', async (c) => {
   const [events, follows] = await Promise.all([q.upcomingForUser(user.id), q.listFollows(user.id)]);
   return c.html(
     await render(
-      <Following
-        user={user}
-        events={events}
-        follows={follows}
-        tz={user.timezone}
-        vapidKey={config.push.publicKey}
-      />,
+      <Following user={user} events={events} follows={follows} vapidKey={config.push.publicKey} />,
     ),
   );
 });
@@ -163,15 +182,7 @@ app.get('/events/:id', async (c) => {
     user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
   ]);
   return c.html(
-    await render(
-      <EventPage
-        user={user}
-        event={event}
-        tz={tzOf(c)}
-        offers={offers}
-        entitlement={entitlement}
-      />,
-    ),
+    await render(<EventPage user={user} event={event} offers={offers} entitlement={entitlement} />),
   );
 });
 
@@ -327,6 +338,33 @@ app.post('/api/prefs', async (c) => {
       .map(String)
       .filter((s) => ['webpush', 'email'].includes(s)),
   });
+  return respond(c, { redirectTo: '/settings' });
+});
+
+/**
+ * Store the viewer's time zone.
+ *
+ * Only used for email, which is rendered server-side with no browser to ask. Pages
+ * localise in the browser, so this is not what makes the site show the right times.
+ * Accepts both the form post from settings and the automatic report from app.js.
+ */
+app.post('/api/timezone', async (c) => {
+  const user = requireUser(c);
+  const contentType = c.req.header('content-type') ?? '';
+  const body = contentType.includes('application/json')
+    ? await c.req.json().catch(() => ({}))
+    : await c.req.parseBody();
+  const timezone = String(body.timezone ?? '').trim();
+
+  // Validate against the platform's own zone database rather than a regex: an
+  // invalid zone stored here would throw inside every reminder email later.
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+  } catch {
+    return c.json({ error: 'unknown time zone' }, 400);
+  }
+
+  await q.setUserTimezone(user.id, timezone);
   return respond(c, { redirectTo: '/settings' });
 });
 

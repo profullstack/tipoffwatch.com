@@ -377,3 +377,131 @@ form.follow button {
   padding: 0.35rem 0.6rem;
   font: inherit;
 }
+
+/* Breadcrumb for the sport → league → team picker. */
+ol.crumbs {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+ol.crumbs li + li::before {
+  content: "›";
+  margin-right: 0.4rem;
+}
+ol.crumbs a {
+  color: var(--muted);
+}
+ol.crumbs [aria-current="page"] {
+  color: var(--fg);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.page-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+ul.teams {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+li.team {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  margin-bottom: 0.4rem;
+}
+li.team img {
+  border-radius: 4px;
+  object-fit: contain;
+}
+.team-blank {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background: var(--line);
+}
+.team-name {
+  display: flex;
+  flex-direction: column;
+}
+.team-name a {
+  text-decoration: none;
+  font-weight: 600;
+}
+.team-name .meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.small-btn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+}
+button.following {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+ul.passkeys {
+  list-style: none;
+  padding: 0;
+}
+ul.passkeys li {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.8rem;
+  margin-bottom: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+ul.passkeys .muted {
+  font-size: 0.8rem;
+}
+
+/* Feedback under a button that used to fail in silence. */
+.feedback {
+  margin-top: 0.6rem;
+  font-size: 0.9rem;
+}
+.feedback.ok {
+  color: var(--ok);
+}
+.feedback.error {
+  color: var(--live);
+}
+.feedback.info {
+  color: var(--muted);
+}
+
+select {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  margin-top: 0.25rem;
+}

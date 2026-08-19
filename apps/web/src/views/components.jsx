@@ -1,19 +1,42 @@
 /** Shared bits of markup. Kept small and dumb on purpose. */
 
-const fmtTime = (d, tz) =>
+/**
+ * Times are rendered in UTC on the server and localised in the browser.
+ *
+ * Schedule pages are cached in Redis and served byte-identical to everyone, so a
+ * time baked in one viewer's zone would be wrong for the next. The server emits a
+ * machine-readable UTC `datetime` plus a readable UTC fallback, and public/app.js
+ * rewrites the text to the viewer's own zone. With JavaScript off the page still
+ * shows a correct time, explicitly labelled UTC rather than silently wrong.
+ */
+const fmtTimeUtc = (d) =>
   new Date(d).toLocaleTimeString('en-US', {
-    timeZone: tz || 'UTC',
+    timeZone: 'UTC',
     hour: 'numeric',
     minute: '2-digit',
   });
 
-const fmtDay = (d, tz) =>
+const fmtDayUtc = (d) =>
   new Date(d).toLocaleDateString('en-US', {
-    timeZone: tz || 'UTC',
+    timeZone: 'UTC',
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   });
+
+export const LocalTime = ({ at }) => {
+  const iso = new Date(at).toISOString();
+  return (
+    <time datetime={iso} data-local>
+      <span class="t" data-local-time>
+        {fmtTimeUtc(at)}
+      </span>
+      <span class="d" data-local-day>
+        {fmtDayUtc(at)}
+      </span>
+    </time>
+  );
+};
 
 export const StateBadge = ({ state, detail }) => {
   if (state === 'in') return <span class="badge live">● Live</span>;
@@ -21,12 +44,30 @@ export const StateBadge = ({ state, detail }) => {
   return null;
 };
 
-export const EventRow = ({ event, tz, user, following }) => (
+/** Follow / unfollow as a plain form, so it works with JavaScript off. */
+export const FollowButton = ({ user, subjectType, subjectId, following, next, label }) => {
+  if (!user) {
+    return (
+      <a class="ghost small-btn" href={`/login?next=${encodeURIComponent(next ?? '/')}`}>
+        Sign in to follow
+      </a>
+    );
+  }
+  return (
+    <form method="post" action={following ? '/api/unfollow' : '/api/follow'} class="inline">
+      <input type="hidden" name="subject_type" value={subjectType} />
+      <input type="hidden" name="subject_id" value={subjectId} />
+      <input type="hidden" name="next" value={next ?? '/'} />
+      <button type="submit" class={following ? 'ghost small-btn following' : 'cta small-btn'}>
+        {following ? '★ Following' : `☆ Follow${label ? ` ${label}` : ''}`}
+      </button>
+    </form>
+  );
+};
+
+export const EventRow = ({ event }) => (
   <li class={`event ${event.state}`}>
-    <time datetime={new Date(event.starts_at).toISOString()}>
-      <span class="t">{fmtTime(event.starts_at, tz)}</span>
-      <span class="d">{fmtDay(event.starts_at, tz)}</span>
-    </time>
+    <LocalTime at={event.starts_at} />
 
     <div class="matchup">
       <a href={`/events/${event.id}`}>
@@ -46,28 +87,40 @@ export const EventRow = ({ event, tz, user, following }) => (
         {event.away_score}–{event.home_score}
       </span>
     ) : null}
-
-    {/* A plain form, so following works with JavaScript off. */}
-    {user && event.home_team_id ? (
-      <form method="post" action={following ? '/api/unfollow' : '/api/follow'} class="follow">
-        <input type="hidden" name="subject_type" value="team" />
-        <input type="hidden" name="subject_id" value={event.home_team_id} />
-        <input type="hidden" name="next" value="/following" />
-        <button type="submit" title={following ? 'Unfollow' : 'Follow the home team'}>
-          {following ? '★' : '☆'}
-        </button>
-      </form>
-    ) : null}
   </li>
 );
 
-export const EventList = ({ events, tz, user, emptyText }) =>
+export const EventList = ({ events, emptyText }) =>
   events.length === 0 ? (
     <p class="empty">{emptyText ?? 'Nothing scheduled.'}</p>
   ) : (
     <ul class="events">
       {events.map((e) => (
-        <EventRow event={e} tz={tz} user={user} />
+        <EventRow event={e} />
       ))}
     </ul>
   );
+
+/** A team in the follow picker. */
+export const TeamRow = ({ team, user, next }) => (
+  <li class="team">
+    {team.logo_url ? (
+      <img src={team.logo_url} alt="" loading="lazy" width="28" height="28" />
+    ) : (
+      <span class="team-blank" />
+    )}
+    <div class="team-name">
+      <a href={`/teams/${team.slug}`}>{team.display_name}</a>
+      <span class="meta">
+        {team.upcoming > 0 ? `${team.upcoming} upcoming` : 'no fixtures scheduled'}
+      </span>
+    </div>
+    <FollowButton
+      user={user}
+      subjectType="team"
+      subjectId={team.id}
+      following={team.following}
+      next={next}
+    />
+  </li>
+);

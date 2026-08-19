@@ -56,8 +56,15 @@ export const Layout = (props) => (
 
       <footer>
         <p>
-          TipoffWatch is free. Schedules refresh continuously; times are shown in{' '}
-          {props.user?.timezone ?? 'your local time'}.
+          TipoffWatch is free. Times are shown in your own time zone (
+          <span data-tz-label>your device</span>).
+        </p>
+        <p class="muted">
+          Schedule data from{' '}
+          <a href="https://www.espn.com" rel="noopener nofollow">
+            ESPN
+          </a>
+          's public API. Not affiliated with ESPN.
         </p>
         <p class="muted">
           <a href="/sports">Browse sports</a> · <a href="/about">About</a> ·{' '}
