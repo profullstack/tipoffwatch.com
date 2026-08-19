@@ -787,25 +787,42 @@ ul.plays.scoring .play-when {
    A panel like every other section on the page. The first version was three bare
    lines on the background with no container and no affordance -- it read as
    unfinished, because it was. */
+/* Two follow buttons, one per team. They carry full team names, so on a narrow
+   screen they have to be allowed to wrap onto separate lines -- side by side they
+   ran off the edge of a phone. */
+.follow-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.follow-pair .inline {
+  display: inline-flex;
+  min-width: 0;
+}
+.follow-pair button {
+  max-width: 100%;
+}
+
+/* Comments read as one more section of the page, not a widget dropped onto it.
+   Follow, Live action and Watch are all borderless with a plain heading; boxing
+   this one put a panel inside a panel -- the composer already has a border, so
+   the outer frame was a second edge around the first for no reason. */
 .comments-panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 1rem 1.1rem 1.1rem;
   margin-top: 2rem;
 }
 .comments-head {
   display: flex;
   align-items: baseline;
   gap: 0.6rem;
-  margin-bottom: 0.9rem;
 }
+/* Sized and spaced by the base h2 rule, so it lines up with its siblings. */
 .comments-head h2 {
   margin: 0;
-  font-size: 1.3rem;
 }
 .comments-head .count {
-  font-size: 1rem;
+  font-family: var(--mono);
+  font-size: 0.95rem;
   color: var(--muted);
 }
 
@@ -830,10 +847,11 @@ ul.plays.scoring .play-when {
   display: flex;
   gap: 0.75rem;
   align-items: flex-start;
-  padding: 0.85rem;
+  padding: 0.9rem 1rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--ground);
+  background: var(--panel);
+  margin-top: 0.9rem;
 }
 .composer-body {
   flex: 1;
@@ -863,14 +881,29 @@ ul.plays.scoring .play-when {
   justify-content: space-between;
   gap: 0.75rem;
 }
+/* Signed out there is no textarea, so the prompt and the button belong on one
+   line. Stacked, they left a tall box mostly full of nothing. */
+.composer.signed-out {
+  align-items: center;
+}
 .composer.signed-out .composer-body {
-  gap: 0.7rem;
-  align-items: flex-start;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
 }
 .composer-prompt {
   margin: 0;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+@media (max-width: 30rem) {
+  .composer.signed-out .composer-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.7rem;
+  }
 }
 
 ul.comments {
@@ -906,8 +939,13 @@ ul.comments li {
 .comment-head time .d {
   margin-top: 0;
 }
-.comments-panel .inline button {
+/* The form is the flex item, so it carries the push -- margin-left on the button
+   inside it moved nothing, leaving the delete control jammed against the
+   timestamp as if it belonged to it. */
+.comment-head .inline {
   margin-left: auto;
+}
+.comments-panel .inline button {
   border: 0;
   padding: 0 0.25rem;
   color: var(--muted);

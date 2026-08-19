@@ -73,17 +73,23 @@ export const StateBadge = ({ state, detail }) => {
 
 /** Follow / unfollow as a plain form, so it works with JavaScript off. */
 export const FollowButton = ({ user, subjectType, subjectId, following, next, label }) => {
+  // Whoever the button is about, in every state. Two of these sit side by side on
+  // an event page, one per team, so a bare "Follow" leaves the reader guessing
+  // which side each one is -- and "Following" with no name is worse, because it is
+  // the state you most need to be able to read back.
+  //
+  // Callers that render a long list of one-team rows -- the team picker -- pass no
+  // label at all, because the row already says the name right beside the button.
+  const who = label ? ` ${label}` : '';
+
   if (!user) {
-    // Just "Follow". The long "Sign in to follow" was wide enough to squeeze the
-    // team name into two wrapped lines on every card; the link goes to sign-in
-    // either way, and the title says so for anyone who wants the detail.
     return (
       <a
         class="ghost small-btn"
         title="Sign in to follow"
         href={`/login?next=${encodeURIComponent(next ?? '/')}`}
       >
-        ☆ Follow
+        ☆ Follow{who}
       </a>
     );
   }
@@ -99,7 +105,7 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
         data-label={label ?? ''}
         class={following ? 'ghost small-btn following' : 'ghost small-btn'}
       >
-        {following ? '★ Following' : `☆ Follow${label ? ` ${label}` : ''}`}
+        {following ? `★ Following${who}` : `☆ Follow${who}`}
       </button>
     </form>
   );

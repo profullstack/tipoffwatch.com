@@ -317,6 +317,8 @@ function initFollowForms() {
     const button = form.querySelector('button');
     const following = action === '/api/unfollow';
     const chip = form.closest('.chip');
+    const label = button?.getAttribute('data-label') ?? '';
+    const who = label ? ` ${label}` : '';
 
     form.setAttribute('data-pending', '');
     try {
@@ -334,15 +336,16 @@ function initFollowForms() {
       }
       form.setAttribute('action', following ? '/api/follow' : '/api/unfollow');
       if (button) {
-        const label = button.getAttribute('data-label') ?? '';
-        button.textContent = following ? `☆ Follow${label ? ` ${label}` : ''}` : '★ Following';
+        // The name belongs in both states, not just the unfollowed one: two of these
+        // sit side by side on an event page and "Following" alone does not say who.
+        button.textContent = following ? `☆ Follow${who}` : `★ Following${who}`;
         button.classList.toggle('following', !following);
         button.classList.toggle('cta', false);
         button.classList.toggle('ghost', true);
       }
     } catch {
       // Put it back rather than leaving a button claiming something untrue.
-      if (button) button.textContent = following ? '★ Following' : '☆ Follow';
+      if (button) button.textContent = following ? `★ Following${who}` : `☆ Follow${who}`;
     } finally {
       form.removeAttribute('data-pending');
     }
