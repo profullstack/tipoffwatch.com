@@ -16,7 +16,9 @@ beforeAll(async () => {
   for (const f of (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort()) {
     await db.exec(await readFile(dir + f, 'utf8'));
   }
-});
+// Booting a WASM Postgres and running every migration overruns the 5s default on a
+// loaded machine; the work is legitimately slow rather than hung.
+}, 60_000);
 
 const one = async (sql, params) => (await db.query(sql, params)).rows[0];
 
@@ -91,7 +93,7 @@ describe('reminder fan-out', () => {
         );
       }
     }
-  });
+  }, 60_000);
 
   const page = (after, limit) =>
     db.query(

@@ -1,6 +1,7 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { config } from '@tipoff/config';
+import { sql } from '@tipoff/db';
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection it blocks on, or
@@ -55,6 +56,18 @@ export async function installSchedules({ log = console.log } = {}) {
   // Fixtures move rarely; the horizon only needs refreshing a few times a day.
   await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });
   await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { repeat: { every: 24 * 3600_000 } });
+
+  // A repeatable job first runs one interval from now, not immediately -- so on a
+  // fresh database the catalogue would sit empty for a full day and the site would
+  // serve an empty calendar to everyone who arrived first. Seed it once, but only
+  // when there is nothing there: firing this on every restart would re-sync 354
+  // leagues each time a deploy rolls.
+  const [{ count }] = await sql`select count(*)::int as count from leagues`;
+  if (count === 0) {
+    log('[queue] empty catalogue, seeding now');
+    await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { jobId: 'seed-catalogue' });
+    await queues.sync.add('sync-all', { kind: 'all' }, { jobId: 'seed-all', delay: 30_000 });
+  }
 
   log('[queue] schedules installed');
 }
