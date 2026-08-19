@@ -96,26 +96,93 @@ const urlB64ToUint8Array = (b64) => {
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 };
 
+/**
+ * Register the worker and wait for it to be *active*.
+ *
+ * `register()` resolves while the worker is still installing, and subscribing
+ * against a registration with no active worker fails -- so on a first visit the
+ * button could fail for a reason that had nothing to do with the user.
+ */
 async function registerSw() {
   if (!('serviceWorker' in navigator)) return null;
   try {
-    return await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.register('/sw.js');
+    return await navigator.serviceWorker.ready;
   } catch (err) {
     console.warn('sw registration failed', err);
     return null;
   }
 }
 
+/* How long each hangable step is given before the button says something useful.
+   The prompt gets the longer one: a real person reading a permission dialog is
+   slow, and cutting them off mid-decision would be its own bug. */
+const PERMISSION_DEADLINE_MS = 90_000;
+/** How often the browser's own permission state is re-read while the prompt is up. */
+const PERMISSION_POLL_MS = 400;
+const SUBSCRIBE_DEADLINE_MS = 20_000;
+
+/** Race a promise against a deadline, so no branch can leave the button waiting forever. */
+const withDeadline = (promise, ms) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(Object.assign(new Error('timed out'), { timedOut: true })), ms),
+    ),
+  ]);
+
+/**
+ * Ask for permission, and notice an answer given anywhere else.
+ *
+ * `Notification.requestPermission()` settles only when the page's own prompt is
+ * answered. Chrome shows that prompt quietly -- a bell in the address bar -- and
+ * lets the choice be made from site settings instead; answer it there and the
+ * promise stays pending for the life of the page. That is the reported bug:
+ * notifications allowed in the browser, button still saying it is waiting.
+ *
+ * So the browser's own permission state is polled alongside the prompt, and
+ * whichever reports first wins. Polling rather than the Permissions API, which
+ * cannot observe notifications in every browser we serve.
+ */
+function askPermission() {
+  if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      resolve(state ?? Notification.permission);
+    };
+
+    const poll = setInterval(() => {
+      if (Notification.permission !== 'default') finish(Notification.permission);
+    }, PERMISSION_POLL_MS);
+
+    // Safari long took only a callback and returned undefined; newer browsers
+    // return a promise and still honour the callback.
+    let request;
+    try {
+      request = Notification.requestPermission(finish);
+    } catch (err) {
+      console.warn('requestPermission threw', err);
+      finish(Notification.permission);
+      return;
+    }
+    if (request && typeof request.then === 'function') {
+      request.then(finish, () => finish(Notification.permission));
+    }
+  });
+}
+
 /**
  * Notification toggle.
  *
- * The previous version only ever offered to turn notifications ON, and said nothing
- * on any branch that was not a clean success: a denied permission, a failed
- * subscribe, a rejected save all left the button looking stuck. It also hid the
- * whole control once subscribed, so there was no way to see the state or turn it
- * back off.
- *
- * This renders the real state every time and reports every outcome.
+ * Every branch reports what happened and re-enables the button. The two awaits
+ * that can hang indefinitely -- the permission prompt, and the browser's own call
+ * out to its push service -- are bounded, because a control sitting on "waiting"
+ * with no way forward is indistinguishable from a broken one.
  */
 async function initPush() {
   const box = document.getElementById('push-optin');
@@ -171,41 +238,93 @@ async function initPush() {
 
   let current = await paint();
 
+  // Coming back to the tab -- from the browser's site settings, say -- re-reads the
+  // real state, so the control is never a stale snapshot of an abandoned attempt.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.hidden || btn.disabled) return;
+    current = await paint();
+  });
+
+  /** Hand the subscription to the server, and say so if it will not take it. */
+  async function save(sub) {
+    const res = await postJson('/api/push/subscribe', sub.toJSON());
+    // A redirect means the session went away: fetch follows it and hands back a
+    // perfectly fine 200 for the sign-in page, which used to read as success.
+    if (res.redirected || !res.ok) {
+      // Do not leave the browser subscribed to something the server never stored.
+      await sub.unsubscribe().catch(() => {});
+      say(
+        msg,
+        res.redirected
+          ? 'You have been signed out. Sign in again and turn these on.'
+          : 'Could not save that. Try again in a moment.',
+        'error',
+      );
+      return;
+    }
+    say(msg, 'Notifications are on.', 'ok');
+  }
+
   btn.addEventListener('click', async () => {
     btn.disabled = true;
-    say(msg, current ? 'Turning off…' : 'Waiting for your browser…', 'info');
     try {
       if (current) {
+        say(msg, 'Turning off…', 'info');
         const { endpoint } = current;
         await current.unsubscribe();
         await postJson('/api/push/unsubscribe', { endpoint });
         say(msg, 'Notifications are off.', 'info');
-      } else {
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          // The branch that used to fail in total silence.
+        return;
+      }
+
+      if (Notification.permission === 'default') say(msg, 'Waiting for your browser…', 'info');
+      let permission;
+      try {
+        permission = await withDeadline(askPermission(), PERMISSION_DEADLINE_MS);
+      } catch (err) {
+        if (!err?.timedOut) throw err;
+        say(
+          msg,
+          'Your browser never answered. Allow notifications for this site from the icon in the address bar, then try again.',
+          'error',
+        );
+        return;
+      }
+      if (permission !== 'granted') {
+        say(
+          msg,
+          permission === 'denied'
+            ? 'Your browser blocked notifications for this site.'
+            : 'No answer from the browser prompt — nothing changed.',
+          'error',
+        );
+        return;
+      }
+
+      say(msg, 'Setting up…', 'info');
+      let sub;
+      try {
+        sub = await withDeadline(
+          reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToUint8Array(window.__VAPID),
+          }),
+          SUBSCRIBE_DEADLINE_MS,
+        );
+      } catch (err) {
+        if (!err?.timedOut) throw err;
+        // It may still have completed after the deadline; take that if it did.
+        sub = await reg.pushManager.getSubscription();
+        if (!sub) {
           say(
             msg,
-            permission === 'denied'
-              ? 'Your browser blocked notifications for this site.'
-              : 'No answer from the browser prompt — nothing changed.',
+            'Your browser could not reach its notification service. Email reminders still work.',
             'error',
           );
           return;
         }
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlB64ToUint8Array(window.__VAPID),
-        });
-        const res = await postJson('/api/push/subscribe', sub.toJSON());
-        if (!res.ok) {
-          // Do not leave the browser subscribed to something the server refused.
-          await sub.unsubscribe().catch(() => {});
-          say(msg, 'Could not save that. Try again in a moment.', 'error');
-          return;
-        }
-        say(msg, 'Notifications are on.', 'ok');
       }
+      await save(sub);
     } catch (err) {
       say(msg, `Could not change that: ${err?.message ?? err}`, 'error');
     } finally {
