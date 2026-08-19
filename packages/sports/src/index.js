@@ -214,9 +214,12 @@ export async function syncLiveScores({ log = console.log } = {}) {
       try {
         const r = await syncLeagueScores(league);
         events += r.events;
-      } catch {
-        // A provider blip must not stop the other leagues' scores updating.
+      } catch (err) {
+        // A provider blip must not stop the other leagues' scores updating -- but
+        // say why. Swallowing this silently is how "6 failed" sat in the log for
+        // two hours without anyone being able to tell it was an upstream block.
         failed++;
+        if (failed === 1) log(`[live] first failure: ${err?.message ?? err}`);
       }
     }),
   );

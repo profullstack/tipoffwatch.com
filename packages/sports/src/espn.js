@@ -89,14 +89,27 @@ const isBlocked = (status) => status === 403 || status === 429;
 async function getJson(url, { timeoutMs = 20000 } = {}) {
   const canProxy = Boolean(config.sports.proxyUrl);
 
-  let res = await attempt(url, timeoutMs, canProxy && proxyOnly);
+  let res = null;
+  let directError = null;
+  try {
+    res = await attempt(url, timeoutMs, canProxy && proxyOnly);
+  } catch (err) {
+    // A block does not always arrive as a status. It can be a reset connection or
+    // a TLS failure, which makes fetch throw -- and checking only res.status meant
+    // the proxy fallback never ran for exactly the cases that needed it most.
+    directError = err;
+  }
 
-  if (isBlocked(res.status) && canProxy && !proxyOnly) {
+  const blocked = directError !== null || isBlocked(res?.status);
+  if (blocked && canProxy && !proxyOnly) {
     // Latch on, so the rest of a 700-request sweep does not each pay a wasted
     // direct attempt first.
     proxyOnly = true;
-    console.warn(`[espn] ${res.status} direct; falling back to the residential proxy`);
+    const why = directError ? directError.message : `HTTP ${res.status}`;
+    console.warn(`[espn] blocked directly (${why}); falling back to the residential proxy`);
     res = await attempt(url, timeoutMs, true);
+  } else if (directError) {
+    throw directError;
   }
 
   if (!res.ok) throw new Error(`espn ${res.status} ${url}`);
