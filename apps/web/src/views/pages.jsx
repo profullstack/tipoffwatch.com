@@ -278,10 +278,27 @@ const Side = ({ name, slug, logo, score, record, showScore }) => (
   </div>
 );
 
-export const EventPage = ({ user, event, offers, entitlement, followingHome, followingAway }) => {
+export const EventPage = ({
+  user,
+  event,
+  offers,
+  entitlement,
+  plays = [],
+  comments = [],
+  followingHome,
+  followingAway,
+}) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
   const showScore = live || done;
+
+  // The feed arrives newest-first. Scoring plays read better oldest-first, as a
+  // narrative; the latest-action list stays newest-first.
+  const scoringPlays = plays
+    .filter((p) => p.scoring)
+    .slice(0, 12)
+    .reverse();
+  const recentPlays = plays.slice(0, 15);
 
   return (
     <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
@@ -394,6 +411,95 @@ export const EventPage = ({ user, event, offers, entitlement, followingHome, fol
           />
         ) : null}
       </div>
+
+      {plays.length > 0 ? (
+        <section>
+          <h2>{live ? 'Live action' : 'How it went'}</h2>
+
+          {/* Scoring plays first: for most sports the raw feed is pitch-by-pitch or
+              possession-by-possession, and the recap someone actually wants is the
+              handful of moments that changed the score. */}
+          {scoringPlays.length > 0 ? (
+            <ul class="plays scoring">
+              {scoringPlays.map((p) => (
+                <li>
+                  <span class="play-when num">
+                    {p.away_score}–{p.home_score}
+                  </span>
+                  <span class="play-text">
+                    {p.text}
+                    <span class="meta"> {p.period_label}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <h3 class="muted small">Latest</h3>
+          <ul class="plays">
+            {recentPlays.map((p) => (
+              <li class={p.scoring ? 'scored' : null}>
+                <span class="play-when">{p.period_label ?? ''}</span>
+                <span class="play-text">{p.text}</span>
+              </li>
+            ))}
+          </ul>
+          {live ? (
+            <p class="muted small">Updates every couple of minutes while the game is on.</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section id="comments">
+        <h2>Comments ({comments.length})</h2>
+        {user ? (
+          <form method="post" action={`/api/events/${event.id}/comments`} class="comment-form">
+            <label class="sr-only" for="body">
+              Your comment
+            </label>
+            <textarea
+              id="body"
+              name="body"
+              rows="3"
+              maxlength="2000"
+              placeholder="What's happening?"
+              required
+            />
+            <button class="cta" type="submit">
+              Post
+            </button>
+          </form>
+        ) : (
+          <p class="muted">
+            <a href={`/login?next=${encodeURIComponent(`/events/${event.id}`)}`}>Sign in</a> to
+            comment.
+          </p>
+        )}
+
+        {comments.length === 0 ? (
+          <p class="empty">Nothing yet. Say the first thing.</p>
+        ) : (
+          <ul class="comments">
+            {comments.map((c) => (
+              <li>
+                <div class="comment-head">
+                  {/* Local part only: the full address is nobody else's business. */}
+                  <strong>{String(c.email ?? '').split('@')[0]}</strong>
+                  <LocalTime at={c.created_at} />
+                  {user && c.user_id === user.id ? (
+                    <form method="post" action={`/api/comments/${c.id}/delete`} class="inline">
+                      <button type="submit" aria-label="Delete comment">
+                        ×
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+                <p class="comment-body">{c.body}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section class="stream">
         <h2>Watch</h2>

@@ -225,6 +225,58 @@ export async function syncLiveScores({ log = console.log } = {}) {
 }
 
 /**
+ * Pull play-by-play for games in progress.
+ *
+ * Runs on its own slower cadence rather than with the score tick. A summary is
+ * ~500KB against a scoreboard's few KB, and every one goes through the metered
+ * proxy, so this is capped and staggered: oldest-refreshed first, a handful at a
+ * time. Scores stay minute-fresh; the action log trails by a couple of minutes,
+ * which is the right trade for the bandwidth.
+ */
+export async function syncPlays({ log = console.log, limit = 8 } = {}) {
+  const due = await q.eventsNeedingPlays({ staleSeconds: 120, limit });
+  if (due.length === 0) return { events: 0, plays: 0 };
+
+  let inserted = 0;
+  let failed = 0;
+
+  for (const event of due) {
+    try {
+      const adapter = ADAPTERS[event.provider];
+      if (!adapter?.fetchPlays) continue;
+
+      const plays = await adapter.fetchPlays(event.league_key, event.provider_key);
+      if (plays.length > 0) {
+        const rows = plays.map((p) => ({
+          event_id: event.id,
+          provider_play_id: p.providerPlayId,
+          sequence: p.sequence,
+          text: p.text,
+          away_score: p.awayScore,
+          home_score: p.homeScore,
+          scoring: p.scoring,
+          period_number: p.periodNumber,
+          period_label: p.periodLabel,
+          play_type: p.playType,
+        }));
+        const added = await q.insertPlays(rows);
+        inserted += added.length;
+      }
+      // Stamped even when empty, so a fixture with no summary is not retried on
+      // every single tick ahead of games that actually have one.
+      await q.markPlaysSynced(event.id);
+    } catch (err) {
+      failed++;
+      if (failed === 1) log(`[plays] first failure: ${err?.message ?? err}`);
+      await q.markPlaysSynced(event.id).catch(() => {});
+    }
+  }
+
+  log(`[plays] ${due.length} event(s), ${inserted} new, ${failed} failed`);
+  return { events: due.length, plays: inserted, failed };
+}
+
+/**
  * Sync every active league, bounded concurrency.
  *
  * Concurrency is deliberately modest. The upstream is free and unmetered but not

@@ -25,6 +25,8 @@ export const QUEUES = {
   batch: 'reminder-batch',
   /** Refreshes scores for whatever is being played right now. */
   live: 'live-scores',
+  /** Pulls play-by-play for games in progress. */
+  plays: 'live-plays',
 };
 
 const defaults = {
@@ -49,7 +51,7 @@ export const queues = Object.fromEntries(
  * every boot makes the code the single source of truth for what is scheduled.
  */
 export async function installSchedules({ log = console.log } = {}) {
-  for (const q of [queues.scan, queues.sync, queues.live]) {
+  for (const q of [queues.scan, queues.sync, queues.live, queues.plays]) {
     for (const r of await q.getRepeatableJobs()) await q.removeRepeatableByKey(r.key);
   }
 
@@ -60,6 +62,10 @@ export async function installSchedules({ log = console.log } = {}) {
   // a handful of requests a minute rather than a sweep -- without it a live score
   // is as stale as the last full sync, which was measured at 69 minutes.
   await queues.live.add('live-scores', {}, { repeat: { every: 60_000 }, jobId: 'live' });
+
+  // Slower than scores on purpose: a summary is ~500KB against a scoreboard's few
+  // KB, and every one goes through the metered proxy.
+  await queues.plays.add('live-plays', {}, { repeat: { every: 120_000 }, jobId: 'plays' });
 
   // Fixtures move rarely; the horizon only needs refreshing a few times a day.
   await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });

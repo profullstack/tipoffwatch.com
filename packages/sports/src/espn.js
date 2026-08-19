@@ -170,6 +170,45 @@ export async function fetchTeams(providerKey) {
     }));
 }
 
+/**
+ * Play-by-play for one fixture.
+ *
+ * The summary response is ~500KB and carries a boxscore, rosters, odds and news we
+ * do not use, so callers must space these out -- see eventsNeedingPlays, which caps
+ * and staggers them. There is no smaller endpoint.
+ *
+ * The provider phrases each play per sport and supplies its own stable id, so both
+ * are passed through: rebuilding "Duran homered to right center (388 feet)" from
+ * structured fields is not something we could do better.
+ */
+export async function fetchPlays(providerKey, eventProviderKey) {
+  // The event's provider_key is `<sport>/<league>/<id>`; the summary wants the id.
+  const eventId = eventProviderKey.split('/').pop();
+  if (!eventId) return [];
+
+  let data;
+  try {
+    data = await getJson(`${SITE}/${providerKey}/summary?event=${encodeURIComponent(eventId)}`);
+  } catch {
+    // A fixture with no summary yet is normal before first pitch, not an error.
+    return [];
+  }
+
+  return (data.plays ?? [])
+    .filter((p) => p?.id && p?.text)
+    .map((p) => ({
+      providerPlayId: String(p.id),
+      sequence: Number.isFinite(Number(p.sequenceNumber)) ? Number(p.sequenceNumber) : null,
+      text: String(p.text),
+      awayScore: Number.isFinite(p.awayScore) ? p.awayScore : null,
+      homeScore: Number.isFinite(p.homeScore) ? p.homeScore : null,
+      scoring: Boolean(p.scoringPlay),
+      periodNumber: Number.isFinite(p.period?.number) ? p.period.number : null,
+      periodLabel: p.period?.displayValue ?? null,
+      playType: p.type?.text ?? null,
+    }));
+}
+
 /** ESPN's status states are already pre/in/post; anything unknown is treated as pre. */
 function normaliseState(competition) {
   const state = competition?.status?.type?.state;

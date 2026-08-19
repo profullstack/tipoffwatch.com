@@ -1,7 +1,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
-import { syncAll, syncCatalogue, syncLiveScores } from '@tipoff/sports';
+import { syncAll, syncCatalogue, syncLiveScores, syncPlays } from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
 
@@ -194,6 +194,9 @@ export function startWorkers({ concurrency = {} } = {}) {
     // Scores only; concurrency 1 because it already fans out internally and a
     // second overlapping tick would just refetch the same leagues.
     new Worker(QUEUES.live, () => syncLiveScores(), { connection, concurrency: 1 }),
+
+    // Concurrency 1: these responses are large and the point is to stagger them.
+    new Worker(QUEUES.plays, () => syncPlays(), { connection, concurrency: 1 }),
 
     new Worker(QUEUES.fanout, runFanout, {
       connection,

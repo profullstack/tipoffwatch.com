@@ -787,3 +787,88 @@ export async function leaguesWithUpcoming(limit = 400) {
     limit ${limit}
   `;
 }
+
+/* --------------------------------------------------------------- plays --- */
+
+/**
+ * Live events whose play log is due a refresh.
+ *
+ * A summary response is ~500KB, so this is deliberately narrow and spaced: only
+ * games actually in progress, oldest-refreshed first, and capped. Re-reading every
+ * live game every minute would cost more bandwidth than the rest of the app
+ * combined -- and all of it metered, since these go through the proxy.
+ */
+export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10 } = {}) {
+  return sql`
+    select e.id, e.provider_key, l.provider_key as league_key, l.provider
+    from events e
+    join leagues l on l.id = e.league_id
+    where e.state = 'in'
+      and (e.plays_synced_at is null or e.plays_synced_at < now() - (${staleSeconds} * interval '1 second'))
+    order by e.plays_synced_at asc nulls first
+    limit ${limit}
+  `;
+}
+
+export async function markPlaysSynced(eventId) {
+  await sql`update events set plays_synced_at = now() where id = ${eventId}`;
+}
+
+/** Append only what is new; a re-read of the same game is a no-op. */
+export async function insertPlays(rows) {
+  if (rows.length === 0) return [];
+  return sql`
+    insert into event_plays ${sql(rows)}
+    on conflict (event_id, provider_play_id) do nothing
+    returning id
+  `;
+}
+
+export async function playsForEvent(eventId, { limit = 60 } = {}) {
+  return sql`
+    select * from event_plays
+    where event_id = ${eventId}
+    order by sequence desc nulls last, id desc
+    limit ${limit}
+  `;
+}
+
+/* ------------------------------------------------------------ comments --- */
+
+export async function commentsForEvent(eventId, { limit = 200 } = {}) {
+  return sql`
+    select c.id, c.body, c.created_at, u.email, u.id as user_id
+    from event_comments c
+    join users u on u.id = c.user_id
+    where c.event_id = ${eventId} and c.deleted_at is null
+    order by c.created_at desc
+    limit ${limit}
+  `;
+}
+
+/** How many this person has posted in the last minute, for rate limiting. */
+export async function recentCommentCount(userId, seconds = 60) {
+  const [row] = await sql`
+    select count(*)::int as n from event_comments
+    where user_id = ${userId} and created_at > now() - (${seconds} * interval '1 second')
+  `;
+  return row.n;
+}
+
+export async function insertComment({ eventId, userId, body }) {
+  const [row] = await sql`
+    insert into event_comments ${sql({ event_id: eventId, user_id: userId, body })}
+    returning id, body, created_at
+  `;
+  return row;
+}
+
+/** Soft delete, and only your own: the row stays for moderation history. */
+export async function deleteComment({ commentId, userId }) {
+  const [row] = await sql`
+    update event_comments set deleted_at = now()
+    where id = ${commentId} and user_id = ${userId} and deleted_at is null
+    returning id
+  `;
+  return Boolean(row);
+}

@@ -186,9 +186,13 @@ app.get('/events/:id', async (c) => {
   const user = c.get('user');
   const event = await q.getEvent(Number(c.req.param('id')));
   if (!event) return c.html(await render(<NotFound user={user} />), 404);
-  const [offers, entitlement] = await Promise.all([
+  const [offers, entitlement, plays, comments, followingHome, followingAway] = await Promise.all([
     pay.offersForEvent(event.id),
     user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
+    q.playsForEvent(event.id, { limit: 60 }),
+    q.commentsForEvent(event.id),
+    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.home_team_id }),
+    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.away_team_id }),
   ]);
   return c.html(
     await render(<EventPage user={user} event={event} offers={offers} entitlement={entitlement} />),
@@ -511,6 +515,43 @@ app.get('/api/v1/events', async (c) => {
 app.get('/about', async (c) => {
   const stats = await q.catalogueStats();
   return c.html(await render(<About user={c.get('user')} stats={stats} />));
+});
+
+/* --------------------------------------------------------------- comments -- */
+
+/** Enough to say something, not enough to paste an essay. */
+const COMMENT_MAX = 2000;
+/** Per minute. Generous for a conversation, hostile to a script. */
+const COMMENT_RATE = 6;
+
+app.post('/api/events/:id/comments', async (c) => {
+  const user = requireUser(c);
+  const eventId = Number(c.req.param('id'));
+  if (!Number.isFinite(eventId)) return c.json({ error: 'bad event' }, 400);
+
+  const body = await c.req.parseBody();
+  const text = String(body.body ?? '').trim();
+  if (!text) return c.json({ error: 'Say something first.' }, 400);
+  if (text.length > COMMENT_MAX) {
+    return c.json({ error: `Keep it under ${COMMENT_MAX} characters.` }, 400);
+  }
+
+  // Checked against the database rather than memory: the limit has to survive a
+  // redeploy and apply across every instance, not per-process.
+  if ((await q.recentCommentCount(user.id)) >= COMMENT_RATE) {
+    return c.json({ error: 'Slow down a moment.' }, 429);
+  }
+
+  await q.insertComment({ eventId, userId: user.id, body: text });
+  return respond(c, { redirectTo: `/events/${eventId}#comments` });
+});
+
+app.post('/api/comments/:id/delete', async (c) => {
+  const user = requireUser(c);
+  const id = Number(c.req.param('id'));
+  // Scoped to the author in the query, so a guessed id deletes nothing.
+  await q.deleteComment({ commentId: id, userId: user.id });
+  return respond(c, { redirectTo: c.req.header('referer') ?? '/' });
 });
 
 /* ------------------------------------------------------------ calendar --- */
