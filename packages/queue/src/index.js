@@ -2,6 +2,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { config } from '@tipoff/config';
 import { sql } from '@tipoff/db';
+import * as q from '@tipoff/db/queries';
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection it blocks on, or
@@ -81,8 +82,12 @@ export async function installSchedules({ log = console.log } = {}) {
     log('[queue] catalogue stale, refreshing now');
     await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { jobId: `seed-cat:${dayStamp()}` });
   }
-  if (staleBy(ev.synced, 6 * 3600_000)) {
-    log('[queue] fixtures stale, syncing now');
+  // Display names only arrive with a fixture sweep, so a catalogue that has never
+  // been swept shows raw slugs however fresh its fixtures are.
+  const unnamed = await q.leaguesMissingRealName();
+
+  if (staleBy(ev.synced, 6 * 3600_000) || unnamed > 0) {
+    log(`[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, unnamed leagues: ${unnamed})`);
     await queues.sync.add('sync-all', { kind: 'all' }, { jobId: `seed-all:${hourStamp()}`, delay: 20_000 });
   }
 

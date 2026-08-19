@@ -84,17 +84,40 @@ export async function touchPasskey(credentialId, counter) {
 
 /* --------------------------------------------------------------- catalogue -- */
 
+/**
+ * Upsert from the catalogue endpoint.
+ *
+ * Note what is NOT updated: name, abbreviation and logo. The catalogue only knows a
+ * league's slug, so it seeds those on insert and must never touch them again --
+ * otherwise the daily catalogue sync overwrites "English Premier League" with
+ * "eng.1" every night. The scoreboard is the authority for display metadata; see
+ * renameLeague.
+ */
 export async function upsertLeague(league) {
   const [row] = await sql`
     insert into leagues ${sql(league)}
     on conflict (provider, provider_key) do update set
-      name = excluded.name,
-      abbreviation = excluded.abbreviation,
-      logo_url = coalesce(excluded.logo_url, leagues.logo_url),
-      sport = excluded.sport
+      sport = excluded.sport,
+      active = true
     returning *
   `;
   return row;
+}
+
+/**
+ * How many leagues are still named after their raw slug.
+ *
+ * A non-zero count means display names have never been backfilled from the
+ * scoreboard, which is a reason to sync even when the fixtures themselves are
+ * fresh -- otherwise the site shows "eng.1" until something else happens to
+ * trigger a sweep.
+ */
+export async function leaguesMissingRealName() {
+  const [row] = await sql`
+    select count(*)::int as n from leagues
+    where active and name = split_part(provider_key, '/', 2)
+  `;
+  return row.n;
 }
 
 export async function upsertTeams(teams) {
