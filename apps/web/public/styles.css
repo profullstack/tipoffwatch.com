@@ -116,12 +116,20 @@ main {
   text-transform: uppercase;
   color: var(--fg);
 }
-.brand-mark {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 4px oklch(0.72 0.19 45 / 0.2);
+/* Big enough to actually read the mark at a glance; it now carries the name on
+   its own, with no wordmark beside it. */
+.brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 9px;
+  display: block;
+  object-fit: contain;
+}
+@media (max-width: 40rem) {
+  .brand-logo {
+    width: 38px;
+    height: 38px;
+  }
 }
 .topbar nav {
   display: flex;

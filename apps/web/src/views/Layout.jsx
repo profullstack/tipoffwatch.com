@@ -20,15 +20,38 @@ export const Layout = (props) => (
           props.description ?? 'Follow any team in the world and get told before they play. Free.'
         }
       />
-      <meta name="theme-color" content="#0b0f17" />
+      {/* Matches the stylesheet's ground so browser chrome and the PWA splash do
+          not flash white before a dark page paints. */}
+      <meta name="theme-color" content="#12161f" />
       <link rel="manifest" href="/manifest.webmanifest" />
-      <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+
+      {/* Deliberately NOT linking the 1254x1254 /favicon.png the generator emits:
+          it is the same 1.4MB source image as the logo, and browsers would fetch it
+          on every page to draw a 16px tab icon. The generated sizes are the point. */}
+      <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+      <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180x180.png" />
+      <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152x152.png" />
+      <link rel="apple-touch-icon" sizes="144x144" href="/icons/apple-touch-icon-144x144.png" />
+      <link rel="apple-touch-icon" sizes="120x120" href="/icons/apple-touch-icon-120x120.png" />
+      <link rel="apple-touch-icon" sizes="76x76" href="/icons/apple-touch-icon-76x76.png" />
+
+      <meta name="apple-mobile-web-app-capable" content="yes" />
+      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+      <meta name="apple-mobile-web-app-title" content="Tipoff" />
+      <meta name="mobile-web-app-capable" content="yes" />
+      <meta name="msapplication-TileColor" content="#12161f" />
+      <meta name="msapplication-config" content="/icons/browserconfig.xml" />
+      <meta name="msapplication-TileImage" content="/icons/apple-touch-icon-144x144.png" />
+
       <link rel="stylesheet" href="/styles.css" />
       {props.canonical ? (
         <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
       ) : null}
       <meta property="og:title" content={props.title ?? 'TipoffWatch'} />
       <meta property="og:type" content="website" />
+      <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
+      <meta name="twitter:card" content="summary" />
     </head>
     {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens
@@ -38,9 +61,16 @@ export const Layout = (props) => (
         Skip to content
       </a>
       <header class="topbar">
+        {/* The mark carries the name, so the wordmark beside it was saying the
+            same thing twice. alt keeps it for anyone not seeing the image. */}
         <a class="brand" href="/">
-          <span class="brand-mark" aria-hidden="true" />
-          <span>TipoffWatch</span>
+          <img
+            src="/icons/icon-192x192.png"
+            alt="TipoffWatch"
+            width="192"
+            height="192"
+            class="brand-logo"
+          />
         </a>
         <nav>
           <a href="/sports">Sports</a>

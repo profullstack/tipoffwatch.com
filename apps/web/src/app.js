@@ -575,15 +575,38 @@ app.get('/sitemaps/:file', async (c) => {
 
 /* ------------------------------------------------------------------ static -- */
 
+/**
+ * Colours track the stylesheet's ground, not the generator's white default -- an
+ * installed PWA whose splash is white flashes bright before a dark app paints.
+ */
 app.get('/manifest.webmanifest', (c) =>
   c.json({
     name: 'TipoffWatch',
     short_name: 'Tipoff',
+    description: 'Follow any team in the world and get told before they play.',
     start_url: '/following',
     display: 'standalone',
-    background_color: '#0b0f17',
-    theme_color: '#0b0f17',
-    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
+    orientation: 'portrait-primary',
+    background_color: '#12161f',
+    theme_color: '#12161f',
+    icons: [
+      { src: '/icons/icon-48x48.png', sizes: '48x48', type: 'image/png' },
+      { src: '/icons/icon-128x128.png', sizes: '128x128', type: 'image/png' },
+      {
+        src: '/icons/icon-192x192.png',
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'any maskable',
+      },
+      { src: '/icons/icon-256x256.png', sizes: '256x256', type: 'image/png' },
+      { src: '/icons/icon-384x384.png', sizes: '384x384', type: 'image/png' },
+      {
+        src: '/icons/icon-512x512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any maskable',
+      },
+    ],
   }),
 );
 
@@ -596,7 +619,7 @@ for (const [route, file, type] of [
   ['/app.js', 'app.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
   ['/sw.js', 'sw.js', 'text/javascript'],
-  ['/icon.svg', 'icon.svg', 'image/svg+xml'],
+  ['/logo.png', 'logo.png', 'image/png'],
 ]) {
   app.get(route, async (c) => {
     const f = Bun.file(new URL(`../public/${file}`, import.meta.url).pathname);
@@ -606,5 +629,38 @@ for (const [route, file, type] of [
     return c.body(await f.arrayBuffer());
   });
 }
+
+/**
+ * The generated icon set.
+ *
+ * A directory route rather than seventeen literal ones. The filename is matched
+ * against a strict pattern instead of being joined onto a path: `/icons/..%2f..`
+ * would otherwise walk out of public/ and serve anything the process can read.
+ */
+const ICON_TYPES = { png: 'image/png', ico: 'image/x-icon', xml: 'application/xml' };
+
+app.get('/icons/:file', async (c) => {
+  const file = c.req.param('file');
+  if (!/^[a-z0-9][a-z0-9._-]*\.(png|ico|xml)$/i.test(file) || file.includes('..')) {
+    return c.notFound();
+  }
+  const f = Bun.file(new URL(`../public/icons/${file}`, import.meta.url).pathname);
+  if (!(await f.exists())) return c.notFound();
+  c.header(
+    'content-type',
+    ICON_TYPES[file.split('.').pop().toLowerCase()] ?? 'application/octet-stream',
+  );
+  // Icons are content-addressed by size and effectively immutable.
+  c.header('cache-control', 'public, max-age=604800');
+  return c.body(await f.arrayBuffer());
+});
+
+/** Browsers request this at the root regardless of what the markup declares. */
+app.get('/favicon.ico', async (c) => {
+  const f = Bun.file(new URL('../public/icons/favicon.ico', import.meta.url).pathname);
+  c.header('content-type', 'image/x-icon');
+  c.header('cache-control', 'public, max-age=604800');
+  return c.body(await f.arrayBuffer());
+});
 
 app.notFound(async (c) => c.html(await render(<NotFound user={c.get('user')} />), 404));

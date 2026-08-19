@@ -15,8 +15,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: '/icon.svg',
-      badge: '/icon.svg',
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/icon-48x48.png',
       // Same tag for both reminders on one game, so the 1-minute alert replaces the
       // 1-hour one instead of stacking two notifications about the same match.
       tag: payload.tag,
