@@ -377,7 +377,7 @@ export const Settings = ({ user, prefs, passkeys }) => (
         Times on the site follow your browser (<span data-tz-label>your device</span>). This setting
         is what emailed reminders use.
       </p>
-      <form method="post" action="/api/timezone" data-known-tz={user.timezone ?? 'UTC'}>
+      <form method="post" action="/api/timezone">
         <label>
           Zone for emails
           <select name="timezone">

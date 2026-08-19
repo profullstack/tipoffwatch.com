@@ -30,7 +30,10 @@ export const Layout = (props) => (
       <meta property="og:title" content={props.title ?? 'TipoffWatch'} />
       <meta property="og:type" content="website" />
     </head>
-    <body>
+    {/* Carries the zone the server has on file, so app.js can report a correction
+        from any page rather than only from settings -- someone who never opens
+        settings would otherwise get every reminder email stamped in UTC. */}
+    <body data-known-tz={props.user ? (props.user.timezone ?? 'UTC') : null}>
       <a class="skip" href="#main">
         Skip to content
       </a>
