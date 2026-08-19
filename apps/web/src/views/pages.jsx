@@ -450,55 +450,90 @@ export const EventPage = ({
         </section>
       ) : null}
 
-      <section id="comments">
-        <h2>Comments ({comments.length})</h2>
+      <section id="comments" class="comments-panel">
+        <div class="comments-head">
+          <h2>Comments</h2>
+          <span class="count num">{comments.length}</span>
+        </div>
+
         {user ? (
-          <form method="post" action={`/api/events/${event.id}/comments`} class="comment-form">
-            <label class="sr-only" for="body">
-              Your comment
-            </label>
-            <textarea
-              id="body"
-              name="body"
-              rows="3"
-              maxlength="2000"
-              placeholder="What's happening?"
-              required
-            />
-            <button class="cta" type="submit">
-              Post
-            </button>
+          <form method="post" action={`/api/events/${event.id}/comments`} class="composer">
+            <span class="avatar" aria-hidden="true">
+              {String(user.email ?? '?')
+                .slice(0, 1)
+                .toUpperCase()}
+            </span>
+            <div class="composer-body">
+              <label class="sr-only" for="body">
+                Your comment
+              </label>
+              <textarea
+                id="body"
+                name="body"
+                rows="3"
+                maxlength="2000"
+                placeholder={live ? "What's happening?" : 'Say something about this game'}
+                required
+              />
+              <div class="composer-foot">
+                <span class="muted small">Up to 2,000 characters.</span>
+                <button class="cta small-btn" type="submit">
+                  Post
+                </button>
+              </div>
+            </div>
           </form>
         ) : (
-          <p class="muted">
-            <a href={`/login?next=${encodeURIComponent(`/events/${event.id}`)}`}>Sign in</a> to
-            comment.
-          </p>
+          /* One message, not two. The old version said "sign in" and "nothing yet"
+             as separate lines, which read as two different empty states. */
+          <div class="composer signed-out">
+            <span class="avatar" aria-hidden="true">
+              +
+            </span>
+            <div class="composer-body">
+              <p class="composer-prompt">
+                {comments.length === 0 ? 'No one has said anything yet.' : 'Join the conversation.'}
+              </p>
+              <a
+                class="cta small-btn"
+                href={`/login?next=${encodeURIComponent(`/events/${event.id}`)}`}
+              >
+                Sign in to comment
+              </a>
+            </div>
+          </div>
         )}
 
-        {comments.length === 0 ? (
-          <p class="empty">Nothing yet. Say the first thing.</p>
-        ) : (
+        {comments.length > 0 ? (
           <ul class="comments">
             {comments.map((c) => (
               <li>
-                <div class="comment-head">
-                  {/* Local part only: the full address is nobody else's business. */}
-                  <strong>{String(c.email ?? '').split('@')[0]}</strong>
-                  <LocalTime at={c.created_at} />
-                  {user && c.user_id === user.id ? (
-                    <form method="post" action={`/api/comments/${c.id}/delete`} class="inline">
-                      <button type="submit" aria-label="Delete comment">
-                        ×
-                      </button>
-                    </form>
-                  ) : null}
+                <span class="avatar" aria-hidden="true">
+                  {String(c.email ?? '?')
+                    .slice(0, 1)
+                    .toUpperCase()}
+                </span>
+                <div class="comment-main">
+                  <div class="comment-head">
+                    {/* Local part only: the full address is nobody else's business. */}
+                    <strong>{String(c.email ?? '').split('@')[0]}</strong>
+                    <LocalTime at={c.created_at} />
+                    {user && c.user_id === user.id ? (
+                      <form method="post" action={`/api/comments/${c.id}/delete`} class="inline">
+                        <button type="submit" aria-label="Delete comment">
+                          ×
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
+                  <p class="comment-body">{c.body}</p>
                 </div>
-                <p class="comment-body">{c.body}</p>
               </li>
             ))}
           </ul>
-        )}
+        ) : user ? (
+          <p class="empty">Be the first.</p>
+        ) : null}
       </section>
 
       <section class="stream">
