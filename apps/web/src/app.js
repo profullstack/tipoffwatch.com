@@ -16,6 +16,7 @@ import {
   Landing,
   LeaguePage,
   NotFound,
+  PushCheck,
   Settings,
   SignIn,
   SportPage,
@@ -410,6 +411,31 @@ app.get('/settings', async (c) => {
       />,
     ),
   );
+});
+
+/**
+ * Notification self-check.
+ *
+ * Deliberately open to signed-out visitors: the failure it diagnoses happens in the
+ * browser, before anything is saved, so requiring an account only adds a step
+ * between someone and the answer.
+ */
+app.get('/push-check', (c) =>
+  c.html(render(<PushCheck user={c.get('user')} vapidKey={config.push.publicKey} />)),
+);
+
+/**
+ * Where the self-check reports to.
+ *
+ * Logged, never stored: the point is that a support conversation can start from what
+ * the browser actually did rather than from a screenshot. Bounded because anything
+ * a browser can post unauthenticated can be posted a million times.
+ */
+app.post('/api/push/diag', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const trimmed = JSON.stringify(body).slice(0, 600);
+  console.log('[push-diag]', trimmed);
+  return c.json({ ok: true });
 });
 
 app.post('/api/push/subscribe', async (c) => {
@@ -826,6 +852,7 @@ app.get('/robots.txt', (c) =>
 for (const [route, file, type] of [
   ['/styles.css', 'styles.css', 'text/css'],
   ['/app.js', 'app.js', 'text/javascript'],
+  ['/push-check.js', 'push-check.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
   ['/sw.js', 'sw.js', 'text/javascript'],
   ['/logo.png', 'logo.png', 'image/png'],

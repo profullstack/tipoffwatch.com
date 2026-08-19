@@ -1136,3 +1136,28 @@ ul.comments li {
     font-size: 1.6rem;
   }
 }
+
+/* The notification self-check: a list of steps, each either done, failed or still
+   waiting. The state is in the words too, so colour never carries it alone. */
+.check-steps {
+  margin: 1rem 0 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.4rem;
+}
+.check-step span {
+  color: var(--muted);
+}
+.check-step strong::after {
+  content: ": ";
+  color: var(--muted);
+}
+.check-step.ok strong {
+  color: #34d399;
+}
+.check-step.bad strong {
+  color: #f87171;
+}
+.check-step.wait strong {
+  color: var(--muted);
+}

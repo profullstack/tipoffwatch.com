@@ -144,6 +144,8 @@ export const Layout = (props) => (
       <script src="/vendor-webauthn.js" defer />
       <script src="/app.js" defer />
       {props.vapidKey ? html`<script>window.__VAPID = "${props.vapidKey}";</script>` : null}
+      {/* One page needs a script of its own; the rest must not carry it. */}
+      {props.script ? <script src={props.script} defer /> : null}
     </body>
   </html>
 );

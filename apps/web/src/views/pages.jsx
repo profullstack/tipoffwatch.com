@@ -840,3 +840,40 @@ export const NotFound = ({ user }) => (
     </p>
   </Layout>
 );
+
+/**
+ * Notification self-check.
+ *
+ * A support page, not a feature. When the toggle fails there is nothing on the
+ * page that says why -- the browser's push service can refuse or simply never
+ * answer, and telling those apart otherwise means DevTools. This runs the same
+ * calls the toggle makes, one at a time, and prints what each one did.
+ */
+export const PushCheck = ({ user, vapidKey }) => (
+  <Layout
+    title="Notification check"
+    user={user}
+    vapidKey={vapidKey}
+    canonical="/push-check"
+    script="/push-check.js"
+  >
+    <h1>Notification check</h1>
+    <p class="muted">
+      If turning notifications on did nothing, run this. It tries each step the button takes and
+      says which one failed, in plain words.
+    </p>
+
+    <div class="notice">
+      <button type="button" id="run-check" class="cta">
+        Run the check
+      </button>
+      <p id="check-verdict" class="feedback" hidden />
+      <ol id="check-steps" class="check-steps" hidden />
+    </div>
+
+    <p class="muted small">
+      Nothing here is stored against your account. The result is logged so it can be looked at if
+      you report the problem.
+    </p>
+  </Layout>
+);

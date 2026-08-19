@@ -106,9 +106,19 @@ export const config = {
     /** Must be a MERCHANT api key (cp_live_/cp_test_ + 32 hex). An OAuth client id
      *  (cp_ + 24 hex) authenticates but cannot create payments -- it fails only at
      *  checkout, which is why this is asserted at boot rather than trusted. */
-    apiKey: opt('COINPAY_API_KEY'),
-    businessId: opt('COINPAY_BUSINESS_ID'),
-    webhookSecret: opt('COINPAY_WEBHOOK_SECRET'),
+    /* Read on use rather than snapshotted at import. These three are only ever
+       touched inside a request, and snapshotting them made the value depend on which
+       module imported config first -- which turned the webhook signature tests into a
+       coin flip decided by the rest of the suite. */
+    get apiKey() {
+      return opt('COINPAY_API_KEY');
+    },
+    get businessId() {
+      return opt('COINPAY_BUSINESS_ID');
+    },
+    get webhookSecret() {
+      return opt('COINPAY_WEBHOOK_SECRET');
+    },
     baseUrl: opt('COINPAY_BASE_URL', 'https://coinpayportal.com'),
     get enabled() {
       return Boolean(this.apiKey && this.businessId && this.webhookSecret);
