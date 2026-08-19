@@ -103,6 +103,19 @@ export async function fetchSchedule({ providerKey, from, to, depth = 0 }) {
   const data = await getJson(url);
   const events = data.events ?? [];
 
+  // The scoreboard carries the league's real display name, abbreviation and logos.
+  // The catalogue endpoint only exposes the slug, so without this a league is
+  // called "eng.1" everywhere instead of "English Premier League" -- and it costs
+  // nothing, because this response was being fetched anyway.
+  const meta = data.leagues?.[0];
+  const league = meta
+    ? {
+        name: meta.name ?? null,
+        abbreviation: meta.abbreviation ?? null,
+        logoUrl: meta.logos?.[0]?.href ?? null,
+      }
+    : null;
+
   if (events.length >= PAGE_CAP && depth < 4) {
     const mid = new Date((from.getTime() + to.getTime()) / 2);
     if (mid > from && mid < to) {
@@ -112,11 +125,16 @@ export async function fetchSchedule({ providerKey, from, to, depth = 0 }) {
         fetchSchedule({ providerKey, from: dayAfterMid, to, depth: depth + 1 }),
       ]);
       const seen = new Set();
-      return [...a, ...b].filter((e) => !seen.has(e.providerKey) && seen.add(e.providerKey));
+      return {
+        league: league ?? a.league ?? b.league,
+        events: [...a.events, ...b.events].filter(
+          (e) => !seen.has(e.providerKey) && seen.add(e.providerKey),
+        ),
+      };
     }
   }
 
-  return events.map((e) => normaliseEvent(e, providerKey)).filter(Boolean);
+  return { league, events: events.map((e) => normaliseEvent(e, providerKey)).filter(Boolean) };
 }
 
 function normaliseEvent(e, providerKey) {

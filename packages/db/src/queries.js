@@ -379,3 +379,40 @@ export async function distinctReminderOffsets(defaults) {
   `;
   return [...new Set([...defaults, ...rows.map((r) => r.m)])].filter((m) => m > 0).sort((a, b) => b - a);
 }
+
+/** Replace a catalogue slug with the provider's real display name once we see it. */
+export async function renameLeague({ id, name, abbreviation, logoUrl }) {
+  await sql`
+    update leagues set
+      name = ${name},
+      abbreviation = coalesce(${abbreviation ?? null}, abbreviation),
+      logo_url = coalesce(${logoUrl ?? null}, logo_url)
+    where id = ${id}
+  `;
+}
+
+export async function getLeagueBySlug(slug) {
+  const [row] = await sql`select * from leagues where slug = ${slug} and active`;
+  return row ?? null;
+}
+
+/**
+ * A league's own upcoming fixtures.
+ *
+ * Not "today's schedule filtered to this league" -- that was the first cut, and it
+ * told anyone visiting a league with no game today that it had no fixtures at all.
+ */
+export async function upcomingForLeague(leagueId, { limit = 200 } = {}) {
+  return sql`
+    select e.*, l.name as league_name, l.sport,
+           ht.display_name as home_name, ht.logo_url as home_logo,
+           at.display_name as away_name, at.logo_url as away_logo
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.league_id = ${leagueId} and e.starts_at > now() - interval '3 hours'
+    order by e.starts_at
+    limit ${limit}
+  `;
+}

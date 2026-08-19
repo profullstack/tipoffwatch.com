@@ -46,12 +46,16 @@ describe('espn adapter', () => {
   }, 60000);
 
   test('fetchSchedule normalises a real league', async () => {
-    const evs = await espn.fetchSchedule({
+    const { league, events: evs } = await espn.fetchSchedule({
       providerKey: 'soccer/eng.1',
       from: new Date(),
       to: new Date(Date.now() + 21 * 86400000),
     });
     expect(Array.isArray(evs)).toBe(true);
+    // The catalogue only knows the slug; the real name has to come from here or
+    // every league renders as "eng.1".
+    expect(league.name).toBe('English Premier League');
+    expect(league.logoUrl).toContain('http');
     for (const e of evs) {
       expect(e.providerKey).toBeTruthy();
       expect(Number.isNaN(+e.startsAt)).toBe(false);
@@ -67,7 +71,7 @@ describe('event normalisation', () => {
     const realFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ events: [sample] }), { status: 200 });
     try {
-      const [e] = await espn.fetchSchedule({
+      const { events: [e] } = await espn.fetchSchedule({
         providerKey: 'football/nfl',
         from: new Date(),
         to: new Date(Date.now() + 86400000),
@@ -102,7 +106,7 @@ describe('event normalisation', () => {
         { status: 200 },
       );
     try {
-      const [e] = await espn.fetchSchedule({
+      const { events: [e] } = await espn.fetchSchedule({
         providerKey: 'racing/f1',
         from: new Date(),
         to: new Date(Date.now() + 86400000),

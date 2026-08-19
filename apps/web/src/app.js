@@ -98,13 +98,10 @@ app.get('/sports/:sport', async (c) => {
 });
 
 app.get('/leagues/:slug', async (c) => {
-  const [league] = await q.listLeagues({ limit: 1000 }).then((ls) =>
-    ls.filter((l) => l.slug === c.req.param('slug')),
-  );
+  const league = await q.getLeagueBySlug(c.req.param('slug'));
   if (!league) return c.html(<NotFound user={c.get('user')} />, 404);
-  const events = await q.scheduleForDay({ day: new Date().toISOString().slice(0, 10), limit: 200 });
-  const mine = events.filter((e) => e.league_id === league.id);
-  return c.html(<LeaguePage user={c.get('user')} league={league} events={mine} tz={tzOf(c)} />);
+  const events = await q.upcomingForLeague(league.id);
+  return c.html(<LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />);
 });
 
 app.get('/following', async (c) => {

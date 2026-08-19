@@ -40,7 +40,22 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
   const from = new Date(Date.now() - 6 * 3600_000);
   const to = new Date(Date.now() + horizonDays * 86_400_000);
 
-  const fixtures = await adapter.fetchSchedule({ providerKey: league.provider_key, from, to });
+  const { league: meta, events: fixtures } = await adapter.fetchSchedule({
+    providerKey: league.provider_key,
+    from,
+    to,
+  });
+
+  // Upgrade the row from the slug the catalogue gave us to the real display name.
+  if (meta?.name && meta.name !== league.name) {
+    await q.renameLeague({
+      id: league.id,
+      name: meta.name,
+      abbreviation: meta.abbreviation,
+      logoUrl: meta.logoUrl,
+    });
+  }
+
   if (fixtures.length === 0) return { events: 0, teams: 0 };
 
   // Deduplicate teams across the window before writing -- a league sends the same
