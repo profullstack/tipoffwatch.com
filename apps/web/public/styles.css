@@ -119,16 +119,19 @@ main {
 /* Big enough to actually read the mark at a glance; it now carries the name on
    its own, with no wordmark beside it. */
 .brand-logo {
-  width: 33px;
-  height: 33px;
+  /* Sized to the bar, not shrunk from the old value. The wordmark used to sit
+     beside it; now the mark carries the name on its own, so it has to be legible
+     rather than decorative. 48px in a 72px bar leaves even breathing room. */
+  width: 48px;
+  height: 48px;
   border-radius: 9px;
   display: block;
   object-fit: contain;
 }
 @media (max-width: 40rem) {
   .brand-logo {
-    width: 29px;
-    height: 29px;
+    width: 40px;
+    height: 40px;
   }
 }
 .topbar nav {
