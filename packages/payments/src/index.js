@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
-import { config } from '@tipoff/config';
 import { safeEqualHex } from '@tipoff/auth';
+import { config } from '@tipoff/config';
 import { sql } from '@tipoff/db';
 
 /**

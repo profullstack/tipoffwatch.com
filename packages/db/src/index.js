@@ -1,5 +1,5 @@
-import { SQL } from 'bun';
 import { config } from '@tipoff/config';
+import { SQL } from 'bun';
 
 /**
  * One pool per process. Bun's native Postgres client is used directly rather than

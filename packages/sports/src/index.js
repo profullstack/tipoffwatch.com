@@ -7,7 +7,8 @@ const ADAPTERS = { espn };
 export function adapters() {
   return config.sports.providers.map((n) => {
     const a = ADAPTERS[n];
-    if (!a) throw new Error(`Unknown sports provider "${n}". Known: ${Object.keys(ADAPTERS).join(', ')}`);
+    if (!a)
+      throw new Error(`Unknown sports provider "${n}". Known: ${Object.keys(ADAPTERS).join(', ')}`);
     return a;
   });
 }
@@ -108,7 +109,10 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
  * ours to hammer; 6 in flight clears 354 leagues in a couple of minutes, which is
  * far inside any sane refresh interval.
  */
-export async function syncAll({ log = console.log, concurrency = config.sports.syncConcurrency } = {}) {
+export async function syncAll({
+  log = console.log,
+  concurrency = config.sports.syncConcurrency,
+} = {}) {
   const leagues = await q.listLeagues({ limit: 1000 });
   let events = 0;
   let failed = 0;

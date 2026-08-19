@@ -1,9 +1,8 @@
-import { config } from '@tipoff/config';
+import { assertCoinpayMerchantKey, config } from '@tipoff/config';
 import { close as closeDb, healthcheck } from '@tipoff/db';
 import { migrate } from '@tipoff/db/migrate';
 import { closeQueues, installSchedules } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
-import { assertCoinpayMerchantKey } from '@tipoff/config';
 import { app } from './app.js';
 
 /**
@@ -42,10 +41,7 @@ async function shutdown(signal) {
   console.log(`[main] ${signal}, draining`);
   // Stop taking new work before closing the pool, so an in-flight fan-out finishes
   // its claim rather than half-sending a batch.
-  await Promise.allSettled([
-    server?.stop(true),
-    ...workers.map((w) => w.close()),
-  ]);
+  await Promise.allSettled([server?.stop(true), ...workers.map((w) => w.close())]);
   await Promise.allSettled([closeQueues(), closeDb()]);
   process.exit(0);
 }

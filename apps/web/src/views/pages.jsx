@@ -1,21 +1,27 @@
-import { Layout } from './Layout.jsx';
 import { EventList } from './components.jsx';
+import { Layout } from './Layout.jsx';
 
 export const Landing = ({ user, today, tz, vapidKey }) => (
   <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
     <section class="hero">
       <h1>Never miss a game.</h1>
       <p>
-        Follow any team in the world — 354 leagues across 17 sports — and get a web
-        notification and an email an hour before kickoff, and again one minute out.
+        Follow any team in the world — 354 leagues across 17 sports — and get a web notification and
+        an email an hour before kickoff, and again one minute out.
       </p>
       <p class="hero-actions">
         {user ? (
-          <a class="cta" href="/sports">Add teams</a>
+          <a class="cta" href="/sports">
+            Add teams
+          </a>
         ) : (
-          <a class="cta" href="/signup">Start following — it's free</a>
+          <a class="cta" href="/signup">
+            Start following — it's free
+          </a>
         )}
-        <a class="ghost" href="/sports">Browse today's games</a>
+        <a class="ghost" href="/sports">
+          Browse today's games
+        </a>
       </p>
       <p class="muted small">Free forever. No app to install — add it to your home screen.</p>
     </section>
@@ -82,10 +88,14 @@ export const LeaguePage = ({ user, league, events, tz }) => (
         <input type="hidden" name="subject_type" value="league" />
         <input type="hidden" name="subject_id" value={league.id} />
         <input type="hidden" name="next" value={`/leagues/${league.slug}`} />
-        <button class="cta" type="submit">Follow every game in this league</button>
+        <button class="cta" type="submit">
+          Follow every game in this league
+        </button>
       </form>
     ) : (
-      <p><a href="/login">Sign in</a> to follow this league.</p>
+      <p>
+        <a href="/login">Sign in</a> to follow this league.
+      </p>
     )}
     <EventList events={events} tz={tz} user={user} emptyText="No fixtures in the next two weeks." />
   </Layout>
@@ -99,7 +109,9 @@ export const Following = ({ user, events, follows, tz, vapidKey }) => (
         confirms the browser actually supports push. */}
     <div id="push-optin" hidden class="notice">
       <p>Get a notification an hour before kickoff, and one minute out.</p>
-      <button type="button" id="enable-push">Turn on notifications</button>
+      <button type="button" id="enable-push">
+        Turn on notifications
+      </button>
     </div>
 
     {follows.length === 0 ? (
@@ -115,20 +127,29 @@ export const Following = ({ user, events, follows, tz, vapidKey }) => (
               <input type="hidden" name="subject_type" value={f.subject_type} />
               <input type="hidden" name="subject_id" value={f.subject_id} />
               <input type="hidden" name="next" value="/following" />
-              <button type="submit" aria-label={`Unfollow ${f.label}`}>×</button>
+              <button type="submit" aria-label={`Unfollow ${f.label}`}>
+                ×
+              </button>
             </form>
           </li>
         ))}
       </ul>
     )}
 
-    <EventList events={events} tz={tz} user={user} emptyText="Nothing coming up for what you follow." />
+    <EventList
+      events={events}
+      tz={tz}
+      user={user}
+      emptyText="Nothing coming up for what you follow."
+    />
   </Layout>
 );
 
 export const EventPage = ({ user, event, tz, offers, entitlement }) => (
   <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
-    <h1>{event.away_name && event.home_name ? `${event.away_name} at ${event.home_name}` : event.name}</h1>
+    <h1>
+      {event.away_name && event.home_name ? `${event.away_name} at ${event.home_name}` : event.name}
+    </h1>
     <p class="muted">
       {event.league_name}
       {event.venue ? ` · ${event.venue}` : ''} ·{' '}
@@ -139,7 +160,10 @@ export const EventPage = ({ user, event, tz, offers, entitlement }) => (
       <h2>Watch</h2>
       {entitlement ? (
         <p class="ok">
-          You have access to this game. <a class="cta" href={`/events/${event.id}/watch`}>Open the stream</a>
+          You have access to this game.{' '}
+          <a class="cta" href={`/events/${event.id}/watch`}>
+            Open the stream
+          </a>
         </p>
       ) : offers.length === 0 ? (
         <p class="muted">Nobody is sharing a stream for this game yet.</p>
@@ -176,8 +200,8 @@ export const SignIn = ({ mode, sent, next }) => (
       <h1>{mode === 'signup' ? 'Create your account' : 'Sign in'}</h1>
       {sent ? (
         <p class="ok">
-          If that address can receive mail, a sign-in link is on its way. It works once
-          and expires in 20 minutes.
+          If that address can receive mail, a sign-in link is on its way. It works once and expires
+          in 20 minutes.
         </p>
       ) : (
         <>
@@ -190,19 +214,33 @@ export const SignIn = ({ mode, sent, next }) => (
             <input type="hidden" name="next" value={next ?? '/following'} />
             <label>
               Email
-              <input type="email" name="email" required autocomplete="email" placeholder="you@example.com" />
+              <input
+                type="email"
+                name="email"
+                required
+                autocomplete="email"
+                placeholder="you@example.com"
+              />
             </label>
-            <button class="cta" type="submit">Email me a link</button>
+            <button class="cta" type="submit">
+              Email me a link
+            </button>
           </form>
 
           <div class="or">or</div>
-          <button type="button" id="passkey-signin" class="ghost">Use a passkey</button>
+          <button type="button" id="passkey-signin" class="ghost">
+            Use a passkey
+          </button>
 
           <p class="muted small">
             {mode === 'signup' ? (
-              <>Already have an account? <a href="/login">Sign in</a> — same link either way.</>
+              <>
+                Already have an account? <a href="/login">Sign in</a> — same link either way.
+              </>
             ) : (
-              <>No account yet? <a href="/signup">Create one</a> — the link makes it for you.</>
+              <>
+                No account yet? <a href="/signup">Create one</a> — the link makes it for you.
+              </>
             )}
           </p>
         </>
@@ -236,12 +274,19 @@ export const Settings = ({ user, prefs, passkeys }) => (
           <legend>How</legend>
           {['webpush', 'email'].map((c) => (
             <label class="check">
-              <input type="checkbox" name="channels" value={c} checked={prefs.channels.includes(c)} />
+              <input
+                type="checkbox"
+                name="channels"
+                value={c}
+                checked={prefs.channels.includes(c)}
+              />
               {c === 'webpush' ? 'Web notification' : 'Email'}
             </label>
           ))}
         </fieldset>
-        <button class="cta" type="submit">Save</button>
+        <button class="cta" type="submit">
+          Save
+        </button>
       </form>
     </section>
 
@@ -250,16 +295,24 @@ export const Settings = ({ user, prefs, passkeys }) => (
       {passkeys.length === 0 ? (
         <p class="muted">No passkeys yet. Add one to sign in without waiting for email.</p>
       ) : (
-        <ul>{passkeys.map((p) => <li>Added {new Date(p.created_at).toLocaleDateString()}</li>)}</ul>
+        <ul>
+          {passkeys.map((p) => (
+            <li>Added {new Date(p.created_at).toLocaleDateString()}</li>
+          ))}
+        </ul>
       )}
-      <button type="button" id="add-passkey" class="ghost">Add a passkey</button>
+      <button type="button" id="add-passkey" class="ghost">
+        Add a passkey
+      </button>
     </section>
 
     <section>
       <h2>Account</h2>
       <p class="muted">{user.email}</p>
       <form method="post" action="/api/auth/logout">
-        <button type="submit" class="ghost">Sign out</button>
+        <button type="submit" class="ghost">
+          Sign out
+        </button>
       </form>
     </section>
   </Layout>
@@ -268,7 +321,9 @@ export const Settings = ({ user, prefs, passkeys }) => (
 export const NotFound = ({ user }) => (
   <Layout title="Not found" user={user}>
     <h1>Not found</h1>
-    <p><a href="/">Back to today's games</a></p>
+    <p>
+      <a href="/">Back to today's games</a>
+    </p>
   </Layout>
 );
 
@@ -276,17 +331,24 @@ export const About = ({ user, stats }) => (
   <Layout title="About" user={user} canonical="/about">
     <h1>About TipoffWatch</h1>
     <p>
-      A calendar for people who keep missing the start of games. Follow any team or
-      competition and get told an hour before kickoff, and again a minute out — by web
-      notification, email, or both.
+      A calendar for people who keep missing the start of games. Follow any team or competition and
+      get told an hour before kickoff, and again a minute out — by web notification, email, or both.
     </p>
 
     <h2>What's in the directory</h2>
     <ul class="stats">
-      <li><strong>{stats.sports}</strong> sports</li>
-      <li><strong>{stats.leagues}</strong> leagues</li>
-      <li><strong>{stats.teams}</strong> teams</li>
-      <li><strong>{stats.upcoming_events}</strong> upcoming fixtures</li>
+      <li>
+        <strong>{stats.sports}</strong> sports
+      </li>
+      <li>
+        <strong>{stats.leagues}</strong> leagues
+      </li>
+      <li>
+        <strong>{stats.teams}</strong> teams
+      </li>
+      <li>
+        <strong>{stats.upcoming_events}</strong> upcoming fixtures
+      </li>
     </ul>
     <p class="muted small">
       Fixtures last refreshed{' '}
@@ -295,14 +357,14 @@ export const About = ({ user, stats }) => (
 
     <h2>Is it really free?</h2>
     <p>
-      Following teams, the calendar and the reminders are free and stay free. The only
-      thing anyone pays for is a live stream, when someone is sharing one.
+      Following teams, the calendar and the reminders are free and stay free. The only thing anyone
+      pays for is a live stream, when someone is sharing one.
     </p>
 
     <h2>Open data</h2>
     <p>
-      The schedule is public data, so the <a href="/api/v1">API</a> is open and needs no
-      key. Take what you need.
+      The schedule is public data, so the <a href="/api/v1">API</a> is open and needs no key. Take
+      what you need.
     </p>
   </Layout>
 );

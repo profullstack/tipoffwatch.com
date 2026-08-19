@@ -1,9 +1,9 @@
-import { Worker } from 'bullmq';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
-import { syncAll, syncCatalogue } from '@tipoff/sports';
 import { sendEmail, sendPush } from '@tipoff/notify';
-import { QUEUES, connection, queues } from './index.js';
+import { syncAll, syncCatalogue } from '@tipoff/sports';
+import { Worker } from 'bullmq';
+import { connection, QUEUES, queues } from './index.js';
 
 const log = (...a) => console.log('[worker]', ...a);
 
@@ -157,7 +157,9 @@ async function runBatch(job) {
   await settle(wonByChannel.webpush, (t) => sendPush(t, { event, offsetMinutes }));
   await settle(wonByChannel.email, (t) => sendEmail(t, { event, offsetMinutes }));
 
-  log(`batch ${eventId}/${offsetMinutes}: sent ${sent}, failed ${failed}, deduped ${claims.length - won.length}`);
+  log(
+    `batch ${eventId}/${offsetMinutes}: sent ${sent}, failed ${failed}, deduped ${claims.length - won.length}`,
+  );
   return { sent, failed };
 }
 
@@ -167,10 +169,14 @@ export function startWorkers({ concurrency = {} } = {}) {
   const workers = [
     new Worker(QUEUES.scan, runScan, { connection, concurrency: 1 }),
 
-    new Worker(QUEUES.sync, async (job) => (job.data.kind === 'catalogue' ? syncCatalogue() : syncAll()), {
-      connection,
-      concurrency: 1,
-    }),
+    new Worker(
+      QUEUES.sync,
+      async (job) => (job.data.kind === 'catalogue' ? syncCatalogue() : syncAll()),
+      {
+        connection,
+        concurrency: 1,
+      },
+    ),
 
     new Worker(QUEUES.fanout, runFanout, {
       connection,
@@ -186,7 +192,9 @@ export function startWorkers({ concurrency = {} } = {}) {
   ];
 
   for (const w of workers) {
-    w.on('failed', (job, err) => console.error(`[worker] ${w.name} job ${job?.id} failed:`, err?.message));
+    w.on('failed', (job, err) =>
+      console.error(`[worker] ${w.name} job ${job?.id} failed:`, err?.message),
+    );
   }
   log(`started ${workers.length} workers`);
   return workers;

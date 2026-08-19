@@ -1,12 +1,23 @@
-import { Hono } from 'hono';
-import { getCookie, setCookie } from 'hono/cookie';
-import { config } from '@tipoff/config';
 import * as auth from '@tipoff/auth';
+import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
+import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
 import { connection } from '@tipoff/queue';
-import { sendLoginLink } from '@tipoff/notify';
-import { About, Landing, SportsIndex, SportPage, LeaguePage, Following, EventPage, SignIn, Settings, NotFound } from './views/pages.jsx';
+import { Hono } from 'hono';
+import { getCookie, setCookie } from 'hono/cookie';
+import {
+  About,
+  EventPage,
+  Following,
+  Landing,
+  LeaguePage,
+  NotFound,
+  Settings,
+  SignIn,
+  SportPage,
+  SportsIndex,
+} from './views/pages.jsx';
 
 export const app = new Hono();
 
@@ -58,37 +69,46 @@ const tzOf = (c) => c.get('user')?.timezone ?? 'UTC';
  * and served from Redis. This is the difference between a viral spike hitting one
  * cache and hitting Postgres once per reader.
  */
-async function cached(key, ttl, produce) {
-  if (!config.cache.enabled) return produce();
+async function cached(c, key, ttl, produce) {
+  // Only ever cache what is identical for everyone. A signed-in page carries follow
+  // stars and the visitor's own timezone, so it is rendered fresh -- caching it would
+  // serve one person's calendar to the next visitor.
+  if (!config.cache.enabled || c.get('user')) return c.html(await produce());
+
   try {
     const hit = await connection.get(key);
-    if (hit) return hit;
+    if (hit) {
+      c.header('x-cache', 'hit');
+      return c.html(hit);
+    }
   } catch {
     // A Redis blip must not take the site down; fall through to the database.
   }
-  const html = await produce();
-  connection.set(key, html, 'EX', ttl).catch(() => {});
-  return html;
+
+  const body = await produce();
+  connection.set(key, body, 'EX', ttl).catch(() => {});
+  c.header('x-cache', 'miss');
+  return c.html(body);
 }
 
 app.get('/healthz', (c) => c.text('ok'));
 
 app.get('/', async (c) => {
-  const user = c.get('user');
   const today = new Date().toISOString().slice(0, 10);
-  const events = await q.scheduleForDay({ day: today, limit: 40 });
-  return c.html(
-    <Landing user={user} today={events} tz={tzOf(c)} vapidKey={config.push.publicKey} />,
-  );
+  return cached(c, `page:home:${today}`, config.cache.scheduleTtlSeconds, async () => {
+    const events = await q.scheduleForDay({ day: today, limit: 40 });
+    return (
+      <Landing user={c.get('user')} today={events} tz={tzOf(c)} vapidKey={config.push.publicKey} />
+    ).toString();
+  });
 });
 
-app.get('/sports', async (c) => {
-  const [sports, leagues] = await Promise.all([
-    q.listSports(),
-    q.listLeagues({ limit: 30 }),
-  ]);
-  return c.html(<SportsIndex user={c.get('user')} sports={sports} leagues={leagues} />);
-});
+app.get('/sports', async (c) =>
+  cached(c, 'page:sports', 300, async () => {
+    const [sports, leagues] = await Promise.all([q.listSports(), q.listLeagues({ limit: 30 })]);
+    return (<SportsIndex user={c.get('user')} sports={sports} leagues={leagues} />).toString();
+  }),
+);
 
 app.get('/sports/:sport', async (c) => {
   const sport = c.req.param('sport');
@@ -98,17 +118,28 @@ app.get('/sports/:sport', async (c) => {
 });
 
 app.get('/leagues/:slug', async (c) => {
-  const league = await q.getLeagueBySlug(c.req.param('slug'));
+  const slug = c.req.param('slug');
+  const league = await q.getLeagueBySlug(slug);
   if (!league) return c.html(<NotFound user={c.get('user')} />, 404);
-  const events = await q.upcomingForLeague(league.id);
-  return c.html(<LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />);
+  return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
+    const events = await q.upcomingForLeague(league.id);
+    return (
+      <LeaguePage user={c.get('user')} league={league} events={events} tz={tzOf(c)} />
+    ).toString();
+  });
 });
 
 app.get('/following', async (c) => {
   const user = requireUser(c);
   const [events, follows] = await Promise.all([q.upcomingForUser(user.id), q.listFollows(user.id)]);
   return c.html(
-    <Following user={user} events={events} follows={follows} tz={user.timezone} vapidKey={config.push.publicKey} />,
+    <Following
+      user={user}
+      events={events}
+      follows={follows}
+      tz={user.timezone}
+      vapidKey={config.push.publicKey}
+    />,
   );
 });
 
@@ -139,7 +170,9 @@ app.get('/signup', (c) => c.html(<SignIn mode="signup" next={c.req.query('next')
  */
 app.post('/api/auth/magic', async (c) => {
   const body = await c.req.parseBody();
-  const email = String(body.email ?? '').trim().toLowerCase();
+  const email = String(body.email ?? '')
+    .trim()
+    .toLowerCase();
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     try {
       const url = await auth.createLoginLink(email);
@@ -176,7 +209,13 @@ const challengeKey = (id) => `pk:challenge:${id}`;
 async function stashChallenge(c, challenge) {
   const id = crypto.randomUUID();
   await connection.set(challengeKey(id), challenge, 'EX', 300);
-  setCookie(c, 'tw_pk', id, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 300, secure: config.isProd });
+  setCookie(c, 'tw_pk', id, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: 300,
+    secure: config.isProd,
+  });
 }
 
 async function takeChallenge(c) {
@@ -198,7 +237,11 @@ app.post('/api/auth/passkey/register/verify', async (c) => {
   const user = requireUser(c);
   const expectedChallenge = await takeChallenge(c);
   if (!expectedChallenge) return c.json({ error: 'challenge expired' }, 400);
-  const ok = await auth.verifyPasskeyRegistration({ user, response: await c.req.json(), expectedChallenge });
+  const ok = await auth.verifyPasskeyRegistration({
+    user,
+    response: await c.req.json(),
+    expectedChallenge,
+  });
   return c.json({ ok }, ok ? 200 : 400);
 });
 
@@ -223,7 +266,10 @@ app.post('/api/auth/passkey/authenticate/verify', async (c) => {
 
 /* ----------------------------------------------------------------- follows -- */
 
-for (const [path, fn] of [['/api/follow', q.addFollow], ['/api/unfollow', q.removeFollow]]) {
+for (const [path, fn] of [
+  ['/api/follow', q.addFollow],
+  ['/api/unfollow', q.removeFollow],
+]) {
   app.post(path, async (c) => {
     const user = requireUser(c);
     const body = await c.req.parseBody();
@@ -251,8 +297,12 @@ app.post('/api/prefs', async (c) => {
   const arr = (v) => (Array.isArray(v) ? v : v === undefined ? [] : [v]);
   await q.savePrefs({
     userId: user.id,
-    offsetsMinutes: arr(body.offsets).map(Number).filter((n) => Number.isFinite(n) && n > 0),
-    channels: arr(body.channels).map(String).filter((s) => ['webpush', 'email'].includes(s)),
+    offsetsMinutes: arr(body.offsets)
+      .map(Number)
+      .filter((n) => Number.isFinite(n) && n > 0),
+    channels: arr(body.channels)
+      .map(String)
+      .filter((s) => ['webpush', 'email'].includes(s)),
   });
   return respond(c, { redirectTo: '/settings' });
 });
@@ -263,7 +313,12 @@ app.get('/settings', async (c) => {
   return c.html(
     <Settings
       user={user}
-      prefs={prefs ?? { offsets_minutes: config.reminders.defaultOffsets, channels: ['webpush', 'email'] }}
+      prefs={
+        prefs ?? {
+          offsets_minutes: config.reminders.defaultOffsets,
+          channels: ['webpush', 'email'],
+        }
+      }
       passkeys={passkeys}
     />,
   );
@@ -292,7 +347,9 @@ app.post('/api/events/:id/buy', async (c) => {
   if (!event) return c.json({ error: 'no such event' }, 404);
 
   const body = await c.req.parseBody();
-  const [offer] = (await pay.offersForEvent(event.id)).filter((o) => o.id === Number(body.offer_id));
+  const [offer] = (await pay.offersForEvent(event.id)).filter(
+    (o) => o.id === Number(body.offer_id),
+  );
   if (!offer) return c.json({ error: 'offer unavailable' }, 409);
 
   const checkoutUrl = await pay.createCheckout({ user, event, offer });

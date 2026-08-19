@@ -1,5 +1,5 @@
-import { createHmac } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
+import { createHmac } from 'node:crypto';
 
 // Set before the module graph reads it -- config snapshots the environment on import.
 process.env.COINPAY_WEBHOOK_SECRET = 'whsec_test_secret';
@@ -25,7 +25,9 @@ describe('coinpay webhook verification', () => {
   });
 
   test('rejects a signature made with the wrong secret', () => {
-    expect(verifyWebhook({ rawBody: body, signatureHeader: sign(body, now(), 'wrong') })).toBe(false);
+    expect(verifyWebhook({ rawBody: body, signatureHeader: sign(body, now(), 'wrong') })).toBe(
+      false,
+    );
   });
 
   test('rejects a replay outside the tolerance window', () => {

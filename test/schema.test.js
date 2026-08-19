@@ -1,5 +1,5 @@
-import { readFile, readdir } from 'node:fs/promises';
 import { beforeAll, describe, expect, test } from 'bun:test';
+import { readdir, readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { citext } from '@electric-sql/pglite/contrib/citext';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
@@ -16,8 +16,8 @@ beforeAll(async () => {
   for (const f of (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort()) {
     await db.exec(await readFile(dir + f, 'utf8'));
   }
-// Booting a WASM Postgres and running every migration overruns the 5s default on a
-// loaded machine; the work is legitimately slow rather than hung.
+  // Booting a WASM Postgres and running every migration overruns the 5s default on a
+  // loaded machine; the work is legitimately slow rather than hung.
 }, 60_000);
 
 const one = async (sql, params) => (await db.query(sql, params)).rows[0];
@@ -29,10 +29,20 @@ describe('migrations', () => {
     );
     const names = rows.map((r) => r.table_name);
     for (const t of [
-      'users', 'login_tokens', 'sessions', 'passkeys',
-      'leagues', 'teams', 'events', 'follows',
-      'reminder_prefs', 'push_subscriptions', 'reminder_deliveries',
-      'stream_offers', 'payments', 'entitlements',
+      'users',
+      'login_tokens',
+      'sessions',
+      'passkeys',
+      'leagues',
+      'teams',
+      'events',
+      'follows',
+      'reminder_prefs',
+      'push_subscriptions',
+      'reminder_deliveries',
+      'stream_offers',
+      'payments',
+      'entitlements',
     ]) {
       expect(names).toContain(t);
     }
@@ -78,7 +88,9 @@ describe('reminder fan-out', () => {
     // the fan-out must count each person exactly once.
     userIds = [];
     for (let i = 0; i < 250; i++) {
-      const u = await one(`insert into users (email) values ($1) returning id`, [`u${i}@example.com`]);
+      const u = await one(`insert into users (email) values ($1) returning id`, [
+        `u${i}@example.com`,
+      ]);
       userIds.push(u.id);
       if (i % 2 === 0) {
         await db.query(
@@ -179,9 +191,7 @@ describe('reminder fan-out', () => {
 
   test('the due window opens when the threshold is crossed, not before', async () => {
     const mk = async (minutesAway, key) => {
-      const l = await one(
-        `select id from leagues where slug = 'soccer-eng-1'`,
-      );
+      const l = await one(`select id from leagues where slug = 'soccer-eng-1'`);
       const r = await one(
         `insert into events (provider, provider_key, league_id, starts_at, name)
          values ('espn',$1,$2, now() + ($3 * interval '1 minute'),'W') returning id`,
@@ -217,7 +227,6 @@ describe('reminder fan-out', () => {
     const stale = await mk(45, 'w/stale');
     expect(await due(60)).not.toContain(stale);
   });
-
 });
 
 describe('stream offers', () => {

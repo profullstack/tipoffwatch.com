@@ -23,11 +23,25 @@ export const name = 'espn';
 
 /** Leagues people actually follow, polled ahead of the long tail. */
 const PRIORITY = new Map([
-  ['nfl', 1], ['nba', 1], ['mlb', 1], ['nhl', 1],
-  ['eng.1', 1], ['esp.1', 1], ['ger.1', 1], ['ita.1', 1], ['fra.1', 1],
-  ['uefa.champions', 1], ['fifa.world', 1], ['usa.1', 2], ['mex.1', 2],
-  ['college-football', 2], ['mens-college-basketball', 2],
-  ['f1', 2], ['atp', 3], ['wta', 3], ['ufc', 3],
+  ['nfl', 1],
+  ['nba', 1],
+  ['mlb', 1],
+  ['nhl', 1],
+  ['eng.1', 1],
+  ['esp.1', 1],
+  ['ger.1', 1],
+  ['ita.1', 1],
+  ['fra.1', 1],
+  ['uefa.champions', 1],
+  ['fifa.world', 1],
+  ['usa.1', 2],
+  ['mex.1', 2],
+  ['college-football', 2],
+  ['mens-college-basketball', 2],
+  ['f1', 2],
+  ['atp', 3],
+  ['wta', 3],
+  ['ufc', 3],
 ]);
 
 async function getJson(url, { timeoutMs = 20000 } = {}) {

@@ -16,12 +16,24 @@ const sample = {
         {
           homeAway: 'home',
           score: '17',
-          team: { id: '4', displayName: 'Cincinnati Bengals', name: 'Bengals', abbreviation: 'CIN', logo: 'https://x/cin.png' },
+          team: {
+            id: '4',
+            displayName: 'Cincinnati Bengals',
+            name: 'Bengals',
+            abbreviation: 'CIN',
+            logo: 'https://x/cin.png',
+          },
         },
         {
           homeAway: 'away',
           score: '20',
-          team: { id: '8', displayName: 'Detroit Lions', name: 'Lions', abbreviation: 'DET', logo: 'https://x/det.png' },
+          team: {
+            id: '8',
+            displayName: 'Detroit Lions',
+            name: 'Lions',
+            abbreviation: 'DET',
+            logo: 'https://x/det.png',
+          },
         },
       ],
     },
@@ -69,9 +81,12 @@ describe('event normalisation', () => {
     // normaliseEvent is internal; exercise it through the public shape by stubbing
     // fetch for one call.
     const realFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({ events: [sample] }), { status: 200 });
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ events: [sample] }), { status: 200 });
     try {
-      const { events: [e] } = await espn.fetchSchedule({
+      const {
+        events: [e],
+      } = await espn.fetchSchedule({
         providerKey: 'football/nfl',
         from: new Date(),
         to: new Date(Date.now() + 86400000),
@@ -106,7 +121,9 @@ describe('event normalisation', () => {
         { status: 200 },
       );
     try {
-      const { events: [e] } = await espn.fetchSchedule({
+      const {
+        events: [e],
+      } = await espn.fetchSchedule({
         providerKey: 'racing/f1',
         from: new Date(),
         to: new Date(Date.now() + 86400000),

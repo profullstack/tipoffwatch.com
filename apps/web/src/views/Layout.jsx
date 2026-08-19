@@ -1,5 +1,5 @@
-import { html } from 'hono/html';
 import { config } from '@tipoff/config';
+import { html } from 'hono/html';
 
 /**
  * The single HTML shell. Everything renders through here, including the signed-out
@@ -11,18 +11,29 @@ export const Layout = (props) => (
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-      <title>{props.title ? `${props.title} · TipoffWatch` : 'TipoffWatch — never miss a game'}</title>
-      <meta name="description" content={props.description ?? 'Follow any team in the world and get told before they play. Free.'} />
+      <title>
+        {props.title ? `${props.title} · TipoffWatch` : 'TipoffWatch — never miss a game'}
+      </title>
+      <meta
+        name="description"
+        content={
+          props.description ?? 'Follow any team in the world and get told before they play. Free.'
+        }
+      />
       <meta name="theme-color" content="#0b0f17" />
       <link rel="manifest" href="/manifest.webmanifest" />
       <link rel="icon" href="/icon.svg" type="image/svg+xml" />
       <link rel="stylesheet" href="/styles.css" />
-      {props.canonical ? <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} /> : null}
+      {props.canonical ? (
+        <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
+      ) : null}
       <meta property="og:title" content={props.title ?? 'TipoffWatch'} />
       <meta property="og:type" content="website" />
     </head>
     <body>
-      <a class="skip" href="#main">Skip to content</a>
+      <a class="skip" href="#main">
+        Skip to content
+      </a>
       <header class="topbar">
         <a class="brand" href="/">
           <span class="brand-mark" aria-hidden="true" />
@@ -34,7 +45,9 @@ export const Layout = (props) => (
           {props.user ? (
             <a href="/settings">Settings</a>
           ) : (
-            <a class="cta" href="/login">Sign in</a>
+            <a class="cta" href="/login">
+              Sign in
+            </a>
           )}
         </nav>
       </header>

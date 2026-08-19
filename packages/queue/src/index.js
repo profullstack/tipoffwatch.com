@@ -1,8 +1,8 @@
-import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
 import { config } from '@tipoff/config';
 import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
+import { Queue } from 'bullmq';
+import IORedis from 'ioredis';
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection it blocks on, or
@@ -56,7 +56,11 @@ export async function installSchedules({ log = console.log } = {}) {
 
   // Fixtures move rarely; the horizon only needs refreshing a few times a day.
   await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });
-  await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { repeat: { every: 24 * 3600_000 } });
+  await queues.sync.add(
+    'sync-catalogue',
+    { kind: 'catalogue' },
+    { repeat: { every: 24 * 3600_000 } },
+  );
 
   // Two problems solved by the same check.
   //
@@ -80,15 +84,25 @@ export async function installSchedules({ log = console.log } = {}) {
 
   if (staleBy(cat.newest, 24 * 3600_000) || cat.leagues === 0) {
     log('[queue] catalogue stale, refreshing now');
-    await queues.sync.add('sync-catalogue', { kind: 'catalogue' }, { jobId: `seed-cat:${dayStamp()}` });
+    await queues.sync.add(
+      'sync-catalogue',
+      { kind: 'catalogue' },
+      { jobId: `seed-cat:${dayStamp()}` },
+    );
   }
   // Display names only arrive with a fixture sweep, so a catalogue that has never
   // been swept shows raw slugs however fresh its fixtures are.
   const unnamed = await q.leaguesMissingRealName();
 
   if (staleBy(ev.synced, 6 * 3600_000) || unnamed > 0) {
-    log(`[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, unnamed leagues: ${unnamed})`);
-    await queues.sync.add('sync-all', { kind: 'all' }, { jobId: `seed-all:${hourStamp()}`, delay: 20_000 });
+    log(
+      `[queue] syncing now (fixtures stale: ${staleBy(ev.synced, 6 * 3600_000)}, unnamed leagues: ${unnamed})`,
+    );
+    await queues.sync.add(
+      'sync-all',
+      { kind: 'all' },
+      { jobId: `seed-all:${hourStamp()}`, delay: 20_000 },
+    );
   }
 
   log('[queue] schedules installed');

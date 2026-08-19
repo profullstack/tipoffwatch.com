@@ -2,7 +2,9 @@
    form; this file adds push notifications and passkeys where the browser has them. */
 
 const urlB64ToUint8Array = (b64) => {
-  const padded = (b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  const padded = (b64 + '='.repeat((4 - (b64.length % 4)) % 4))
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 };
 

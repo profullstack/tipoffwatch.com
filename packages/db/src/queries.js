@@ -300,7 +300,11 @@ export async function eventsDueForReminder({ offsetMinutes, lookbackSeconds }) {
  * slower. The `> after` form stays flat, and it cannot repeat or drop a row when
  * a follow is added mid-fan-out.
  */
-export async function followersOfEventPage({ eventId, after = '00000000-0000-0000-0000-000000000000', limit = 500 }) {
+export async function followersOfEventPage({
+  eventId,
+  after = '00000000-0000-0000-0000-000000000000',
+  limit = 500,
+}) {
   return sql`
     select distinct f.user_id
     from events e
@@ -408,7 +412,9 @@ export async function distinctReminderOffsets(defaults) {
   const rows = await sql`
     select distinct unnest(offsets_minutes) as m from reminder_prefs
   `;
-  return [...new Set([...defaults, ...rows.map((r) => r.m)])].filter((m) => m > 0).sort((a, b) => b - a);
+  return [...new Set([...defaults, ...rows.map((r) => r.m)])]
+    .filter((m) => m > 0)
+    .sort((a, b) => b - a);
 }
 
 /** Replace a catalogue slug with the provider's real display name once we see it. */

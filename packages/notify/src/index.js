@@ -1,6 +1,6 @@
-import webpush from 'web-push';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
+import webpush from 'web-push';
 
 if (config.push.enabled) {
   webpush.setVapidDetails(config.push.subject, config.push.publicKey, config.push.privateKey);
