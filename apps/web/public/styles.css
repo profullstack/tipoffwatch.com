@@ -99,7 +99,9 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.9rem 1.15rem;
+  /* Tight vertical padding: the logo sets the bar's height now, and stacking the
+     old padding on top of it made the header taller than it needed to be. */
+  padding: 0.35rem 1.15rem;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(oklch(0.19 0.014 260), var(--ground));
   position: sticky;
@@ -119,20 +121,20 @@ main {
 /* Big enough to actually read the mark at a glance; it now carries the name on
    its own, with no wordmark beside it. */
 .brand-logo {
-  /* The artwork is a dense illustrated badge with the wordmark inside it -- balls,
-     a bell, a LIVE tag and "TipOffWatch" across the bottom. Below roughly 64px the
-     name is simply unreadable, so this is sized for legibility rather than to fit a
-     conventional header height. The bar grows to suit it. */
-  width: 72px;
-  height: 72px;
-  border-radius: 10px;
+  /* Big, deliberately. The mark is an illustrated badge with "TipOffWatch" spelled
+     inside it, so it is the wordmark -- not an icon sitting next to one. Sized to
+     be read, not to fit a conventional header. Four goes at this: 44, 33, 48 and 72
+     were all too small because I was sizing the box instead of looking at the art. */
+  width: 112px;
+  height: 112px;
+  border-radius: 12px;
   display: block;
   object-fit: contain;
 }
 @media (max-width: 40rem) {
   .brand-logo {
-    width: 56px;
-    height: 56px;
+    width: 76px;
+    height: 76px;
   }
 }
 .topbar nav {
