@@ -130,10 +130,16 @@ export async function fetchSchedule({ providerKey, from, to, depth = 0 }) {
       }
     : null;
 
-  if (events.length >= PAGE_CAP && depth < 4) {
+  // Only worth splitting a window that is at least two days wide. Below that the
+  // halves collapse to the same day and `mid + 1 day` lands past `to`, which
+  // renders as a backwards range like `dates=20260831-20260830` -- ESPN answers
+  // that with a 400, so the split turned a full page into a failed league.
+  const spansMultipleDays = to.getTime() - from.getTime() >= 2 * 86400000;
+
+  if (events.length >= PAGE_CAP && depth < 4 && spansMultipleDays) {
     const mid = new Date((from.getTime() + to.getTime()) / 2);
-    if (mid > from && mid < to) {
-      const dayAfterMid = new Date(mid.getTime() + 86400000);
+    const dayAfterMid = new Date(mid.getTime() + 86400000);
+    if (mid > from && dayAfterMid <= to) {
       const [a, b] = await Promise.all([
         fetchSchedule({ providerKey, from, to: mid, depth: depth + 1 }),
         fetchSchedule({ providerKey, from: dayAfterMid, to, depth: depth + 1 }),

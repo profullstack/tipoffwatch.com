@@ -136,3 +136,63 @@ describe('event normalisation', () => {
     }
   });
 });
+
+describe('window splitting', () => {
+  /** Records every dates= range the adapter asks for. */
+  function recordingFetch(eventsPerCall) {
+    const ranges = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = async (u) => {
+      const m = /dates=(\d{8})-(\d{8})/.exec(String(u));
+      if (m) ranges.push([m[1], m[2]]);
+      const events = Array.from({ length: eventsPerCall }, (_, i) => ({
+        id: `${ranges.length}-${i}`,
+        date: '2026-08-25T12:00Z',
+        name: 'G',
+        status: { type: { state: 'pre' } },
+        competitions: [{ status: { type: { state: 'pre' } }, competitors: [] }],
+      }));
+      return new Response(JSON.stringify({ events }), { status: 200 });
+    };
+    return {
+      ranges,
+      restore: () => {
+        globalThis.fetch = real;
+      },
+    };
+  }
+
+  test('never requests a backwards date range', async () => {
+    // The live bug: a narrow window split into `dates=20260831-20260830`, which
+    // ESPN answers with a 400, so the league synced nothing at all.
+    const { ranges, restore } = recordingFetch(100);
+    try {
+      await espn.fetchSchedule({
+        providerKey: 'soccer/x.1',
+        from: new Date('2026-08-30T00:00:00Z'),
+        to: new Date('2026-08-31T00:00:00Z'),
+      });
+      expect(ranges.length).toBeGreaterThan(0);
+      for (const [a, b] of ranges) expect(Number(a)).toBeLessThanOrEqual(Number(b));
+    } finally {
+      restore();
+    }
+  });
+
+  test('still splits a wide window that comes back full', async () => {
+    const { ranges, restore } = recordingFetch(100);
+    try {
+      await espn.fetchSchedule({
+        providerKey: 'soccer/x.1',
+        from: new Date('2026-08-01T00:00:00Z'),
+        to: new Date('2026-08-29T00:00:00Z'),
+      });
+      // A capped response must still be subdivided, or a busy league silently
+      // loses half its season.
+      expect(ranges.length).toBeGreaterThan(1);
+      for (const [a, b] of ranges) expect(Number(a)).toBeLessThanOrEqual(Number(b));
+    } finally {
+      restore();
+    }
+  });
+});
