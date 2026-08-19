@@ -91,7 +91,16 @@ export async function installSchedules({ log = console.log } = {}) {
            max(created_at) as newest
     from leagues
   `;
-  const [ev] = await sql`select max(updated_at) as synced from events`;
+  // NOT events.updated_at, which was the obvious choice and is useless: the
+  // live-scores tick writes that column every 60 seconds, so "when were the events
+  // last touched" is always about a minute ago and the sweep is never stale. Between
+  // that and the repeatable's timer restarting on every boot, the full fixture sweep
+  // stopped running altogether on a day of frequent deploys -- the exact failure the
+  // staleness check was added to prevent, reached from a different direction.
+  //
+  // rosters_synced_at is stamped only at the end of a full sync of that league, so
+  // it means what this check needs it to mean.
+  const [ev] = await sql`select max(rosters_synced_at) as synced from leagues where active`;
 
   const staleBy = (ts, ms) => !ts || Date.now() - new Date(ts).getTime() > ms;
 
