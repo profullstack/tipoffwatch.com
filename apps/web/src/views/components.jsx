@@ -95,8 +95,10 @@ export const EventRow = ({ event }) => (
       </span>
     </div>
 
-    {event.state === 'post' && event.home_score !== null ? (
-      <span class="score">
+    {/* Shown while a game is in progress too, not only once it is finished --
+        a live row with no score was the whole point of watching it. */}
+    {(event.state === 'in' || event.state === 'post') && event.home_score !== null ? (
+      <span class={`score${event.state === 'in' ? ' live' : ''}`}>
         {event.away_score}–{event.home_score}
       </span>
     ) : null}

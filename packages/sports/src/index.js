@@ -152,6 +152,65 @@ export async function syncLeague(league, { horizonDays = config.sports.horizonDa
 }
 
 /**
+ * Refresh scores for one league, and nothing else.
+ *
+ * The full sync also pulls the roster and a fortnight of fixtures, which is far too
+ * much to repeat every minute. This asks only for today and writes only what
+ * changes during a game: state, status detail and the two scores.
+ */
+export async function syncLeagueScores(league) {
+  const adapter = ADAPTERS[league.provider];
+  if (!adapter) return { events: 0 };
+
+  const now = new Date();
+  const { events: fixtures } = await adapter.fetchSchedule({
+    providerKey: league.provider_key,
+    from: new Date(now.getTime() - 12 * 3600_000),
+    to: new Date(now.getTime() + 12 * 3600_000),
+  });
+  if (fixtures.length === 0) return { events: 0 };
+
+  await q.updateEventScores(
+    fixtures.map((f) => ({
+      provider: league.provider,
+      provider_key: f.providerKey,
+      state: f.state,
+      status_detail: f.statusDetail,
+      home_score: f.homeScore,
+      away_score: f.awayScore,
+    })),
+  );
+  return { events: fixtures.length };
+}
+
+/**
+ * The live tick: refresh scores for whatever is actually being played.
+ *
+ * Costs one request per league with a game on, which is a handful even on a busy
+ * evening -- the whole point of scoping it rather than re-running the full sweep.
+ */
+export async function syncLiveScores({ log = console.log } = {}) {
+  const leagues = await q.leaguesWithLiveGames();
+  if (leagues.length === 0) return { leagues: 0, events: 0 };
+
+  let events = 0;
+  let failed = 0;
+  await Promise.all(
+    leagues.map(async (league) => {
+      try {
+        const r = await syncLeagueScores(league);
+        events += r.events;
+      } catch {
+        // A provider blip must not stop the other leagues' scores updating.
+        failed++;
+      }
+    }),
+  );
+  log(`[live] ${leagues.length} league(s), ${events} fixtures refreshed, ${failed} failed`);
+  return { leagues: leagues.length, events, failed };
+}
+
+/**
  * Sync every active league, bounded concurrency.
  *
  * Concurrency is deliberately modest. The upstream is free and unmetered but not

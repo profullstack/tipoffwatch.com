@@ -1,7 +1,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
-import { syncAll, syncCatalogue } from '@tipoff/sports';
+import { syncAll, syncCatalogue, syncLiveScores } from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
 
@@ -190,6 +190,10 @@ export function startWorkers({ concurrency = {} } = {}) {
         concurrency: 1,
       },
     ),
+
+    // Scores only; concurrency 1 because it already fans out internally and a
+    // second overlapping tick would just refetch the same leagues.
+    new Worker(QUEUES.live, () => syncLiveScores(), { connection, concurrency: 1 }),
 
     new Worker(QUEUES.fanout, runFanout, {
       connection,

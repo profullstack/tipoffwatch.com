@@ -637,3 +637,62 @@ export async function linkTeamsToLeague(teamIds, leagueId) {
     on conflict do nothing
   `;
 }
+
+/**
+ * Leagues with a game in progress, or one that just kicked off.
+ *
+ * Drives the live tick. Deliberately narrow: on a normal evening this is a handful
+ * of leagues out of 354, so refreshing scores every minute costs a handful of
+ * requests rather than a full sweep.
+ */
+export async function leaguesWithLiveGames() {
+  return sql`
+    select distinct l.*
+    from leagues l
+    join events e on e.league_id = l.id
+    where l.active
+      and (
+        e.state = 'in'
+        -- A game that has just started but whose state we have not refreshed yet;
+        -- without this the first minutes of every match show no score at all.
+        or (e.state = 'pre' and e.starts_at between now() - interval '30 minutes' and now() + interval '5 minutes')
+      )
+  `;
+}
+
+/**
+ * Write only what changes during a game.
+ *
+ * Deliberately not the full event upsert: a live tick must never touch kickoff
+ * time, teams or venue, so a provider hiccup mid-match cannot rewrite the fixture
+ * itself. Rows that do not already exist are ignored rather than inserted.
+ */
+export async function updateEventScores(rows) {
+  if (rows.length === 0) return [];
+  return sql`
+    update events e set
+      state = v.state,
+      status_detail = v.status_detail,
+      home_score = v.home_score,
+      away_score = v.away_score,
+      updated_at = now()
+    from (values ${sql(
+      rows.map((r) => [
+        r.provider,
+        r.provider_key,
+        r.state,
+        r.status_detail ?? null,
+        r.home_score ?? null,
+        r.away_score ?? null,
+      ]),
+    )}) as v(provider, provider_key, state, status_detail, home_score, away_score)
+    where e.provider = v.provider and e.provider_key = v.provider_key
+    returning e.id
+  `;
+}
+
+/** Forget a push subscription entirely: the browser has revoked it or the user
+ *  turned notifications off, and a disabled row would still look like a device. */
+export async function deletePushSubscription({ userId, endpoint }) {
+  await sql`delete from push_subscriptions where user_id = ${userId} and endpoint = ${endpoint}`;
+}

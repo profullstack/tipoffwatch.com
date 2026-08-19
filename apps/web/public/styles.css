@@ -711,3 +711,8 @@ body[data-loading]::before {
     background: var(--accent);
   }
 }
+
+/* A score that is still moving. */
+.score.live {
+  color: var(--live);
+}

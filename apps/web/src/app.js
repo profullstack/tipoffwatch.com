@@ -402,6 +402,14 @@ app.post('/api/push/subscribe', async (c) => {
   return c.json({ ok: true });
 });
 
+app.post('/api/push/unsubscribe', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.json().catch(() => ({}));
+  if (!body?.endpoint) return c.json({ error: 'endpoint required' }, 400);
+  await q.deletePushSubscription({ userId: user.id, endpoint: body.endpoint });
+  return c.json({ ok: true });
+});
+
 /* ---------------------------------------------------------------- payments -- */
 
 app.post('/api/events/:id/buy', async (c) => {

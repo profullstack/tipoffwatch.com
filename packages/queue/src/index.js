@@ -23,6 +23,8 @@ export const QUEUES = {
   fanout: 'reminder-fanout',
   /** One job per page of followers. Claims and sends. */
   batch: 'reminder-batch',
+  /** Refreshes scores for whatever is being played right now. */
+  live: 'live-scores',
 };
 
 const defaults = {
@@ -47,12 +49,17 @@ export const queues = Object.fromEntries(
  * every boot makes the code the single source of truth for what is scheduled.
  */
 export async function installSchedules({ log = console.log } = {}) {
-  for (const q of [queues.scan, queues.sync]) {
+  for (const q of [queues.scan, queues.sync, queues.live]) {
     for (const r of await q.getRepeatableJobs()) await q.removeRepeatableByKey(r.key);
   }
 
   // A 1-minute reminder needs sub-minute resolution to land on time.
   await queues.scan.add('scan', {}, { repeat: { every: 30_000 }, jobId: 'scan' });
+
+  // Scores. Only leagues with a game actually in progress are fetched, so this is
+  // a handful of requests a minute rather than a sweep -- without it a live score
+  // is as stale as the last full sync, which was measured at 69 minutes.
+  await queues.live.add('live-scores', {}, { repeat: { every: 60_000 }, jobId: 'live' });
 
   // Fixtures move rarely; the horizon only needs refreshing a few times a day.
   await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });

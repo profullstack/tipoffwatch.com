@@ -89,33 +89,111 @@ async function registerSw() {
   }
 }
 
+/**
+ * Notification toggle.
+ *
+ * The previous version only ever offered to turn notifications ON, and said nothing
+ * on any branch that was not a clean success: a denied permission, a failed
+ * subscribe, a rejected save all left the button looking stuck. It also hid the
+ * whole control once subscribed, so there was no way to see the state or turn it
+ * back off.
+ *
+ * This renders the real state every time and reports every outcome.
+ */
 async function initPush() {
   const box = document.getElementById('push-optin');
   const btn = document.getElementById('enable-push');
+  const label = document.getElementById('push-state');
+  const msg = document.getElementById('push-msg');
   if (!box || !btn) return;
 
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && window.__VAPID;
-  if (!supported) return;
+  if (!supported) {
+    box.hidden = false;
+    if (label)
+      label.textContent = 'This browser cannot show notifications. Email reminders still work.';
+    btn.hidden = true;
+    return;
+  }
 
   const reg = await registerSw();
-  if (!reg) return;
+  if (!reg) {
+    box.hidden = false;
+    if (label)
+      label.textContent = 'Notifications are unavailable here. Email reminders still work.';
+    btn.hidden = true;
+    return;
+  }
 
-  const existing = await reg.pushManager.getSubscription();
-  if (existing || Notification.permission === 'denied') return;
-  box.hidden = false;
+  async function paint() {
+    const sub = await reg.pushManager.getSubscription();
+    box.hidden = false;
+
+    if (Notification.permission === 'denied') {
+      // Nothing the page can do: only the browser's own site settings can undo it.
+      if (label)
+        label.textContent = 'Notifications are blocked for this site in your browser settings.';
+      btn.hidden = true;
+      return null;
+    }
+
+    btn.hidden = false;
+    if (sub) {
+      if (label)
+        label.textContent = 'Notifications are on — an hour before kickoff, and a minute out.';
+      btn.textContent = 'Turn off notifications';
+      btn.className = 'ghost';
+    } else {
+      if (label)
+        label.textContent = 'Get a notification an hour before kickoff, and one minute out.';
+      btn.textContent = 'Turn on notifications';
+      btn.className = 'cta';
+    }
+    return sub;
+  }
+
+  let current = await paint();
 
   btn.addEventListener('click', async () => {
     btn.disabled = true;
+    say(msg, current ? 'Turning off…' : 'Waiting for your browser…', 'info');
     try {
-      if ((await Notification.requestPermission()) !== 'granted') return;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlB64ToUint8Array(window.__VAPID),
-      });
-      const res = await postJson('/api/push/subscribe', sub.toJSON());
-      if (res.ok) box.innerHTML = '<p class="ok">Notifications are on.</p>';
+      if (current) {
+        const { endpoint } = current;
+        await current.unsubscribe();
+        await postJson('/api/push/unsubscribe', { endpoint });
+        say(msg, 'Notifications are off.', 'info');
+      } else {
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          // The branch that used to fail in total silence.
+          say(
+            msg,
+            permission === 'denied'
+              ? 'Your browser blocked notifications for this site.'
+              : 'No answer from the browser prompt — nothing changed.',
+            'error',
+          );
+          return;
+        }
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(window.__VAPID),
+        });
+        const res = await postJson('/api/push/subscribe', sub.toJSON());
+        if (!res.ok) {
+          // Do not leave the browser subscribed to something the server refused.
+          await sub.unsubscribe().catch(() => {});
+          say(msg, 'Could not save that. Try again in a moment.', 'error');
+          return;
+        }
+        say(msg, 'Notifications are on.', 'ok');
+      }
+    } catch (err) {
+      say(msg, `Could not change that: ${err?.message ?? err}`, 'error');
     } finally {
       btn.disabled = false;
+      current = await paint();
     }
   });
 }

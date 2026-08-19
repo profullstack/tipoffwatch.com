@@ -181,11 +181,14 @@ export const Following = ({ user, events, follows, vapidKey }) => (
   <Layout title="My games" user={user} vapidKey={vapidKey}>
     <h1>My games</h1>
 
+    {/* Rendered always and revealed by script once it knows the real state, so the
+        control can report on / off / blocked rather than only offering to turn on. */}
     <div id="push-optin" hidden class="notice">
-      <p>Get a notification an hour before kickoff, and one minute out.</p>
+      <p id="push-state">Get a notification an hour before kickoff, and one minute out.</p>
       <button type="button" id="enable-push">
         Turn on notifications
       </button>
+      <p id="push-msg" class="feedback" hidden />
     </div>
 
     {follows.length === 0 ? (
