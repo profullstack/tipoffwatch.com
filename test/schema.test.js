@@ -456,7 +456,8 @@ describe('play log selection', () => {
     from events e
     where e.state = $3
       and ${PREDICATE}
-    order by e.plays_synced_at asc nulls first
+    order by (case when e.state = 'post' then e.starts_at end) desc nulls last,
+             e.plays_synced_at asc nulls first
     limit $2`;
 
   let league;
@@ -613,6 +614,53 @@ describe('play log selection', () => {
       syncedSecondsAgo: null,
     });
     expect(await allDue()).not.toContain(upcoming);
+  });
+
+  test('the game that just finished is first in line for its recap', async () => {
+    // Ordered by last-read, a game going final sorted behind every straggler still
+    // owed a catch-up -- about five hours behind, at two reads a tick -- which is
+    // exactly backwards: it is the one somebody has open waiting for the recap.
+    const old = await mk({
+      key: 'e1',
+      state: 'post',
+      startsHoursAgo: 9,
+      syncedSecondsAgo: 9000,
+      updatedSecondsAgo: 600,
+    });
+    const justEnded = await mk({
+      key: 'e2',
+      state: 'post',
+      startsHoursAgo: 2,
+      syncedSecondsAgo: 30,
+      updatedSecondsAgo: 30,
+    });
+
+    const queue = await due(100, 'post');
+    expect(queue.indexOf(justEnded)).toBeLessThan(queue.indexOf(old));
+    // And with only one slot free it is the one that gets read.
+    expect(await due(1, 'post')).toEqual([justEnded]);
+  });
+
+  test('live games still take turns, oldest read first', async () => {
+    // The post ordering must not disturb this: the case is null for every live row,
+    // so the live queue falls through to the second key unchanged.
+    const queue = await db.query(
+      `select e.id, e.plays_synced_at from events e
+       where e.state = 'in' and ${PREDICATE}
+       order by (case when e.state = 'post' then e.starts_at end) desc nulls last,
+                e.plays_synced_at asc nulls first`,
+      [120],
+    );
+    expect(queue.rows.length).toBeGreaterThan(1);
+
+    // Never-read first, then non-decreasing. Stated as an invariant rather than an
+    // exact sequence, because equal stamps may legitimately come back either way.
+    const stamps = queue.rows.map((r) => r.plays_synced_at);
+    const firstStamped = stamps.findIndex((s) => s !== null);
+    expect(stamps.slice(0, firstStamped).every((s) => s === null)).toBe(true);
+    for (let i = firstStamped + 1; i < stamps.length; i++) {
+      expect(+new Date(stamps[i])).toBeGreaterThanOrEqual(+new Date(stamps[i - 1]));
+    }
   });
 
   test('the two queues can be drawn separately, so neither can shut the other out', async () => {

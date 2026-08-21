@@ -889,7 +889,15 @@ export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state
           and e.starts_at > now() - interval '12 hours'
           and not e.plays_final)
       )
-    order by e.plays_synced_at asc nulls first
+    -- Each queue wants the opposite end. Among live games the fairest next read is
+    -- the one waiting longest, so they take turns. Among finished ones age is the
+    -- wrong tiebreak entirely: the game that just went final is the one somebody is
+    -- refreshing for the recap, and ordering by last-read put it behind a backlog
+    -- of yesterday's fixtures -- roughly five hours behind, at two reads a tick.
+    -- The case is null for every row in the live queue, so that falls straight
+    -- through to the second key.
+    order by (case when e.state = 'post' then e.starts_at end) desc nulls last,
+             e.plays_synced_at asc nulls first
     limit ${limit}
   `;
 }
