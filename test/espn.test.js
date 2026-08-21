@@ -137,6 +137,188 @@ describe('event normalisation', () => {
   });
 });
 
+/**
+ * Tennis, where a scoreboard entry is a fortnight rather than a fixture.
+ *
+ * Read as a team sport a tournament has no `competitions` at all, so every one
+ * normalised to null and the sport stored nothing: two leagues, no players, "No
+ * fixtures scheduled" all season.
+ */
+describe('tennis tournaments', () => {
+  /** A trimmed tournament: one drawn match, one still TBD, in two draws. */
+  const tournament = {
+    id: '718-2026',
+    date: '2026-08-11T04:00Z',
+    name: 'Cincinnati Open',
+    status: { type: { state: 'post' } },
+    groupings: [
+      {
+        grouping: { slug: 'mens-singles' },
+        competitions: [
+          {
+            id: '184414',
+            date: '2026-08-11T16:05Z',
+            status: { type: { state: 'post', shortDetail: 'Final' } },
+            venue: { fullName: 'Cincinnati, USA', court: 'Court 9' },
+            competitors: [
+              {
+                id: '4030',
+                type: 'athlete',
+                order: 2,
+                athlete: {
+                  displayName: 'Dane Sweeny',
+                  shortName: 'D. Sweeny',
+                  flag: { href: 'https://x/aus.png' },
+                },
+                linescores: [{ winner: false }, { winner: true }, { winner: false }],
+              },
+              {
+                id: '3301',
+                type: 'athlete',
+                order: 1,
+                athlete: { displayName: "Christopher O'Connell", shortName: "C. O'Connell" },
+                linescores: [{ winner: true }, { winner: false }, { winner: true }],
+              },
+            ],
+          },
+          {
+            // An unfilled bracket slot: published before the draw is made.
+            id: '999999',
+            date: '2026-08-30T04:00Z',
+            status: { type: { state: 'pre' } },
+            competitors: [
+              { id: '-3', order: 1, athlete: { displayName: 'TBD' } },
+              { id: '-4', order: 2, athlete: { displayName: 'TBD' } },
+            ],
+          },
+        ],
+      },
+      {
+        grouping: { slug: 'womens-doubles' },
+        competitions: [
+          {
+            id: '182450',
+            date: '2026-08-16T15:05Z',
+            status: { type: { state: 'post' } },
+            competitors: [
+              {
+                id: '1652-3970',
+                type: 'team',
+                order: 2,
+                homeAway: 'away',
+                roster: {
+                  displayName: 'Ulrikke Eikeri / Quinn Gleason',
+                  shortDisplayName: 'U. Eikeri / Q. Gleason',
+                  athletes: [{ flag: { href: 'https://x/nor.png' } }],
+                },
+                linescores: [{ winner: true }, { winner: false }, { winner: true }],
+              },
+              {
+                id: '5000-6000',
+                type: 'team',
+                order: 1,
+                homeAway: 'home',
+                roster: { displayName: 'A Player / B Player', shortDisplayName: 'A. P / B. P' },
+                linescores: [{ winner: false }, { winner: true }, { winner: false }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  const schedule = async (providerKey) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ events: [tournament] }), { status: 200 });
+    try {
+      return await espn.fetchSchedule({
+        providerKey,
+        from: new Date(),
+        to: new Date(Date.now() + 86400000),
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+
+  test('a tournament fans out into its matches', async () => {
+    const { events } = await schedule('tennis/atp');
+    expect(events.length).toBe(1);
+
+    const [m] = events;
+    expect(m.providerKey).toBe('tennis/atp/184414');
+    expect(m.name).toBe("Dane Sweeny v Christopher O'Connell");
+    expect(m.shortName).toBe("D. Sweeny v C. O'Connell");
+    expect(m.startsAt.toISOString()).toBe('2026-08-11T16:05:00.000Z');
+    expect(m.state).toBe('post');
+  });
+
+  test('the score is sets won, not games', async () => {
+    // The linescores are games per set, and their sum is not a scoreline anyone
+    // quotes. This match went 2-1 to O'Connell.
+    const [m] = (await schedule('tennis/atp')).events;
+    expect({ away: m.awayScore, home: m.homeScore }).toEqual({ away: 1, home: 2 });
+  });
+
+  test('the tournament and the court both survive', async () => {
+    const [m] = (await schedule('tennis/atp')).events;
+    expect(m.venue).toBe('Cincinnati Open');
+    expect(m.venueCity).toBe('Cincinnati, USA · Court 9');
+    // Neither player is at home, which the UI renders as "vs" with no role tags.
+    expect(m.neutralSite).toBe(true);
+  });
+
+  test('an undrawn bracket slot is not a fixture', async () => {
+    // Otherwise a slam publishes hundreds of "TBD v TBD" games months out, and TBD
+    // becomes a player somebody can follow.
+    const { events } = await schedule('tennis/atp');
+    expect(events.some((e) => /TBD/.test(e.name))).toBe(false);
+    expect(events.some((e) => e.providerKey.endsWith('/999999'))).toBe(false);
+  });
+
+  test('a doubles pair is one followable side', async () => {
+    const { events } = await schedule('tennis/wta');
+    expect(events.length).toBe(1);
+
+    const [m] = events;
+    expect(m.providerKey).toBe('tennis/wta/182450');
+    expect(m.away.name).toBe('Ulrikke Eikeri / Quinn Gleason');
+    expect(m.away.providerKey).toBe('tennis/wta/1652-3970');
+    expect(m.away.logoUrl).toBe('https://x/nor.png');
+  });
+
+  test('a combined tournament is split by draw, not stored twice', async () => {
+    // Cincinnati and the slams are returned in full by BOTH tour scoreboards. Taken
+    // at face value every match lands twice under two keys, with a second copy of
+    // each player.
+    const atp = (await schedule('tennis/atp')).events.map((e) => e.providerKey.split('/').pop());
+    const wta = (await schedule('tennis/wta')).events.map((e) => e.providerKey.split('/').pop());
+    expect(atp).toEqual(['184414']);
+    expect(wta).toEqual(['182450']);
+    expect(atp.filter((id) => wta.includes(id))).toEqual([]);
+  });
+
+  test('a real tour returns matches with players, not one tournament', async () => {
+    const { events } = await espn.fetchSchedule({
+      providerKey: 'tennis/atp',
+      from: new Date(Date.now() - 6 * 3600_000),
+      to: new Date(Date.now() + 14 * 86_400_000),
+    });
+    // Out of season this can legitimately be empty; when it is not, it must be
+    // matches rather than the single tournament row the sport used to store.
+    if (events.length === 0) return;
+    expect(events.length).toBeGreaterThan(20);
+    for (const e of events) {
+      expect(e.home?.providerKey).toBeTruthy();
+      expect(e.away?.providerKey).toBeTruthy();
+      expect(e.name).not.toContain('TBD');
+    }
+    expect(new Set(events.map((e) => e.providerKey)).size).toBe(events.length);
+  }, 60000);
+});
+
 describe('window splitting', () => {
   /** Records every dates= range the adapter asks for. */
   function recordingFetch(eventsPerCall) {

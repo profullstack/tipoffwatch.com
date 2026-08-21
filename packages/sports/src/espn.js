@@ -364,7 +364,7 @@ export async function fetchSchedule({ providerKey, from, to, depth = 0 }) {
     }
   }
 
-  return { league, events: events.map((e) => normaliseEvent(e, providerKey)).filter(Boolean) };
+  return { league, events: events.flatMap((e) => normaliseEntry(e, providerKey)) };
 }
 
 function normaliseEvent(e, providerKey) {
@@ -424,4 +424,142 @@ function normaliseEvent(e, providerKey) {
     homeRecord: home?.record ?? null,
     awayRecord: away?.record ?? null,
   };
+}
+
+/**
+ * An unfilled bracket slot.
+ *
+ * A draw is published before it is drawn, so a tournament that has not started
+ * carries its full bracket with both sides named "TBD" and a placeholder time at
+ * midnight local. Storing those would invent hundreds of "TBD v TBD" fixtures and,
+ * worse, a player called TBD that people could follow. The provider marks them with
+ * a negative id, which is the one signal here that does not depend on wording.
+ */
+const isUndrawn = (c) =>
+  Number(c?.id) < 0 || (c?.athlete?.displayName ?? c?.roster?.displayName) === 'TBD';
+
+/**
+ * One side of a tennis match: a player, or a doubles pair.
+ *
+ * Singles put the person on `athlete`; doubles put the pairing on `roster` with a
+ * composite id ("1652-3970") and both names in one string. Either way it is one
+ * side with one key, so a pair is followed as a unit -- which is what a doubles
+ * fixture means. The flag stands in for a crest: tennis has no club badge, and a
+ * row with no image at all reads as broken rather than as neutral.
+ */
+const tennisSide = (c, providerKey) => {
+  if (!c || isUndrawn(c)) return null;
+  const name = c.athlete?.displayName ?? c.roster?.displayName;
+  if (!name) return null;
+
+  return {
+    providerKey: `${providerKey}/${c.id}`,
+    name,
+    displayName: name,
+    abbreviation: c.athlete?.shortName ?? c.roster?.shortDisplayName ?? null,
+    logoUrl: c.athlete?.flag?.href ?? c.roster?.athletes?.[0]?.flag?.href ?? null,
+    // Sets won, because that is the score a tennis result is quoted in -- the
+    // linescores are games per set, and their sum is not a scoreline anyone uses.
+    score: (c.linescores ?? []).length ? c.linescores.filter((l) => l.winner).length : null,
+    record: null,
+  };
+};
+
+/**
+ * Tennis, where a scoreboard "event" is a fortnight rather than a fixture.
+ *
+ * The tournament is the event and the matches hang off it in `groupings`, one per
+ * draw -- mens-singles, womens-doubles, and so on. Read as a team sport it has no
+ * `competitions` at all, so every tournament normalised to null and the whole sport
+ * stored nothing: two leagues, no players, "No fixtures scheduled" all season.
+ *
+ * Flattened to one event per match it behaves like everything else: real start
+ * times, real opponents, and players that become followable teams through the same
+ * path that covers leagues whose roster endpoint 404s. The tournament name goes in
+ * `venue` -- for tennis the tournament genuinely is the place, and a match listed
+ * without it is unplaceable.
+ */
+/**
+ * Which tour owns a draw.
+ *
+ * A combined tournament -- Cincinnati, the US Open -- is returned in full by BOTH
+ * tour scoreboards, every draw included, so taking each at face value stores every
+ * match twice under two different keys and invents a second copy of each player.
+ * Tours that do not overlap are already separate: Winston-Salem appears only on the
+ * ATP board, the Philly Open only on the WTA one.
+ *
+ * Mixed doubles names no tour and belongs to both, which is the one case with no
+ * right answer. It goes to the ATP so that it lands exactly once; the alternative
+ * is the same fifteen slam fixtures listed twice.
+ */
+const drawBelongsTo = (slug, tour) => {
+  if (!slug || (tour !== 'atp' && tour !== 'wta')) return true;
+  if (slug.startsWith('womens')) return tour === 'wta';
+  return tour === 'atp';
+};
+
+function tennisMatches(tournament, providerKey) {
+  const out = [];
+  const tour = providerKey.split('/').pop();
+
+  for (const draw of tournament.groupings ?? []) {
+    if (!drawBelongsTo(draw.grouping?.slug, tour)) continue;
+    for (const m of draw.competitions ?? []) {
+      if (!m?.id || !m.date) continue;
+
+      const competitors = m.competitors ?? [];
+      // homeAway is present on some draws and absent on others; `order` is always
+      // there, and 1/2 line up with home/away wherever both appear.
+      const pick = (which, ord) =>
+        competitors.find((x) => x.homeAway === which) ?? competitors.find((x) => x.order === ord);
+      const home = tennisSide(pick('home', 1), providerKey);
+      const away = tennisSide(pick('away', 2), providerKey);
+      if (!home || !away) continue;
+
+      out.push({
+        providerKey: `${providerKey}/${m.id}`,
+        startsAt: new Date(m.date),
+        state: normaliseState(m),
+        statusDetail: m.status?.type?.shortDetail ?? null,
+        name: `${away.name} v ${home.name}`,
+        shortName:
+          away.abbreviation && home.abbreviation
+            ? `${away.abbreviation} v ${home.abbreviation}`
+            : null,
+        venue: tournament.name ?? tournament.shortName ?? null,
+        venueCity: [m.venue?.fullName, m.venue?.court].filter(Boolean).join(' · ') || null,
+        venueRegion: null,
+        // Neither side is at home, which the UI already knows how to render: no
+        // home/away tags, and "vs" rather than "at".
+        neutralSite: true,
+        broadcast:
+          [...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []))].join(', ') || null,
+        attendance: null,
+        period: Number.isFinite(m.status?.period) ? m.status.period : null,
+        displayClock: null,
+        home,
+        away,
+        homeScore: home.score,
+        awayScore: away.score,
+        homeRecord: null,
+        awayRecord: null,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * One scoreboard entry -> the fixtures it represents, which is usually itself.
+ *
+ * Tennis is the exception: its entry is a tournament holding a fortnight of
+ * matches, so it fans out rather than mapping across.
+ */
+function normaliseEntry(e, providerKey) {
+  if (Array.isArray(e?.groupings) && e.groupings.length > 0) {
+    return tennisMatches(e, providerKey);
+  }
+  const one = normaliseEvent(e, providerKey);
+  return one ? [one] : [];
 }
