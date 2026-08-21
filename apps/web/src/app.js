@@ -1057,6 +1057,7 @@ app.get('/sitemap.xml', async (c) => {
     `<sitemap><loc>${config.siteUrl}/sitemaps/static.xml</loc></sitemap>`,
     `<sitemap><loc>${config.siteUrl}/sitemaps/leagues.xml</loc></sitemap>`,
     `<sitemap><loc>${config.siteUrl}/sitemaps/feeds.xml</loc></sitemap>`,
+    `<sitemap><loc>${config.siteUrl}/sitemaps/profiles.xml</loc></sitemap>`,
     ...months.map(
       (m) =>
         `<sitemap><loc>${config.siteUrl}/sitemaps/events-${m.month}.xml</loc>` +
@@ -1121,6 +1122,31 @@ app.get('/sitemaps/leagues.xml', async (c) => {
 // the route silently never matches. Validating in the handler is unambiguous.
 app.get('/sitemaps/:file', async (c) => {
   const file = c.req.param('file');
+
+  /**
+   * Public profiles.
+   *
+   * Priority is left off deliberately: a profile is not more or less important
+   * than a fixture, and every search engine that ever used the field ignores it
+   * now. lastmod is the account's creation, which is the only timestamp a profile
+   * row actually has -- claiming a fresher one on every crawl would be a lie that
+   * teaches the crawler to stop trusting the field.
+   */
+  if (file === 'profiles.xml') {
+    const people = await q.publicProfiles();
+    c.header('content-type', 'application/xml');
+    return c.body(
+      `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${people
+        .map(
+          (p) =>
+            `<url><loc>${config.siteUrl}/u/${encodeURIComponent(p.handle)}</loc>` +
+            (p.created_at ? `<lastmod>${iso(p.created_at)}</lastmod>` : '') +
+            '</url>',
+        )
+        .join('')}</urlset>`,
+    );
+  }
+
   const m = /^events-(\d{4}-\d{2})\.xml$/.exec(file);
   if (!m) return c.notFound();
 

@@ -249,3 +249,63 @@ describe('a profile is reachable from the site, not only by URL', () => {
     expect(src).toContain('Profile</a>');
   });
 });
+
+describe('which profiles go to search engines', () => {
+  /** The filter publicProfiles() applies, run against the real schema. */
+  const listed = async () => {
+    const { rows } = await db.query(
+      `select u.handle from users u
+        where u.handle is not null
+          and u.profile_public
+          and (
+            u.bio is not null
+            or u.display_name is not null
+            or exists (select 1 from user_follows f
+                        where f.follower_id = u.id or f.followee_id = u.id)
+            or exists (select 1 from follows f where f.user_id = u.id)
+          )
+        order by u.handle`,
+    );
+    return rows.map((r) => r.handle);
+  };
+
+  test('an account with a handle and nothing else is not submitted', async () => {
+    // A page with no bio, no name and no relationships is a thin page, and
+    // submitting thousands of them teaches a crawler the site is mostly empty.
+    await db.query(
+      `insert into users (email, handle) values ('empty@example.test', 'emptyperson')`,
+    );
+    expect(await listed()).not.toContain('emptyperson');
+  });
+
+  test('a bio, a name, or a relationship is enough', async () => {
+    await db.query(
+      `insert into users (email, handle, bio) values ('b@example.test', 'hasbio', 'hello')`,
+    );
+    await db.query(
+      `insert into users (email, handle, display_name) values ('n@example.test','hasname','N')`,
+    );
+    const l = await listed();
+    expect(l).toContain('hasbio');
+    expect(l).toContain('hasname');
+    // bob follows nobody and has no bio, but alice followed him earlier.
+    expect(l).toContain('bob');
+  });
+
+  test('a hidden profile is never submitted', async () => {
+    await db.query(
+      `insert into users (email, handle, bio, profile_public)
+       values ('h@example.test', 'hiddenperson', 'hi', false)`,
+    );
+    expect(await listed()).not.toContain('hiddenperson');
+  });
+
+  test('turning a profile private removes it, with no cleanup step', async () => {
+    // The sitemap is generated per request rather than stored, so the only thing
+    // that has to happen is the flag changing.
+    await db.query(`update users set profile_public = false where handle = 'hasbio'`);
+    expect(await listed()).not.toContain('hasbio');
+    await db.query(`update users set profile_public = true where handle = 'hasbio'`);
+    expect(await listed()).toContain('hasbio');
+  });
+});

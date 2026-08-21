@@ -143,6 +143,36 @@ const RESERVED_HANDLES = new Set([
 export const handleAvailableShape = (h) =>
   HANDLE_RE.test(h ?? '') && !RESERVED_HANDLES.has(String(h).toLowerCase());
 
+/**
+ * Public profiles worth submitting to a search engine.
+ *
+ * Three filters, and the third is the one that matters. A handle and
+ * profile_public are the obvious ones. But an account that has picked a name and
+ * done nothing else is a thin page -- no bio, no follows, nothing to read -- and
+ * submitting thousands of those is how a site teaches a crawler that most of it is
+ * empty. So a profile has to have SOMETHING on it: a bio, a display name, or a
+ * relationship with somebody.
+ *
+ * A profile turned private, or emptied, simply stops appearing here; the sitemap
+ * is regenerated per request rather than stored, so removal needs no cleanup.
+ */
+export async function publicProfiles({ limit = 45000 } = {}) {
+  return sql`
+    select u.handle, u.created_at
+    from users u
+    where u.handle is not null
+      and u.profile_public
+      and (
+        u.bio is not null
+        or u.display_name is not null
+        or exists (select 1 from user_follows f where f.follower_id = u.id or f.followee_id = u.id)
+        or exists (select 1 from follows f where f.user_id = u.id)
+      )
+    order by u.created_at desc
+    limit ${limit}
+  `;
+}
+
 export async function getUserByHandle(handle) {
   const [row] = await sql`
     select id, handle, display_name, bio, profile_public, created_at
