@@ -1,5 +1,6 @@
-import { config } from '@tipoff/config';
+import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
+import { CATALOG_ADAPTERS, ingest } from './catalog.js';
 import * as espn from './espn.js';
 import * as sportsdb from './sportsdb.js';
 
@@ -600,4 +601,56 @@ export async function syncAll({
   }
 
   return { leagues: leagues.length, events, failed, broadcasts };
+}
+
+/* ------------------------------------------------------- non-sports providers -- */
+
+/**
+ * Run the catalogue providers this brand has switched on.
+ *
+ * Sequential on purpose. Running them concurrently would finish sooner and buy
+ * nothing -- the slow ones are slow because their provider throttles them, not
+ * because we are waiting on ourselves -- while making a rate-limit failure hard to
+ * attribute in the log.
+ */
+export async function syncBrandCatalog({ log = console.log, force = false } = {}) {
+  const enabled = new Set(brand.providers);
+  const list = CATALOG_ADAPTERS.filter((a) => enabled.has(a.name));
+  if (list.length === 0) return [];
+
+  const out = [];
+  for (const entry of list) {
+    try {
+      if (!force) {
+        const last = await q.lastSyncedAtForCategory(entry.category);
+        if (last) {
+          const ageMin = (Date.now() - last.getTime()) / 60_000;
+          if (ageMin < entry.minIntervalMinutes) {
+            log(`[sync] ${entry.name}: fresh (${Math.round(ageMin)}m old)`);
+            continue;
+          }
+        }
+      }
+
+      const extra = {};
+      if (entry.category === 'music') {
+        // Its genre backfill is one upstream request per artist at one request per
+        // second, so it has to know which artists have already been asked about --
+        // including the ones that came back with nothing, which is most of them.
+        extra.genreCache = new Map();
+        extra.lookupBudget = 60;
+      }
+
+      const result = await entry.module.fetchAll({ from: new Date(), ...extra });
+      if (result.skipped) {
+        log(`[sync] ${entry.name}: skipped (${result.skipped})`);
+        continue;
+      }
+      out.push(await ingest(result, { log, name: entry.name }));
+    } catch (err) {
+      // One provider being down is not a reason to skip the others.
+      log(`[sync] ${entry.name}: FAILED ${err.message}`);
+    }
+  }
+  return out;
 }

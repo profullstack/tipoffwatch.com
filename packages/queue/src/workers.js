@@ -1,7 +1,14 @@
-import { config } from '@tipoff/config';
+import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
-import { syncAll, syncCatalogue, syncLiveScores, syncNear, syncPlays } from '@tipoff/sports';
+import {
+  syncAll,
+  syncBrandCatalog,
+  syncCatalogue,
+  syncLiveScores,
+  syncNear,
+  syncPlays,
+} from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
 
@@ -213,9 +220,23 @@ export function startWorkers({ concurrency = {} } = {}) {
         // Explicit rather than a ternary chain: three kinds share this queue so
         // that concurrency 1 serialises them, and an unknown kind must not
         // silently fall through to the most expensive one.
-        if (job.data.kind === 'catalogue') return syncCatalogue();
-        if (job.data.kind === 'near') return syncNear();
-        return syncAll();
+        /*
+         * A brand runs only the providers it declares.
+         *
+         * The sports paths below are ESPN's, and a brand that does not list espn
+         * must not walk 354 leagues it has no interest in -- that is 700 upstream
+         * requests spent populating a section the site does not even route to.
+         */
+        const sports = brand.providers.includes('espn');
+
+        if (job.data.kind === 'catalogue') return sports ? syncCatalogue() : { skipped: 'no espn' };
+        if (job.data.kind === 'near') return sports ? syncNear() : { skipped: 'no espn' };
+
+        const out = {};
+        if (sports) out.sports = await syncAll();
+        // Everything that is not ESPN: tv, film, anime, music, spaceflight.
+        out.catalog = await syncBrandCatalog({ force: Boolean(job.data?.force) });
+        return out;
       },
       {
         connection,

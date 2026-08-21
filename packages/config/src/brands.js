@@ -43,6 +43,9 @@
  * whitelabel into a fork that can never merge from upstream again.
  */
 const SPORTS_WORDS = {
+  // The top tier, which is what the header nav points at.
+  category: 'sport',
+  categories: 'sports',
   collection: 'league',
   collections: 'leagues',
   participant: 'team',
@@ -54,6 +57,8 @@ const SPORTS_WORDS = {
 };
 
 const GENRE_WORDS = {
+  category: 'category',
+  categories: 'categories',
   collection: 'genre',
   collections: 'genres',
   participant: 'show',
@@ -63,6 +68,15 @@ const GENRE_WORDS = {
   starts: 'Out',
   browse: 'Browse by genre',
 };
+
+/*
+ * Whole sentences, not substituted nouns.
+ *
+ * "Never miss a {event}." reads fine for a game and badly for a release, and the
+ * trick fails completely once grammar differs -- an article, a plural, a verb.
+ * Anything longer than a noun phrase lives here in full, per brand, so each site
+ * reads like it was written for it rather than generated from a template.
+ */
 
 /** @type {Record<string, Brand>} */
 const BRANDS = {
@@ -76,6 +90,26 @@ const BRANDS = {
     paths: { category: 'sports', collection: 'leagues', participant: 'teams' },
     // Every sport in the database. This brand is the sports one.
     categories: null,
+
+    copy: {
+      heroTitle: 'Never miss a game.',
+      heroBody:
+        'Follow any team in the world and get a web notification and an email before they play. ' +
+        'Free, no ads, and it works as a calendar feed if you would rather not be notified at all.',
+      browse: 'Browse by sport',
+      mine: 'My games',
+      pushBlurb: 'Get a notification an hour before kickoff, and one minute out.',
+      calendarBlurb:
+        'Every game you follow, kept up to date automatically, with an alert an hour before kickoff.',
+      calendarPrivacy: 'Anyone with this link can see the games you follow.',
+      followCollectionBlurb:
+        'Following the league notifies you about every fixture in it. Follow individual teams ' +
+        'below to hear only about them.',
+      emptyParticipants:
+        "No teams recorded yet -- they appear once this league's fixtures are synced.",
+      emptyFollows: "You're not following anything yet.",
+      notFound: "Back to today's games",
+    },
     providers: ['espn'],
     elsewhere: {},
   },
@@ -89,6 +123,29 @@ const BRANDS = {
     words: GENRE_WORDS,
     paths: { category: 'categories', collection: 'genres', participant: 'subjects' },
     categories: ['tv', 'film', 'anime', 'music', 'space'],
+
+    copy: {
+      heroTitle: 'Know before it drops.',
+      heroBody:
+        'Follow a genre or a name -- a show, a film, an artist, a rocket -- and we will tell you ' +
+        'before it is out. Free, no ads, and it works as a calendar feed if you would rather not ' +
+        'be notified at all.',
+      browse: 'Browse by genre',
+      mine: 'My calendar',
+      pushBlurb:
+        'Get told before something you follow is out. An hour ahead for anything with a start ' +
+        'time, the day before for anything with only a date.',
+      calendarBlurb:
+        'Everything you follow, kept up to date automatically. Anything with only a release date ' +
+        'arrives as an all-day entry rather than a made-up time.',
+      calendarPrivacy: 'Anyone with this link can see everything you follow.',
+      followCollectionBlurb:
+        'Following the genre tells you about everything filed under it. Follow individual names ' +
+        'below to hear only about them.',
+      emptyParticipants: 'Nothing filed here yet -- it appears once this genre is synced.',
+      emptyFollows: "You're not following anything yet.",
+      notFound: 'Back to what is coming up',
+    },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],
     /*
      * Sport is a link, not a section.

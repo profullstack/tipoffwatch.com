@@ -550,6 +550,11 @@ export async function upsertEvents(events) {
     insert into events ${sql(events)}
     on conflict (provider, provider_key) do update set
       starts_at = excluded.starts_at,
+      -- Carried on update, not just insert: a provider that pins down a TBD
+      -- kickoff must be able to turn this back on, and one that postpones a
+      -- fixture to "date TBA" must be able to turn it off.
+      time_known = excluded.time_known,
+      precision = excluded.precision,
       state = excluded.state,
       status_detail = excluded.status_detail,
       name = excluded.name,
@@ -1235,6 +1240,20 @@ export async function leaguesForSport(sport, userId = null) {
 }
 
 /** Stamp a league as roster-checked, whether or not it had one. */
+/**
+ * When this category last COMPLETED a pass.
+ *
+ * rosters_synced_at, not events.updated_at -- every sync touches updated_at, so
+ * that column always looks a minute old and nothing is ever judged overdue. Only a
+ * finished pass writes this one, which is the whole reason it exists.
+ */
+export async function lastSyncedAtForCategory(category) {
+  const [row] = await sql`
+    select max(rosters_synced_at) as at from leagues where sport = ${category} and active
+  `;
+  return row?.at ?? null;
+}
+
 export async function markRostersSynced(leagueId) {
   await sql`update leagues set rosters_synced_at = now() where id = ${leagueId}`;
 }

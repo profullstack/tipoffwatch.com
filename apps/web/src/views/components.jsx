@@ -1,3 +1,5 @@
+import { href } from '@tipoff/config';
+
 /** Shared bits of markup. Kept small and dumb on purpose. */
 
 /**
@@ -230,7 +232,7 @@ export const TeamRow = ({ team, user, next }) => (
       <span class="team-blank" />
     )}
     <div class="team-name">
-      <a href={`/teams/${team.slug}`}>{team.display_name}</a>
+      <a href={href.participant(team.slug)}>{team.display_name}</a>
       <span class="meta">
         {team.upcoming > 0 ? `${team.upcoming} upcoming` : 'no fixtures scheduled'}
       </span>
