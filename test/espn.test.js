@@ -440,6 +440,56 @@ describe('play log shapes', () => {
     expect(espn.playsFromSummary({})).toEqual([]);
   });
 
+  /**
+   * Coverage across the catalogue, against the live provider.
+   *
+   * Six of the sixteen sports have play data, in three different containers, and the
+   * mapping is not obvious from any one of them -- reading only the flat field was
+   * how football and soccer shipped with no action log at all. A sport that is out
+   * of season has no fixture to test and is skipped; one that has a fixture and
+   * returns nothing is a real regression.
+   */
+  test('every sport that has play data still yields it', async () => {
+    const SPORTS = {
+      baseball: 'baseball/mlb',
+      basketball: 'basketball/nba',
+      football: 'football/nfl',
+      soccer: 'soccer/eng.1',
+      hockey: 'hockey/nhl',
+      'australian-football': 'australian-football/afl',
+    };
+    // Wide enough to cross an off-season: these are whole-year lookbacks.
+    const WINDOWS = ['', '?dates=20260401-20260821', '?dates=20251001-20260401'];
+
+    const checked = {};
+    for (const [sport, league] of Object.entries(SPORTS)) {
+      let event = null;
+      for (const w of WINDOWS) {
+        const res = await fetch(
+          `https://site.api.espn.com/apis/site/v2/sports/${league}/scoreboard${w}`,
+          { headers: { accept: 'application/json', 'user-agent': 'curl/8.5.0' } },
+        );
+        if (!res.ok) continue;
+        const done = ((await res.json()).events ?? []).filter((e) =>
+          ['in', 'post'].includes(e?.status?.type?.state),
+        );
+        if (done.length) {
+          event = done[done.length - 1].id;
+          break;
+        }
+      }
+      if (!event) continue; // out of season, nothing to assert
+      const plays = await espn.fetchPlays(league, `${league}/${event}`);
+      checked[sport] = plays.length;
+    }
+
+    // Whatever was in season must have produced a log, and something must have been.
+    expect(Object.keys(checked).length).toBeGreaterThan(0);
+    for (const [sport, n] of Object.entries(checked)) {
+      expect({ sport, hasPlays: n > 0 }).toEqual({ sport, hasPlays: true });
+    }
+  }, 120000);
+
   test('a real finished football game yields a full play log', async () => {
     // Completed, so the response is stable -- and it is the exact case that returned
     // zero plays until drives were read.

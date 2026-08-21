@@ -859,6 +859,12 @@ export async function leaguesWithUpcoming(limit = 400) {
  * touching drops out on its own without anyone having to decide what counts as
  * "too long" for a sport whose fixtures can legitimately run for days.
  *
+ * `plays_supported` keeps competitions that can never have a log out of the queue
+ * entirely. Ten of the sixteen sports in the catalogue either return a boxscore and
+ * nothing else, or have no summary for the kind of id we store -- and their fixtures
+ * were taking slots every cycle to come back empty, ahead of leagues that do have a
+ * log. See 0012_plays_supported.sql for how that was measured.
+ *
  * Each row also carries how many matched in total. The caller only ever sees the
  * capped slice, so a queue it can never drain looks exactly like a queue it just
  * drained -- which is how live fixtures went a whole game without a play log while
@@ -879,6 +885,7 @@ export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state
     from events e
     join leagues l on l.id = e.league_id
     where e.state = ${state}
+      and l.plays_supported
       and (
         (e.state = 'in'
           and e.updated_at > now() - interval '10 minutes'

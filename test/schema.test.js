@@ -454,7 +454,9 @@ describe('play log selection', () => {
   const DUE = `
     select e.id, (count(*) over ())::int as total_due
     from events e
+    join leagues l on l.id = e.league_id
     where e.state = $3
+      and l.plays_supported
       and ${PREDICATE}
     order by (case when e.state = 'post' then e.starts_at end) desc nulls last,
              e.plays_synced_at asc nulls first
@@ -686,6 +688,50 @@ describe('play log selection', () => {
     // And together they are exactly the unfiltered set, nothing dropped or doubled.
     const both = [...liveOnly, ...endedOnly].map((r) => r.id).sort();
     expect(both).toEqual((await allDue()).sort());
+  });
+
+  test('a sport with no play data never takes a slot', async () => {
+    // Ten of the sixteen sports either return a boxscore and nothing else or have no
+    // summary for the kind of id we store. Their fixtures were being read every
+    // cycle to come back empty, ahead of leagues that do have a log.
+    const dry = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name, plays_supported)
+       values ('espn','rugby/1','rugby','rugby-1','Rugby', false) returning id`,
+    );
+    const ev = await one(
+      `insert into events (provider, provider_key, league_id, starts_at, name, state, updated_at)
+       values ('espn','rugby/1/1',$1, now() - interval '1 hour','R','in', now())
+       returning id`,
+      [dry.id],
+    );
+    expect(await due(100, 'in')).not.toContain(ev.id);
+
+    // Opting one back in is a single UPDATE, with no deploy and no code change.
+    await db.query(`update leagues set plays_supported = true where id = $1`, [dry.id]);
+    expect(await due(100, 'in')).toContain(ev.id);
+  });
+
+  test('a competition we have never seen is tried, not written off', async () => {
+    // Leagues added later must be opted in by default: failing open costs one empty
+    // read, failing closed hides a whole sport silently.
+    const fresh = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','handball/1','handball','handball-1','Handball') returning id`,
+    );
+    const row = await one(`select plays_supported from leagues where id = $1`, [fresh.id]);
+    expect(row.plays_supported).toBe(true);
+  });
+
+  test('the sports that do have play logs are opted in', async () => {
+    // Measured against the live provider on 2026-08-21. If one of these is ever
+    // switched off, a whole sport loses its action log with nothing in the logs.
+    const { rows } = await db.query(
+      `select sport, bool_and(plays_supported) as on from leagues
+       where sport = any($1::text[]) group by sport`,
+      [['baseball', 'basketball', 'football', 'soccer', 'hockey', 'australian-football']],
+    );
+    for (const r of rows)
+      expect({ sport: r.sport, on: r.on }).toEqual({ sport: r.sport, on: true });
   });
 
   test('the predicate under test is still the one the query uses', async () => {
