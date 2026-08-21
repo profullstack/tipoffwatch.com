@@ -1,4 +1,4 @@
-import { brand, href, Word } from '@tipoff/config';
+import { brand, Word } from '@tipoff/config';
 import { Layout } from './Layout.jsx';
 
 /**
