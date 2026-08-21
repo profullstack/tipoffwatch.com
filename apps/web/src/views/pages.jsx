@@ -475,7 +475,13 @@ export const EventPage = ({
         {event.broadcast ? (
           <li>
             <strong>{event.broadcast}</strong>
-            <span>Watch on TV</span>
+            {/* Named market, because a listing is only true somewhere. ESPN's are
+                US rights holders and the fallback source is usually not -- an AFL
+                game reads "7 Queensland", which is right in Australia and no use
+                at all to a reader in Ohio unless the page says so. */}
+            <span>
+              {event.broadcast_country ? `Watch on TV · ${event.broadcast_country}` : 'Watch on TV'}
+            </span>
           </li>
         ) : null}
         {event.attendance ? (
@@ -678,7 +684,9 @@ export const EventPage = ({
         ) : offers.length === 0 ? (
           <p class="muted">
             Nobody is sharing a stream for this game yet.
-            {event.broadcast ? ` It is on ${event.broadcast}.` : ''}
+            {event.broadcast
+              ? ` It is on ${event.broadcast}${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`
+              : ''}
           </p>
         ) : (
           <ul class="offers">

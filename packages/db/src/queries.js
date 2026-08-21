@@ -184,7 +184,17 @@ export async function upsertEvents(events) {
       -- Not coalesced: a fixture moved to or from a neutral ground must be able to
       -- go back to false, and false is a real value rather than an absent one.
       neutral_site = excluded.neutral_site,
+      -- ESPN wins whenever it actually has a listing: it is the more precise
+      -- source for the US leagues it covers, and it is the one that fills in
+      -- late as kickoff approaches. Its NULL must not wipe a value the fallback
+      -- pass found, which is what the coalesce is for -- and the provenance
+      -- columns have to move WITH the value or a row ends up labelled with the
+      -- market of a listing it no longer holds.
       broadcast = coalesce(excluded.broadcast, events.broadcast),
+      broadcast_source =
+        case when excluded.broadcast is not null then 'espn' else events.broadcast_source end,
+      broadcast_country =
+        case when excluded.broadcast is not null then 'US' else events.broadcast_country end,
       attendance = coalesce(excluded.attendance, events.attendance),
       period = excluded.period,
       display_clock = excluded.display_clock,
@@ -192,6 +202,66 @@ export async function upsertEvents(events) {
       away_record = coalesce(excluded.away_record, events.away_record),
       updated_at = now()
     returning id, provider_key
+  `;
+}
+
+/**
+ * Fixtures inside the horizon that still have nobody broadcasting them.
+ *
+ * This is the work list for the fallback pass, and it is deliberately narrow. Most
+ * of the table is in this state -- ESPN carries listings for a minority of the 354
+ * leagues -- so the query is bounded by the same window the sweep keeps populated
+ * rather than by row count, and leans on the partial index added in 0013.
+ *
+ * Both sides are required. A fixture with an unresolved team cannot be matched
+ * against a listing titled "Home vs Away", so fetching it would only waste a
+ * request; individual sports (tennis, golf, racing) fall out here for that reason.
+ */
+export async function listEventsMissingBroadcast({ from, to, limit = 500 }) {
+  const cap = Math.min(Math.max(Number(limit) || 500, 1), 2000);
+  return sql`
+    select e.id, e.starts_at, l.sport,
+           ht.display_name as home_name, at.display_name as away_name
+    from events e
+    join leagues l on l.id = e.league_id
+    join teams ht on ht.id = e.home_team_id
+    join teams at on at.id = e.away_team_id
+    where e.broadcast is null
+      and e.starts_at >= ${from}
+      and e.starts_at < ${to}
+    order by e.starts_at
+    limit ${cap}
+  `;
+}
+
+/**
+ * Write listings found by the fallback pass.
+ *
+ * Guarded by `broadcast is null` in the statement itself, not just in the query
+ * that built the work list. The pass fetches over the network between the two, and
+ * a live tick landing an ESPN listing in that gap is the expected case rather than
+ * a race worth ignoring -- ESPN is the better source when it has an answer, so the
+ * writer that would downgrade it declines instead.
+ *
+ * @param {Array<{id:number, broadcast:string, country:string|null}>} rows
+ */
+export async function fillMissingBroadcasts(rows) {
+  if (rows.length === 0) return [];
+  return sql`
+    update events e set
+      broadcast = v.broadcast,
+      broadcast_source = 'thesportsdb',
+      broadcast_country = v.country,
+      updated_at = now()
+    from (
+      select * from unnest(
+        ${pgArray(rows.map((r) => r.id))}::bigint[],
+        ${pgArray(rows.map((r) => r.broadcast))}::text[],
+        ${pgArray(rows.map((r) => r.country ?? null))}::text[]
+      ) as t(id, broadcast, country)
+    ) v
+    where e.id = v.id and e.broadcast is null
+    returning e.id
   `;
 }
 
@@ -735,7 +805,12 @@ export async function updateEventScores(rows) {
       period = v.period,
       display_clock = v.display_clock,
       attendance = coalesce(v.attendance, e.attendance),
+      -- Same rule as the sweep. This tick is where a US listing usually appears:
+      -- ESPN assigns most of them close to kickoff, so the live pass is the one
+      -- that upgrades a fallback listing to the real broadcaster.
       broadcast = coalesce(v.broadcast, e.broadcast),
+      broadcast_source = case when v.broadcast is not null then 'espn' else e.broadcast_source end,
+      broadcast_country = case when v.broadcast is not null then 'US' else e.broadcast_country end,
       updated_at = now()
     from (
       select * from unnest(
@@ -797,7 +872,8 @@ export async function feedEvents({
   return sql`
     select e.id, e.starts_at, e.name, e.short_name, e.venue, e.state,
            e.venue_city, e.venue_region, e.neutral_site,
-           e.home_score, e.away_score, e.status_detail, e.broadcast, e.updated_at,
+           e.home_score, e.away_score, e.status_detail, e.broadcast, e.broadcast_country,
+           e.updated_at,
            l.name as league_name, l.slug as league_slug, l.sport,
            ht.display_name as home_name, at.display_name as away_name
     from events e

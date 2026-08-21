@@ -1,6 +1,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import * as espn from './espn.js';
+import * as sportsdb from './sportsdb.js';
 
 const ADAPTERS = { espn };
 
@@ -154,6 +155,11 @@ export async function syncLeague(
     venue_region: f.venueRegion,
     neutral_site: f.neutralSite,
     broadcast: f.broadcast,
+    // Stamped on the row itself, not only in the ON CONFLICT clause: a fixture
+    // seen for the first time takes the INSERT path, and without these it would
+    // arrive holding an ESPN listing labelled as coming from nowhere.
+    broadcast_source: f.broadcast ? 'espn' : null,
+    broadcast_country: f.broadcast ? 'US' : null,
     attendance: f.attendance,
     period: f.period,
     display_clock: f.displayClock,
@@ -338,6 +344,81 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   return { events: due.length, plays: inserted, failed, liveDue, endedDue };
 }
 
+/** Upper bound on TheSportsDB requests in a single pass. */
+const BROADCAST_REQUEST_CAP = 240;
+
+/**
+ * Fill in broadcast listings ESPN does not have.
+ *
+ * ESPN's scoreboard is US-only and partial even there -- measured 2026-08-21, the
+ * NFL was 16/16 while the AFL was 0/9, the NHL 0/7 and the Premier League had
+ * nothing beyond the current week. Anything still missing after the sweep is
+ * offered to TheSportsDB, which carries non-US broadcasters (the AFL fixture that
+ * prompted this comes back "7 Queensland / Australia").
+ *
+ * Runs at the tail of the sweep rather than on a repeatable of its own. That keeps
+ * it downstream of freshly-written fixtures, and avoids adding another timer to
+ * reset on boot -- the failure that quietly froze the fixture sweep for months.
+ *
+ * Listings are fetched per (sport, day) and cached for the run, because one request
+ * answers every fixture in that bucket. Each event is matched against its own UTC
+ * day AND the day before: the two providers disagree about which calendar day a
+ * late kickoff belongs to, and the team-name match is what actually establishes
+ * identity, so the wider window costs nothing in precision.
+ */
+export async function syncBroadcasts({ log = console.log } = {}) {
+  const now = new Date();
+  const horizon = new Date(now.getTime() + config.sports.horizonDays * 86400_000);
+  const events = await q.listEventsMissingBroadcast({ from: now, to: horizon, limit: 2000 });
+  if (events.length === 0) return { checked: 0, filled: 0, requests: 0 };
+
+  const dayOf = (d, offset = 0) =>
+    new Date(new Date(d).getTime() + offset * 86400_000).toISOString().slice(0, 10);
+
+  /** @type {Map<string, Array<object>>} */
+  const cache = new Map();
+  let requests = 0;
+
+  async function listings(sport, day) {
+    const key = `${sport}|${day}`;
+    if (cache.has(key)) return cache.get(key);
+    // Bound the run rather than the work list. A fortnight of 17 sports is a few
+    // hundred requests; past the cap the remaining fixtures simply wait for the
+    // next sweep, which is the right trade for a decorative field.
+    if (requests >= BROADCAST_REQUEST_CAP) return [];
+    requests++;
+    const rows = await sportsdb.fetchTvListings({ date: day, sport });
+    cache.set(key, rows);
+    return rows;
+  }
+
+  const updates = [];
+  for (const e of events) {
+    if (!sportsdb.sportName(e.sport)) continue;
+    const rows = [
+      ...(await listings(e.sport, dayOf(e.starts_at, -1))),
+      ...(await listings(e.sport, dayOf(e.starts_at))),
+    ];
+    const hits = sportsdb.matchListings({ home: e.home_name, away: e.away_name }, rows);
+    const market = sportsdb.pickMarket(hits);
+    if (!market) continue;
+    updates.push({
+      id: e.id,
+      broadcast: market.channels.join(', '),
+      country: market.country === 'International' ? null : market.country,
+    });
+  }
+
+  const written = await q.fillMissingBroadcasts(updates);
+  log(
+    `[broadcasts] ${events.length} missing, ${written.length} filled, ${requests} requests` +
+      (sportsdb.usingFreeKey()
+        ? ' (SPORTSDB_API_KEY unset: the shared key returns ONE row per query, so coverage is a trickle)'
+        : ''),
+  );
+  return { checked: events.length, filled: written.length, requests };
+}
+
 /**
  * Sync every active league, bounded concurrency.
  *
@@ -375,5 +456,15 @@ export async function syncAll({
 
   await Promise.all(Array.from({ length: concurrency }, worker));
   log(`[sync] ${leagues.length} leagues, ${events} events, ${failed} failed`);
-  return { leagues: leagues.length, events, failed };
+
+  // A decorative field on a secondary provider must never fail the sweep that
+  // keeps the calendar correct, so this is caught rather than awaited into it.
+  let broadcasts = { checked: 0, filled: 0, requests: 0 };
+  try {
+    broadcasts = await syncBroadcasts({ log });
+  } catch (err) {
+    log(`[broadcasts] pass failed: ${err.message}`);
+  }
+
+  return { leagues: leagues.length, events, failed, broadcasts };
 }

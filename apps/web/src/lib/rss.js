@@ -31,7 +31,11 @@ function description(event, siteUrl) {
   const parts = [
     event.league_name,
     event.venue ? `at ${[event.venue, event.venue_city].filter(Boolean).join(', ')}` : null,
-    event.broadcast ? `on ${event.broadcast}` : null,
+    // Named market for the same reason the event page names it: a listing is only
+    // true somewhere, and a feed item is read far from wherever we rendered it.
+    event.broadcast
+      ? `on ${event.broadcast}${event.broadcast_country ? ` (${event.broadcast_country})` : ''}`
+      : null,
   ].filter(Boolean);
   const when = new Date(event.starts_at).toUTCString();
   return `${parts.join(' · ')}. Starts ${when}. ${siteUrl}/events/${event.id}`;

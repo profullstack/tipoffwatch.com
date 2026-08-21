@@ -73,6 +73,16 @@ export const config = {
       .filter(Boolean),
     apiSportsKey: opt('API_SPORTS_KEY'),
     /**
+     * TheSportsDB, used for one thing: TV listings ESPN does not carry.
+     *
+     * "3" is the shared test key and works without an account, which is why it is
+     * the default -- the fallback pass should do something useful on a fresh
+     * checkout rather than nothing. It is capped at ONE ROW per query, so on this
+     * key the pass fills a handful of fixtures a day. A subscriber key removes the
+     * cap and is the only change needed; see packages/sports/src/sportsdb.js.
+     */
+    sportsDbKey: opt('SPORTSDB_API_KEY', '3'),
+    /**
      * Residential proxy, used only when the provider blocks us directly.
      *
      * ESPN blocks datacenter egress: the same request that works from a laptop

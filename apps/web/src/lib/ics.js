@@ -85,7 +85,9 @@ export function buildCalendar(events, { name, siteUrl, defaultMinutes = 150 }) {
     const end = new Date(start.getTime() + defaultMinutes * 60_000);
     const desc = [
       e.league_name,
-      e.broadcast ? `On ${e.broadcast}` : null,
+      e.broadcast
+        ? `On ${e.broadcast}${e.broadcast_country ? ` (${e.broadcast_country})` : ''}`
+        : null,
       `${siteUrl}/events/${e.id}`,
     ]
       .filter(Boolean)
