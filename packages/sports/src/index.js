@@ -234,9 +234,27 @@ export async function syncLiveScores({ log = console.log } = {}) {
  * proxy, so this is capped and staggered: oldest-refreshed first, a handful at a
  * time. Scores stay minute-fresh; the action log trails by a couple of minutes,
  * which is the right trade for the bandwidth.
+ *
+ * The quota is split rather than pooled. A game being played needs reading again
+ * and again while it is on; a finished one needs reading exactly once more, for the
+ * end of it. Drawn from one queue the finished games win on age alone -- 252 of them
+ * held every slot for an hour while the fixtures someone had open got nothing -- so
+ * live games take the bulk and the catch-up reads get what is left. Both keep
+ * moving, and neither can shut the other out.
  */
 export async function syncPlays({ log = console.log, limit = 8 } = {}) {
-  const due = await q.eventsNeedingPlays({ staleSeconds: 120, limit });
+  const endedShare = Math.min(2, Math.max(1, limit - 1));
+  const live = await q.eventsNeedingPlays({
+    staleSeconds: 120,
+    limit: limit - endedShare,
+    state: 'in',
+  });
+  const ended = await q.eventsNeedingPlays({
+    staleSeconds: 120,
+    limit: limit - live.length,
+    state: 'post',
+  });
+  const due = [...live, ...ended];
   if (due.length === 0) return { events: 0, plays: 0 };
 
   let inserted = 0;
@@ -280,13 +298,17 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
     }
   }
 
-  // Say how many are waiting, not just how many were read. Reading 8 of 8 and
-  // reading 8 of 400 log identically otherwise, and the second one means a live
-  // fixture is hours from its first play.
-  const totalDue = due[0]?.total_due ?? due.length;
-  const waiting = totalDue > due.length ? `/${totalDue} due` : '';
-  log(`[plays] ${due.length}${waiting} event(s), ${inserted} new, ${failed} failed`);
-  return { events: due.length, plays: inserted, failed, totalDue };
+  // Say how many are waiting, not just how many were read, and keep the two queues
+  // apart in the log. Reading 8 of 8 and reading 8 of 400 print identically
+  // otherwise, and the second one means a live fixture is an hour from its first
+  // play -- which is exactly how this went unnoticed.
+  const liveDue = live[0]?.total_due ?? live.length;
+  const endedDue = ended[0]?.total_due ?? ended.length;
+  log(
+    `[plays] live ${live.length}/${liveDue}, ended ${ended.length}/${endedDue}, ` +
+      `${inserted} new, ${failed} failed`,
+  );
+  return { events: due.length, plays: inserted, failed, liveDue, endedDue };
 }
 
 /**

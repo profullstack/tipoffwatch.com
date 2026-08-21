@@ -440,7 +440,7 @@ describe('fixture ↔ team re-linking', () => {
  * this block fails if the two drift apart.
  */
 describe('play log selection', () => {
-  const WHERE = `where (
+  const PREDICATE = `(
         (e.state = 'in'
           and e.updated_at > now() - interval '10 minutes'
           and (e.plays_synced_at is null
@@ -454,7 +454,8 @@ describe('play log selection', () => {
   const DUE = `
     select e.id, (count(*) over ())::int as total_due
     from events e
-    ${WHERE}
+    where e.state = $3
+      and ${PREDICATE}
     order by e.plays_synced_at asc nulls first
     limit $2`;
 
@@ -485,8 +486,10 @@ describe('play log selection', () => {
       )
     ).id;
 
-  const rows = async (limit = 100) => (await db.query(DUE, [120, limit])).rows;
-  const due = async (limit = 100) => (await rows(limit)).map((r) => r.id);
+  const rows = async (limit = 100, state = 'in') => (await db.query(DUE, [120, limit, state])).rows;
+  const due = async (limit = 100, state = 'in') => (await rows(limit, state)).map((r) => r.id);
+  /** Both queues, as the worker sees them once it has drawn each separately. */
+  const allDue = async () => [...(await due(100, 'in')), ...(await due(100, 'post'))];
 
   test('a live game is picked up once its log goes stale, and not before', async () => {
     const fresh = await mk({ key: 'a1', state: 'in', startsHoursAgo: 1, syncedSecondsAgo: 30 });
@@ -548,12 +551,12 @@ describe('play log selection', () => {
       syncedSecondsAgo: 300,
       updatedSecondsAgo: 60,
     });
-    expect(await due()).toContain(ended);
+    expect(await due(100, 'post')).toContain(ended);
 
     // markPlaysSynced touches plays_synced_at and nothing else -- there is no
     // updated_at trigger on events -- so the catch-up read does not re-arm itself.
     await db.query(`update events set plays_synced_at = now() where id = $1`, [ended]);
-    expect(await due()).not.toContain(ended);
+    expect(await due(100, 'post')).not.toContain(ended);
   });
 
   test('a game finished long ago is not re-read', async () => {
@@ -566,7 +569,7 @@ describe('play log selection', () => {
       syncedSecondsAgo: null,
       updatedSecondsAgo: 60,
     });
-    expect(await due()).not.toContain(old);
+    expect(await due(100, 'post')).not.toContain(old);
   });
 
   test('a fixture that has not started is never fetched', async () => {
@@ -576,7 +579,32 @@ describe('play log selection', () => {
       startsHoursAgo: -2,
       syncedSecondsAgo: null,
     });
-    expect(await due()).not.toContain(upcoming);
+    expect(await allDue()).not.toContain(upcoming);
+  });
+
+  test('the two queues can be drawn separately, so neither can shut the other out', async () => {
+    // Pooled, the games that ended in the last twelve hours win on age alone: 252 of
+    // them held every slot for an hour while the fixtures being played got nothing.
+    await mk({
+      key: 'd1',
+      state: 'post',
+      startsHoursAgo: 2,
+      syncedSecondsAgo: 600,
+      updatedSecondsAgo: 60,
+    });
+
+    const liveOnly = await rows(100, 'in');
+    const endedOnly = await rows(100, 'post');
+    expect(liveOnly.length).toBeGreaterThan(0);
+    expect(endedOnly.length).toBeGreaterThan(0);
+
+    // Each queue counts only its own backlog, which is what the worker logs.
+    expect(liveOnly[0].total_due).toBe(liveOnly.length);
+    expect(endedOnly[0].total_due).toBe(endedOnly.length);
+
+    // And together they are exactly the unfiltered set, nothing dropped or doubled.
+    const both = [...liveOnly, ...endedOnly].map((r) => r.id).sort();
+    expect(both).toEqual((await allDue()).sort());
   });
 
   test('the predicate under test is still the one the query uses', async () => {
@@ -588,7 +616,9 @@ describe('play log selection', () => {
         .replace(/\$\d+|\$\{[^}]+\}/g, '?')
         .replace(/\s+/g, ' ')
         .trim();
-    expect(normalise(src)).toContain(normalise(WHERE));
+    expect(normalise(src)).toContain(normalise(PREDICATE));
+    // Drawn one state at a time, so neither queue can shut the other out.
+    expect(normalise(src)).toContain('where e.state = ?');
     // And the backlog count really is taken before the limit applies.
     expect(normalise(src)).toContain('(count(*) over ())::int as total_due');
   });

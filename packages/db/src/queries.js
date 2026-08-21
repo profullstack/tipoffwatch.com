@@ -861,14 +861,22 @@ export async function leaguesWithUpcoming(limit = 400) {
  * drained -- which is how live fixtures went a whole game without a play log while
  * the worker logged "0 failed" every two minutes. A window function is evaluated
  * before the limit, so this is the true total and costs no second round trip.
+ *
+ * One state at a time, because the two are not interchangeable and must not queue
+ * behind each other. A live game needs reading again and again while it is on; a
+ * finished one needs reading exactly once more. Drawn from one pool the finished
+ * ones win on age alone -- 252 of them took every slot for an hour while the
+ * fixtures actually being played got nothing -- so the caller asks for each
+ * separately and gives the live ones the bulk of the quota.
  */
-export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10 } = {}) {
+export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state = 'in' } = {}) {
   return sql`
     select e.id, e.provider_key, l.provider_key as league_key, l.provider,
            (count(*) over ())::int as total_due
     from events e
     join leagues l on l.id = e.league_id
-    where (
+    where e.state = ${state}
+      and (
         (e.state = 'in'
           and e.updated_at > now() - interval '10 minutes'
           and (e.plays_synced_at is null
