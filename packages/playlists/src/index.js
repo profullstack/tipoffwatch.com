@@ -3,6 +3,9 @@ import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { MAX_CHANNELS, normaliseTeam, parseM3u, rankChannelsForFixture } from '@tipoff/sports';
+import { firstLiveChannel } from './probe.js';
+
+export { firstLiveChannel, probeStream } from './probe.js';
 
 /**
  * Importing and reading a reader's own channel list.
@@ -177,9 +180,13 @@ export async function ownChannelsForEvent({ userId, event }) {
   // nothing at all is indistinguishable from the feature being broken -- which is
   // exactly how it read when a list was added and no game ever lit up. "None of
   // your 7,059 channels look like they have this" is an answer; silence is not.
+  // The id travels so a verdict from a probe can be written back to the row it
+  // came from. rankChannelsForFixture only preserves the fields it is handed, so
+  // it has to be carried in as well as out.
+  const byUrl = new Map(rows.map((r) => [r.stream_url, r]));
   const unseal = (list) =>
     list
-      .map((m) => ({ title: m.title, url: open(m.url) }))
+      .map((m) => ({ id: byUrl.get(m.url)?.id ?? null, title: m.title, url: open(m.url) }))
       .filter((m) => m.url)
       .slice(0, 10);
 

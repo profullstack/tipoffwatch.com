@@ -3,7 +3,12 @@ import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
-import { importPlaylist, ownChannelsForEvent, refreshPlaylist } from '@tipoff/playlists';
+import {
+  firstLiveChannel,
+  importPlaylist,
+  ownChannelsForEvent,
+  refreshPlaylist,
+} from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import { oneChannelM3u } from '@tipoff/sports';
 import { Hono } from 'hono';
@@ -266,6 +271,7 @@ app.get('/events/:id', async (c) => {
         followingAway={followingAway}
         followingLeague={followingLeague}
         ownChannels={ownChannels}
+        streamDead={c.req.query('stream_dead') ?? null}
       />,
     ),
   );
@@ -548,7 +554,41 @@ app.get('/events/:id/playlist.m3u', async (c) => {
   const wanted = Number(seriesIdx ?? c.req.query('n') ?? 0);
   if (list.length === 0) return c.redirect(`/events/${event.id}`, 303);
 
-  const pick = list[Number.isInteger(wanted) && list[wanted] ? wanted : 0];
+  const asked = Number.isInteger(wanted) && list[wanted] ? wanted : 0;
+
+  /*
+   * Ask the stream whether it is there, before handing anybody a file.
+   *
+   * A provider list is mostly aspirational: the slot exists, the title is right,
+   * and a large share of them answer with an HTML error page rather than video.
+   * Handing one of those over is worse than handing over nothing, because the
+   * reader finds out by tapping it in the middle of a match.
+   *
+   * The one they asked for is tried first, then the rest in rank order. Probing
+   * is sequential inside firstLiveChannel because these are one subscriber's own
+   * connections and the line caps how many can be open at once.
+   */
+  const ordered = [list[asked], ...list.filter((_, i) => i !== asked)].filter(Boolean);
+  const { pick, tried } = await firstLiveChannel(ordered, {
+    onResult: async (ch, result) => {
+      if (!ch.id) return;
+      // Remembered so the page can stop offering a dead slot to the next reader,
+      // and so the next tap does not re-probe what we just learned.
+      await q
+        .markChannelChecked({
+          userId: user.id,
+          channelId: ch.id,
+          live: result.live,
+          note: result.note,
+        })
+        .catch(() => {});
+    },
+  });
+
+  if (!pick) {
+    const why = tried[0]?.note ?? 'no answer';
+    return c.redirect(`/events/${event.id}?stream_dead=${encodeURIComponent(why)}`, 303);
+  }
 
   c.header('content-type', 'audio/x-mpegurl; charset=utf-8');
   c.header('content-disposition', `attachment; filename="${event.short_name ?? 'game'}.m3u"`);

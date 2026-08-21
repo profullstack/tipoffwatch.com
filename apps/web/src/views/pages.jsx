@@ -24,6 +24,34 @@ function commenterName(c) {
   return c.display_name || (c.handle ? `@${c.handle}` : String(c.email ?? '?').split('@')[0]);
 }
 
+/**
+ * Hand a stream to a player the reader already has, without a download.
+ *
+ * iOS Safari cannot play any of these itself, and that is not a header we are
+ * missing. The provider serves `video/mp2t` -- raw MPEG-2 Transport Stream, via a
+ * redirect to a token URL -- and Safari has no TS demuxer for <video>. There is no
+ * .m3u8 anywhere in the 7,059 entries either, so there is no HLS to point it at.
+ * Nothing short of transmuxing the stream server-side would change that.
+ *
+ * What CAN change is the annoyance. Handing iOS a .m3u file makes it offer to
+ * download the thing or copy its URL, which is useless on a phone. The players
+ * worth naming register a URL scheme instead, so a tap opens the app already on
+ * the stream.
+ *
+ * The stream URL is in the href and has to be: an external player holds no
+ * session with us and cannot fetch an authenticated endpoint. It is the reader's
+ * own credential on the reader's own signed-in page, which is the same exposure
+ * the .m3u download already carried.
+ */
+function playerLinks(url) {
+  const target = encodeURIComponent(url);
+  return {
+    // The documented VLC-iOS form; VLC on Android registers the same handler.
+    vlc: `vlc-x-callback://x-callback-url/stream?url=${target}`,
+    infuse: `infuse://x-callback-url/play?url=${target}`,
+  };
+}
+
 function marketsOf(event) {
   const raw = event?.broadcast_markets;
   if (!raw) return [];
@@ -465,6 +493,7 @@ export const EventPage = ({
   followingAway,
   followingLeague,
   ownChannels = { hasList: false, channelCount: 0, matches: [] },
+  streamDead = null,
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
@@ -809,6 +838,16 @@ export const EventPage = ({
       {ownChannels?.hasList ? (
         <section class="own-line">
           <h2>On your line</h2>
+          {/* Sent here by the .m3u route when every candidate it probed was dead.
+              Naming what the provider actually said beats "something went wrong":
+              "returned a web page, not a stream" tells you the slot is empty,
+              "timed out" tells you it is not. */}
+          {streamDead ? (
+            <p class="feedback error">
+              That channel is not streaming right now ({streamDead}). It has been marked and will
+              stop being offered until it comes back.
+            </p>
+          ) : null}
           {ownChannels.matches.length === 0 ? (
             <p class="muted">
               None of your {ownChannels.channelCount.toLocaleString('en-US')} channels name this
@@ -825,16 +864,24 @@ export const EventPage = ({
                 {ownChannels.matches.length === 1
                   ? 'One of your channels looks like it is carrying this game.'
                   : `${ownChannels.matches.length} of your channels look like they are carrying this game.`}{' '}
-                Opening one downloads a playlist file for the player you already use — nothing plays
-                here.
+                Open one in VLC or Infuse, or take the .m3u for a desktop player. Nothing plays here
+                — these are your provider's streams, not ours.
               </p>
               <ul class="own-channels">
                 {ownChannels.matches.map((ch, i) => (
                   <li>
                     <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
-                    <a class="cta small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
-                      Open in your player
-                    </a>
+                    <span class="own-channel-actions">
+                      <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+                        VLC
+                      </a>
+                      <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
+                        Infuse
+                      </a>
+                      <a class="ghost small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
+                        .m3u
+                      </a>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -859,12 +906,17 @@ export const EventPage = ({
                 {ownChannels.competition.map((ch, i) => (
                   <li>
                     <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
-                    <a
-                      class="ghost small-btn"
-                      href={`/events/${event.id}/playlist.m3u?series=${i}`}
-                    >
-                      Open in your player
-                    </a>
+                    <span class="own-channel-actions">
+                      <a class="ghost small-btn" href={playerLinks(ch.url).vlc}>
+                        VLC
+                      </a>
+                      <a
+                        class="ghost small-btn"
+                        href={`/events/${event.id}/playlist.m3u?series=${i}`}
+                      >
+                        .m3u
+                      </a>
+                    </span>
                   </li>
                 ))}
               </ul>

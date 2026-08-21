@@ -1958,3 +1958,12 @@ ul.messages time {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+
+/* Player buttons on a channel row. They wrap under the name on a phone, which is
+   where these are actually tapped. */
+.own-channel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: none;
+}

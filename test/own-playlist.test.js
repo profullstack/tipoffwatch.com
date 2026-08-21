@@ -346,3 +346,33 @@ describe('matching what a provider actually writes', () => {
     expect([...r.certain, ...r.likely]).toEqual([]);
   });
 });
+
+describe('handing a stream to a player that can actually play it', () => {
+  const viewPath = new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname;
+  let view = '';
+
+  beforeAll(async () => {
+    view = await readFile(viewPath, 'utf8');
+  });
+
+  test('a VLC deep link is offered, not only a file download', () => {
+    // iOS Safari answers a .m3u with "download or copy URL", which is useless on
+    // a phone. A registered URL scheme opens the app already on the stream.
+    expect(view).toContain('vlc-x-callback://x-callback-url/stream?url=');
+    expect(view).toContain('infuse://x-callback-url/play?url=');
+  });
+
+  test('the stream URL is encoded into the deep link', () => {
+    // A raw URL with its own query string would truncate at the first &.
+    expect(view).toContain('encodeURIComponent(url)');
+  });
+
+  test('the .m3u download survives for desktop', () => {
+    expect(view).toContain('playlist.m3u?n=');
+    expect(view).toContain('playlist.m3u?series=');
+  });
+
+  test('the page no longer claims opening one downloads a file', () => {
+    expect(view).not.toContain('Opening one downloads a playlist file');
+  });
+});

@@ -391,6 +391,25 @@ export async function unreadMessageCount(userId) {
   return row.n;
 }
 
+/**
+ * Record what a probe saw.
+ *
+ * Scoped by user as well as by channel id, so an id from anywhere else cannot
+ * write a verdict into somebody else's list.
+ */
+export async function markChannelChecked({ userId, channelId, live, note }) {
+  await sql`
+    update user_playlist_channels c set
+      is_live = ${live},
+      checked_at = now(),
+      check_note = ${String(note ?? '').slice(0, 200)}
+    from user_playlists p
+    where c.playlist_id = p.id
+      and p.user_id = ${userId}
+      and c.id = ${channelId}
+  `;
+}
+
 /* ---------------------------------------------------------- own playlists -- */
 
 /**
@@ -520,10 +539,15 @@ export async function replacePlaylistChannels({ userId, channels }) {
  */
 export async function playlistChannels(userId, { limit = 20000 } = {}) {
   return sql`
-    select c.title, c.stream_url, c.norm_title
+    select c.id, c.title, c.stream_url, c.norm_title, c.is_live, c.checked_at
     from user_playlist_channels c
     join user_playlists p on p.id = c.playlist_id
     where p.user_id = ${userId}
+      -- A verdict of "dead" is respected only while it is fresh. The provider
+      -- rewrites its event slots around kickoff, so a slot that was empty an
+      -- hour ago is exactly the one that fills when the game starts. NULL is
+      -- never filtered out: unchecked is not the same as dead.
+      and (c.is_live is not false or c.checked_at < now() - interval '30 minutes')
     order by c.position
     limit ${limit}
   `;
