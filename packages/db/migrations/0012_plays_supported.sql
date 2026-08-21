@@ -20,6 +20,10 @@
 -- or a fight card, and the summary endpoint wants the individual match. Supporting
 -- them means modelling sub-events, which is a bigger change than this one.
 --
+-- MMA looks like the near miss and is not one. Its scoreboard does carry a fight
+-- inline, but the entries are bare markers -- "Round End", "Fight Over", "Results"
+-- -- with no description and no participants, so there is no sentence to show.
+--
 -- Defaults to true so a competition we have never seen is tried rather than
 -- written off, and so leagues added later are opted in automatically. Flipping one
 -- back on is a single UPDATE, no deploy.
