@@ -532,8 +532,13 @@ export const EventPage = ({
               </li>
             ))}
           </ul>
+          {/* Not "every couple of minutes": that is the poll interval, not what any
+              one fixture gets. The quota is a fixed handful of summaries per tick
+              because each is ~500KB through a metered proxy, so on a busy evening a
+              game's turn comes round about every ten minutes. The score above is a
+              minute fresh either way, which is the part worth promising. */}
           {live ? (
-            <p class="muted small">Updates every couple of minutes while the game is on.</p>
+            <p class="muted small">Keeps updating while the game is on. The score is live.</p>
           ) : null}
         </section>
       ) : null}
