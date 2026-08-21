@@ -23,6 +23,7 @@ import {
   SportPage,
   SportsIndex,
   TeamPage,
+  WatchPage,
 } from './views/pages.jsx';
 
 export const app = new Hono();
@@ -217,6 +218,36 @@ app.get('/events/:id', async (c) => {
       />,
     ),
   );
+});
+
+/**
+ * The only gated part of a fixture: watching it.
+ *
+ * Everything else about a game -- when it starts, who is playing, where, on what
+ * channel, the play log, the comments, the feeds and the whole public API -- is
+ * readable without an account and stays that way. This one route is the exception,
+ * because access to a stream is bought per event and belongs to one person.
+ *
+ * Two gates, in order, and both are required. requireUser bounces a signed-out
+ * visitor to the login page carrying `next`, so they land back here afterwards
+ * rather than on the home page. A signed-in visitor without an entitlement is sent
+ * to the event page, which is where the offers are -- a 403 would be technically
+ * right and useless, since "buy access" is the thing they actually need.
+ *
+ * NB: provider_ref is deliberately not rendered. The schema calls it an opaque
+ * handle that a buyer never sees, and that is the whole security model for the
+ * upstream slot -- putting it in the HTML would hand every viewer the credentials
+ * to the provider slot the seller is reselling.
+ */
+app.get('/events/:id/watch', async (c) => {
+  const user = requireUser(c);
+  const event = await q.getEvent(Number(c.req.param('id')));
+  if (!event) return c.html(await render(<NotFound user={user} />), 404);
+
+  const entitlement = await pay.activeEntitlement({ userId: user.id, eventId: event.id });
+  if (!entitlement) return c.redirect(`/events/${event.id}`, 303);
+
+  return c.html(await render(<WatchPage user={user} event={event} entitlement={entitlement} />));
 });
 
 /* -------------------------------------------------------------------- auth -- */

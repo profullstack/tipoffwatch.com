@@ -736,8 +736,11 @@ export const EventPage = ({
         {entitlement ? (
           <p class="ok">
             You have access to this game.{' '}
+            {/* Not "Open the stream": that link 404'd for as long as it existed,
+                and there is still nothing to open behind it. It goes to the access
+                page, which is what it actually shows. */}
             <a class="cta" href={`/events/${event.id}/watch`}>
-              Open the stream
+              View your access
             </a>
           </p>
         ) : offers.length === 0 ? (
@@ -772,6 +775,48 @@ export const EventPage = ({
     </Layout>
   );
 };
+
+/**
+ * Behind the login and the entitlement.
+ *
+ * There is no player embedded here, and that is deliberate rather than unfinished:
+ * the upstream slot is identified by stream_offers.provider_ref, which the schema
+ * defines as opaque and never shown to a buyer. Rendering it -- or a URL built from
+ * it -- would publish the seller's provider credentials to everyone who bought a
+ * $1 ticket. So this page states what the reader holds and for how long, and the
+ * playback surface stays a deliberate gap until there is a source that can be
+ * served without handing out someone else's key.
+ */
+export const WatchPage = ({ user, event, entitlement }) => (
+  <Layout title={`Watch ${event.short_name ?? event.name}`} user={user}>
+    <ol class="crumbs" aria-label="Breadcrumb">
+      <li>
+        <a href={`/events/${event.id}`}>{event.short_name ?? event.name}</a>
+      </li>
+      <li aria-current="page">Watch</li>
+    </ol>
+
+    <h1>{event.name}</h1>
+    <section class="stream">
+      <p class="ok">
+        Your access to this game is active until <LocalTime at={entitlement.expires_at} />.
+      </p>
+      <p class="muted small">
+        Access is tied to this account and this fixture. It is not transferable, and it ends with
+        the game rather than continuing afterwards.
+      </p>
+      <p class="muted">
+        There is no stream to open here yet. When one is available it appears on this page — your
+        access is already recorded, so nothing further is needed from you.
+      </p>
+      <p>
+        <a class="ghost" href={`/events/${event.id}`}>
+          Back to the game
+        </a>
+      </p>
+    </section>
+  </Layout>
+);
 
 export const SignIn = ({ mode, sent, next }) => (
   <Layout title={mode === 'signup' ? 'Create your account' : 'Sign in'}>
