@@ -845,14 +845,32 @@ export async function leaguesWithUpcoming(limit = 400) {
  * nothing touches the row again and it stops matching on its own. The 12-hour
  * window keeps a backfill or a re-stated old fixture from dragging in a season's
  * worth of summaries at 500KB each.
+ *
+ * `state = 'in'` on its own is not a claim that a game is on right now, only that
+ * nothing ever said otherwise. A fixture the provider stops returning keeps that
+ * state forever, and those accumulate -- so the poller spent its whole quota
+ * re-reading finished games while the fixtures someone was actually watching sat
+ * behind the cap and never got a first read at all. `updated_at` is the honest
+ * signal: the score tick stamps it every minute for the leagues that have a game
+ * on, so a row it is still touching is genuinely live, and one it has stopped
+ * touching drops out on its own without anyone having to decide what counts as
+ * "too long" for a sport whose fixtures can legitimately run for days.
+ *
+ * Each row also carries how many matched in total. The caller only ever sees the
+ * capped slice, so a queue it can never drain looks exactly like a queue it just
+ * drained -- which is how live fixtures went a whole game without a play log while
+ * the worker logged "0 failed" every two minutes. A window function is evaluated
+ * before the limit, so this is the true total and costs no second round trip.
  */
 export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10 } = {}) {
   return sql`
-    select e.id, e.provider_key, l.provider_key as league_key, l.provider
+    select e.id, e.provider_key, l.provider_key as league_key, l.provider,
+           (count(*) over ())::int as total_due
     from events e
     join leagues l on l.id = e.league_id
     where (
         (e.state = 'in'
+          and e.updated_at > now() - interval '10 minutes'
           and (e.plays_synced_at is null
                or e.plays_synced_at < now() - (${staleSeconds} * interval '1 second')))
         or

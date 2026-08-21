@@ -440,10 +440,9 @@ describe('fixture ↔ team re-linking', () => {
  * this block fails if the two drift apart.
  */
 describe('play log selection', () => {
-  const DUE = `
-    select e.id from events e
-    where (
+  const WHERE = `where (
         (e.state = 'in'
+          and e.updated_at > now() - interval '10 minutes'
           and (e.plays_synced_at is null
                or e.plays_synced_at < now() - ($1 * interval '1 second')))
         or
@@ -451,6 +450,13 @@ describe('play log selection', () => {
           and e.starts_at > now() - interval '12 hours'
           and (e.plays_synced_at is null or e.plays_synced_at < e.updated_at))
       )`;
+
+  const DUE = `
+    select e.id, (count(*) over ())::int as total_due
+    from events e
+    ${WHERE}
+    order by e.plays_synced_at asc nulls first
+    limit $2`;
 
   let league;
   beforeAll(async () => {
@@ -460,8 +466,13 @@ describe('play log selection', () => {
     );
   });
 
-  /** One fixture, positioned in time and in sync state exactly as described. */
-  const mk = async ({ key, state, startsHoursAgo, syncedSecondsAgo, updatedSecondsAgo = 3600 }) =>
+  /**
+   * One fixture, positioned in time and in sync state exactly as described.
+   *
+   * updated_at defaults to a moment ago because that is what a genuinely live game
+   * looks like: the score tick stamps it every minute.
+   */
+  const mk = async ({ key, state, startsHoursAgo, syncedSecondsAgo, updatedSecondsAgo = 30 }) =>
     (
       await one(
         `insert into events (provider, provider_key, league_id, starts_at, name, state,
@@ -474,7 +485,8 @@ describe('play log selection', () => {
       )
     ).id;
 
-  const due = async () => (await db.query(DUE, [120])).rows.map((r) => r.id);
+  const rows = async (limit = 100) => (await db.query(DUE, [120, limit])).rows;
+  const due = async (limit = 100) => (await rows(limit)).map((r) => r.id);
 
   test('a live game is picked up once its log goes stale, and not before', async () => {
     const fresh = await mk({ key: 'a1', state: 'in', startsHoursAgo: 1, syncedSecondsAgo: 30 });
@@ -485,6 +497,45 @@ describe('play log selection', () => {
     expect(ids).not.toContain(fresh);
     expect(ids).toContain(stale);
     expect(ids).toContain(never);
+  });
+
+  test('a fixture the score tick has stopped touching is not live any more', async () => {
+    // `state = 'in'` is not a claim that a game is on, only that nothing said
+    // otherwise -- a fixture the provider stops returning keeps it for ever. Those
+    // piled up and ate the whole cap, so genuinely live games waited behind a queue
+    // of finished ones and never got a first read.
+    const abandoned = await mk({
+      key: 'a4',
+      state: 'in',
+      startsHoursAgo: 40,
+      syncedSecondsAgo: null,
+      updatedSecondsAgo: 7200,
+    });
+    expect(await due()).not.toContain(abandoned);
+  });
+
+  test('a long fixture still counts as live while the tick keeps stamping it', async () => {
+    // Deliberately not a cutoff on start time: some sports legitimately run for
+    // days, and the score tick is the honest signal for whether one is still on.
+    const marathon = await mk({
+      key: 'a5',
+      state: 'in',
+      startsHoursAgo: 72,
+      syncedSecondsAgo: 300,
+      updatedSecondsAgo: 30,
+    });
+    expect(await due()).toContain(marathon);
+  });
+
+  test('every row reports the full backlog, not just the capped slice', async () => {
+    // 8 of 8 and 8 of 400 read identically otherwise, and the second means a live
+    // fixture is hours away from its first play.
+    const all = await rows(100);
+    expect(all.length).toBeGreaterThan(2);
+
+    const capped = await rows(2);
+    expect(capped.length).toBe(2);
+    expect(capped[0].total_due).toBe(all.length);
   });
 
   test('a game that just ended gets one more read, then stops matching', async () => {
@@ -537,6 +588,8 @@ describe('play log selection', () => {
         .replace(/\$\d+|\$\{[^}]+\}/g, '?')
         .replace(/\s+/g, ' ')
         .trim();
-    expect(normalise(src)).toContain(normalise(DUE.slice(DUE.indexOf('where'))));
+    expect(normalise(src)).toContain(normalise(WHERE));
+    // And the backlog count really is taken before the limit applies.
+    expect(normalise(src)).toContain('(count(*) over ())::int as total_due');
   });
 });

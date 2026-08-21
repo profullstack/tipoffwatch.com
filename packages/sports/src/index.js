@@ -245,7 +245,13 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   for (const event of due) {
     try {
       const adapter = ADAPTERS[event.provider];
-      if (!adapter?.fetchPlays) continue;
+      // Stamped rather than skipped. An unstamped row stays at the front of the
+      // queue for ever, so a handful of fixtures from a provider that cannot do
+      // play-by-play would hold the whole cap and nothing else would be read again.
+      if (!adapter?.fetchPlays) {
+        await q.markPlaysSynced(event.id);
+        continue;
+      }
 
       const plays = await adapter.fetchPlays(event.league_key, event.provider_key);
       if (plays.length > 0) {
@@ -274,8 +280,13 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
     }
   }
 
-  log(`[plays] ${due.length} event(s), ${inserted} new, ${failed} failed`);
-  return { events: due.length, plays: inserted, failed };
+  // Say how many are waiting, not just how many were read. Reading 8 of 8 and
+  // reading 8 of 400 log identically otherwise, and the second one means a live
+  // fixture is hours from its first play.
+  const totalDue = due[0]?.total_due ?? due.length;
+  const waiting = totalDue > due.length ? `/${totalDue} due` : '';
+  log(`[plays] ${due.length}${waiting} event(s), ${inserted} new, ${failed} failed`);
+  return { events: due.length, plays: inserted, failed, totalDue };
 }
 
 /**
