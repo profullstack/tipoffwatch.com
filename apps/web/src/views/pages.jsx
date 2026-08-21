@@ -409,7 +409,7 @@ export const EventPage = ({
   followingHome,
   followingAway,
   followingLeague,
-  ownChannels = [],
+  ownChannels = { hasList: false, channelCount: 0, matches: [] },
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
@@ -733,27 +733,44 @@ export const EventPage = ({
       </section>
 
       {/* The reader's OWN channels, visible only to them. Safe because this page
-          is not one of the Redis-cached ones -- see the note in app.js. */}
-      {ownChannels?.length ? (
+          is not one of the Redis-cached ones -- see the note in app.js.
+
+          Rendered whenever they have a list, INCLUDING when nothing matched. A
+          section that simply vanishes on a miss is indistinguishable from a broken
+          feature, which is exactly how it read: a list was added, no game ever lit
+          up, and there was no way to tell "your provider does not carry this" from
+          "this is not working". */}
+      {ownChannels?.hasList ? (
         <section class="own-line">
           <h2>On your line</h2>
-          <p class="muted small">
-            {ownChannels.length === 1
-              ? 'One of your channels looks like it is carrying this game.'
-              : `${ownChannels.length} of your channels look like they are carrying this game.`}{' '}
-            Opening one downloads a playlist file for the player you already use — nothing plays
-            here.
-          </p>
-          <ul class="own-channels">
-            {ownChannels.map((ch, i) => (
-              <li>
-                <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
-                <a class="cta small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
-                  Open in your player
-                </a>
-              </li>
-            ))}
-          </ul>
+          {ownChannels.matches.length === 0 ? (
+            <p class="muted">
+              None of your {ownChannels.channelCount.toLocaleString('en-US')} channels look like
+              they are carrying this game. That usually means your provider does not have it
+              {event.broadcast ? `, which is on ${event.broadcast}` : ''}
+              {event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.
+            </p>
+          ) : (
+            <>
+              <p class="muted small">
+                {ownChannels.matches.length === 1
+                  ? 'One of your channels looks like it is carrying this game.'
+                  : `${ownChannels.matches.length} of your channels look like they are carrying this game.`}{' '}
+                Opening one downloads a playlist file for the player you already use — nothing plays
+                here.
+              </p>
+              <ul class="own-channels">
+                {ownChannels.matches.map((ch, i) => (
+                  <li>
+                    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
+                    <a class="cta small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
+                      Open in your player
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </section>
       ) : null}
 

@@ -509,13 +509,13 @@ app.get('/events/:id/playlist.m3u', async (c) => {
   const event = await q.getEvent(Number(c.req.param('id')));
   if (!event) return c.notFound();
 
-  const own = await ownChannelsForEvent({ userId: user.id, event });
-  if (own.length === 0) return c.redirect(`/events/${event.id}`, 303);
+  const { matches } = await ownChannelsForEvent({ userId: user.id, event });
+  if (matches.length === 0) return c.redirect(`/events/${event.id}`, 303);
 
   // The first match, which channelsForFixture has already ranked most-specific
   // first, unless the reader asked for a particular one by index.
   const wanted = Number(c.req.query('n') ?? 0);
-  const pick = own[Number.isInteger(wanted) && own[wanted] ? wanted : 0];
+  const pick = matches[Number.isInteger(wanted) && matches[wanted] ? wanted : 0];
 
   c.header('content-type', 'audio/x-mpegurl; charset=utf-8');
   c.header('content-disposition', `attachment; filename="${event.short_name ?? 'game'}.m3u"`);

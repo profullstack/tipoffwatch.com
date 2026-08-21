@@ -95,17 +95,27 @@ export async function refreshPlaylist(userId) {
  * have established that the requester owns them.
  */
 export async function ownChannelsForEvent({ userId, event }) {
-  if (!config.playlists.enabled || !userId) return [];
+  const none = { hasList: false, channelCount: 0, matches: [] };
+  if (!config.playlists.enabled || !userId) return none;
+
   const rows = await q.playlistChannels(userId);
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return none;
 
   const matches = channelsForFixture(
     rows.map((r) => ({ title: r.title, url: r.stream_url })),
     { home: event.home_name, away: event.away_name },
   );
 
-  return matches
-    .map((m) => ({ title: m.title, url: open(m.url) }))
-    .filter((m) => m.url)
-    .slice(0, 10);
+  // The count comes back even when nothing matched, and that is the point. Showing
+  // nothing at all is indistinguishable from the feature being broken -- which is
+  // exactly how it read when a list was added and no game ever lit up. "None of
+  // your 7,059 channels look like they have this" is an answer; silence is not.
+  return {
+    hasList: true,
+    channelCount: rows.length,
+    matches: matches
+      .map((m) => ({ title: m.title, url: open(m.url) }))
+      .filter((m) => m.url)
+      .slice(0, 10),
+  };
 }

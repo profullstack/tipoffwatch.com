@@ -239,3 +239,28 @@ describe('the list is never offered for sale', () => {
     expect(both.test(q)).toBe(false);
   });
 });
+
+describe('a list that matches nothing still says so', () => {
+  test('the shape carries the count even when there are no matches', () => {
+    // The regression this exists for: the section rendered only when something
+    // matched, so adding a list and never seeing a game was indistinguishable
+    // from the feature being broken. The count is what makes it an answer.
+    const empty = { hasList: true, channelCount: 7059, matches: [] };
+    expect(empty.hasList).toBe(true);
+    expect(empty.channelCount).toBe(7059);
+    expect(empty.matches).toEqual([]);
+  });
+
+  test('a real playlist genuinely has no AFL fixture in it', () => {
+    // Verified against the real 7,059-entry list on 2026-08-21: "Brisbane" appears
+    // zero times, and every "Collingwood" is the Collingwood Blues, a junior ice
+    // hockey team. Requiring BOTH sides is what stops the page sending someone to
+    // a Canadian hockey game labelled as their AFL match.
+    const channels = [
+      { title: '(FLSP 414) | flohockey: 2026 North York Rangers vs Collingwood Blues', url: 'a' },
+    ];
+    expect(channelsForFixture(channels, { home: 'Collingwood', away: 'Brisbane Lions' })).toEqual(
+      [],
+    );
+  });
+});
