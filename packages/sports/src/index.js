@@ -262,6 +262,10 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   let inserted = 0;
   let failed = 0;
 
+  // A finished game is done with for good; a live one is only done with for now.
+  const close = (event) =>
+    event.state === 'post' ? q.markPlaysFinal(event.id) : q.markPlaysSynced(event.id);
+
   for (const event of due) {
     try {
       const adapter = ADAPTERS[event.provider];
@@ -269,7 +273,7 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
       // queue for ever, so a handful of fixtures from a provider that cannot do
       // play-by-play would hold the whole cap and nothing else would be read again.
       if (!adapter?.fetchPlays) {
-        await q.markPlaysSynced(event.id);
+        await close(event);
         continue;
       }
 
@@ -292,10 +296,14 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
       }
       // Stamped even when empty, so a fixture with no summary is not retried on
       // every single tick ahead of games that actually have one.
-      await q.markPlaysSynced(event.id);
+      await close(event);
     } catch (err) {
       failed++;
       if (failed === 1) log(`[plays] first failure: ${err?.message ?? err}`);
+      // Only the timestamp on the failure path, never the final flag: a transient
+      // upstream blip must not be what decides a finished game has no recap. The
+      // stamp alone sends it to the back of the queue, so it retries without
+      // holding a slot.
       await q.markPlaysSynced(event.id).catch(() => {});
     }
   }

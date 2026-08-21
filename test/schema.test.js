@@ -448,7 +448,7 @@ describe('play log selection', () => {
         or
         (e.state = 'post'
           and e.starts_at > now() - interval '12 hours'
-          and (e.plays_synced_at is null or e.plays_synced_at < e.updated_at))
+          and not e.plays_final)
       )`;
 
   const DUE = `
@@ -542,8 +542,7 @@ describe('play log selection', () => {
   });
 
   test('a game that just ended gets one more read, then stops matching', async () => {
-    // The score tick stamped updated_at when it wrote the final score, and that is
-    // newer than our last play read -- so the last drive is still owed.
+    // The whistle went between polls, so the last drive is still owed.
     const ended = await mk({
       key: 'b1',
       state: 'post',
@@ -553,10 +552,44 @@ describe('play log selection', () => {
     });
     expect(await due(100, 'post')).toContain(ended);
 
-    // markPlaysSynced touches plays_synced_at and nothing else -- there is no
-    // updated_at trigger on events -- so the catch-up read does not re-arm itself.
-    await db.query(`update events set plays_synced_at = now() where id = $1`, [ended]);
+    // markPlaysFinal closes it out for good.
+    await db.query(`update events set plays_final = true, plays_synced_at = now() where id = $1`, [
+      ended,
+    ]);
     expect(await due(100, 'post')).not.toContain(ended);
+  });
+
+  test('the score tick cannot re-open a game that has been closed out', async () => {
+    // This is the churn that made the catch-up queue grow instead of drain. The tick
+    // writes updated_at for EVERY fixture on a league's scoreboard, finished ones
+    // included, for as long as that league still has a game in progress -- so a
+    // rule of "updated_at is newer than our last read" re-queued games that ended
+    // hours ago, every single minute, at 500KB a pass through the metered proxy.
+    const closed = await mk({
+      key: 'b3',
+      state: 'post',
+      startsHoursAgo: 4,
+      syncedSecondsAgo: 300,
+      updatedSecondsAgo: 300,
+    });
+    await db.query(`update events set plays_final = true where id = $1`, [closed]);
+
+    // The tick runs again for a league that still has another game on.
+    await db.query(`update events set updated_at = now() where id = $1`, [closed]);
+    expect(await due(100, 'post')).not.toContain(closed);
+  });
+
+  test('a fixture never closed out is still owed its read, however old the stamp', async () => {
+    // Every fixture already stored predates the flag, so the default must mean
+    // "still owed" rather than "already done".
+    const owed = await mk({
+      key: 'b4',
+      state: 'post',
+      startsHoursAgo: 5,
+      syncedSecondsAgo: 30,
+      updatedSecondsAgo: 3600,
+    });
+    expect(await due(100, 'post')).toContain(owed);
   });
 
   test('a game finished long ago is not re-read', async () => {

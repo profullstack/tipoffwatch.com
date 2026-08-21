@@ -840,11 +840,14 @@ export async function leaguesWithUpcoming(limit = 400) {
  * every game: the poll runs every two minutes, the final score and the flip to
  * `post` arrive on the one-minute score tick, and the event stops matching before
  * the last drive is ever fetched -- so the recap on a finished game ended somewhere
- * short of the finish. The score tick stamps `updated_at`, so a play log older than
- * it means the game moved since we last read it; after that single catch-up read
- * nothing touches the row again and it stops matching on its own. The 12-hour
- * window keeps a backfill or a re-stated old fixture from dragging in a season's
- * worth of summaries at 500KB each.
+ * short of the finish. `plays_final` is what closes one out, and we set it
+ * ourselves: inferring it from `updated_at` moving looked equivalent and was not,
+ * because the score tick writes that column for every fixture on a league's
+ * scoreboard -- finished ones included -- for as long as that league has any game
+ * in progress. Games that had ended hours earlier kept re-qualifying every minute,
+ * so the queue churned instead of draining and each pass spent another 500KB per
+ * fixture. The 12-hour window keeps a backfill or a re-stated old fixture from
+ * dragging in a season's worth of summaries.
  *
  * `state = 'in'` on its own is not a claim that a game is on right now, only that
  * nothing ever said otherwise. A fixture the provider stops returning keeps that
@@ -871,7 +874,7 @@ export async function leaguesWithUpcoming(limit = 400) {
  */
 export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state = 'in' } = {}) {
   return sql`
-    select e.id, e.provider_key, l.provider_key as league_key, l.provider,
+    select e.id, e.state, e.provider_key, l.provider_key as league_key, l.provider,
            (count(*) over ())::int as total_due
     from events e
     join leagues l on l.id = e.league_id
@@ -884,11 +887,16 @@ export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state
         or
         (e.state = 'post'
           and e.starts_at > now() - interval '12 hours'
-          and (e.plays_synced_at is null or e.plays_synced_at < e.updated_at))
+          and not e.plays_final)
       )
     order by e.plays_synced_at asc nulls first
     limit ${limit}
   `;
+}
+
+/** Close out a finished game's log, so its one catch-up read is not repeated. */
+export async function markPlaysFinal(eventId) {
+  await sql`update events set plays_final = true, plays_synced_at = now() where id = ${eventId}`;
 }
 
 export async function markPlaysSynced(eventId) {
