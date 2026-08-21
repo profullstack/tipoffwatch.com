@@ -431,22 +431,35 @@ export async function syncBroadcasts({ log = console.log, from = null, to = null
   const cache = new Map();
   let requests = 0;
 
+  /**
+   * On a subscriber key a whole DAY comes back in one request, so the sport filter
+   * is not just unnecessary -- it is seventeen times the requests for a subset of
+   * the same answer. Measured 2026-08-21 with the paid key: one unfiltered day
+   * returned 795 listings against 576 for soccer alone, and 44 for Australian
+   * Football where the free key returned one.
+   *
+   * The shared key still needs the filter, because it truncates to a single row and
+   * an unfiltered query spends that row on whichever sport happens to sort first.
+   */
+  const perSport = sportsdb.usingFreeKey();
+
   async function listings(sport, day) {
-    const key = `${sport}|${day}`;
+    const key = perSport ? `${sport}|${day}` : day;
     if (cache.has(key)) return cache.get(key);
-    // Bound the run rather than the work list. A fortnight of 17 sports is a few
-    // hundred requests; past the cap the remaining fixtures simply wait for the
-    // next sweep, which is the right trade for a decorative field.
+    // Bound the run rather than the work list. Past the cap the remaining fixtures
+    // wait for the next pass, which is the right trade for a decorative field.
     if (requests >= BROADCAST_REQUEST_CAP) return [];
     requests++;
-    const rows = await sportsdb.fetchTvListings({ date: day, sport });
+    const rows = await sportsdb.fetchTvListings({ date: day, sport: perSport ? sport : null });
     cache.set(key, rows);
     return rows;
   }
 
   const updates = [];
   for (const e of events) {
-    if (!sportsdb.sportName(e.sport)) continue;
+    // Only meaningful when the sport is being used to narrow the query. Unfiltered,
+    // a sport we have no name for is still covered by the day's listings.
+    if (perSport && !sportsdb.sportName(e.sport)) continue;
     const rows = [
       ...(await listings(e.sport, dayOf(e.starts_at, -1))),
       ...(await listings(e.sport, dayOf(e.starts_at))),
@@ -471,7 +484,7 @@ export async function syncBroadcasts({ log = console.log, from = null, to = null
     `[broadcasts] ${events.length} missing, ${written.length} filled, ${requests} requests` +
       (sportsdb.usingFreeKey()
         ? ' (SPORTSDB_API_KEY unset: the shared key returns ONE row per query, so coverage is a trickle)'
-        : ''),
+        : ' (whole days, one request each)'),
   );
   return { checked: events.length, filled: written.length, requests };
 }
