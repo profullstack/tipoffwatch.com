@@ -98,10 +98,51 @@ export const Landing = ({ user, today, vapidKey }) => (
 );
 
 /** Step 1 of the picker: sport. */
-export const SportsIndex = ({ user, sports }) => (
+export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
   <Layout title="Sports" user={user} canonical="/sports">
     <h1>Browse by sport</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
+
+    {/* Follow everything, with the size of "everything" stated before it is
+        pressed rather than discovered afterwards. Following all 359 leagues means
+        a reminder for every fixture in the catalogue at every offset turned on,
+        which is thousands of notifications -- a button that enrols someone in
+        that quietly is not a feature, it is a trap. */}
+    {user && leagueCounts ? (
+      <section class="follow-all card">
+        <div class="card-head">
+          <h2 class="card-title">
+            {leagueCounts.following >= leagueCounts.total
+              ? 'You follow every league'
+              : 'Follow everything'}
+          </h2>
+          <p class="card-desc">
+            {leagueCounts.following >= leagueCounts.total
+              ? `All ${leagueCounts.total.toLocaleString('en-US')} leagues. You will be reminded about every fixture in the catalogue.`
+              : `All ${leagueCounts.total.toLocaleString('en-US')} leagues in one go — about ${(upcoming ?? 0).toLocaleString('en-US')} games in the next fortnight, and a reminder for each one at every offset you have turned on.`}
+            {leagueCounts.following > 0 && leagueCounts.following < leagueCounts.total
+              ? ` You follow ${leagueCounts.following.toLocaleString('en-US')} so far.`
+              : ''}
+          </p>
+        </div>
+        <div class="card-actions">
+          {leagueCounts.following < leagueCounts.total ? (
+            <form method="post" action="/api/follow-all" class="inline">
+              <button class="cta" type="submit">
+                Follow everything!
+              </button>
+            </form>
+          ) : null}
+          {leagueCounts.following > 0 ? (
+            <form method="post" action="/api/unfollow-all" class="inline">
+              <button class="ghost" type="submit">
+                Unfollow all leagues
+              </button>
+            </form>
+          ) : null}
+        </div>
+      </section>
+    ) : null}
     <ol class="crumbs" aria-label="Breadcrumb">
       <li aria-current="page">Sport</li>
       <li>League</li>

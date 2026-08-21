@@ -134,12 +134,40 @@ app.get('/', async (c) => {
   });
 });
 
-app.get('/sports', async (c) =>
-  cached(c, 'page:sports', 300, async () => {
+app.get('/sports', async (c) => {
+  const user = c.get('user');
+  // Signed out this is byte-identical and cached; signed in it carries their own
+  // follow counts, and cached() already declines to store a signed-in render.
+  const [counts, upcoming] = user
+    ? await Promise.all([q.leagueFollowCounts(user.id), q.upcomingEventCount()])
+    : [null, null];
+
+  return cached(c, 'page:sports', 300, async () => {
     const sports = await q.listSports();
-    return render(<SportsIndex user={c.get('user')} sports={sports} />);
-  }),
-);
+    return render(
+      <SportsIndex user={user} sports={sports} leagueCounts={counts} upcoming={upcoming} />,
+    );
+  });
+});
+
+/**
+ * Follow every league at once, and the undo beside it.
+ *
+ * Deliberately leagues only. A team follow was chosen one at a time and this must
+ * not sweep it away -- the undo for "follow everything" is "stop following
+ * everything", not "forget what I picked".
+ */
+app.post('/api/follow-all', async (c) => {
+  const user = requireUser(c);
+  const added = await q.followAllLeagues(user.id);
+  return respond(c, { json: { added }, redirectTo: `/sports?followed=${added}` });
+});
+
+app.post('/api/unfollow-all', async (c) => {
+  const user = requireUser(c);
+  const removed = await q.unfollowAllLeagues(user.id);
+  return respond(c, { json: { removed }, redirectTo: `/sports?unfollowed=${removed}` });
+});
 
 app.get('/sports/:sport', async (c) => {
   const user = c.get('user');

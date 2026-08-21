@@ -1947,3 +1947,14 @@ ul.messages time {
 .comment-author:hover {
   color: var(--accent);
 }
+
+/* Follow-everything, on the sports index. Uses the card shell so it reads as one
+   deliberate action rather than a stray button above the list. */
+.follow-all {
+  margin: 1rem 0 1.5rem;
+}
+.follow-all .card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

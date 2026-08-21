@@ -713,6 +713,63 @@ export async function addFollow({ userId, subjectType, subjectId }) {
   `;
 }
 
+/**
+ * Follow every active league in one statement.
+ *
+ * insert-select rather than a loop: it is 359 rows, and the cost of doing it a row
+ * at a time is 359 round trips for something a single statement expresses exactly.
+ * `on conflict do nothing` makes it idempotent, so a second click adds whatever
+ * leagues appeared since the first and nothing else.
+ *
+ * Returns how many were NEW, which is what the page reports back -- "followed 359"
+ * when nothing changed would be a lie to anyone pressing it twice.
+ */
+export async function followAllLeagues(userId) {
+  const rows = await sql`
+    insert into follows (user_id, subject_type, subject_id)
+    select ${userId}, 'league', l.id from leagues l where l.active
+    on conflict do nothing
+    returning subject_id
+  `;
+  return rows.length;
+}
+
+/** The undo. Only leagues: a team follow was chosen one at a time and is left alone. */
+export async function unfollowAllLeagues(userId) {
+  const rows = await sql`
+    delete from follows where user_id = ${userId} and subject_type = 'league'
+    returning subject_id
+  `;
+  return rows.length;
+}
+
+/** How many leagues this person follows, and how many there are. */
+export async function leagueFollowCounts(userId) {
+  const [row] = await sql`
+    select
+      (select count(*)::int from leagues where active) as total,
+      (select count(*)::int from follows
+        where user_id = ${userId}::uuid and subject_type = 'league') as following
+  `;
+  return row;
+}
+
+/**
+ * How many fixtures a "follow everything" actually signs someone up for.
+ *
+ * Shown before they press it, because the honest number is large: every upcoming
+ * game in the catalogue, each of which sends a reminder at every offset they have
+ * turned on. A button that quietly enrols someone in thousands of notifications is
+ * not a feature.
+ */
+export async function upcomingEventCount() {
+  const [row] = await sql`
+    select count(*)::int as n from events
+    where starts_at > now() and starts_at < now() + interval '14 days'
+  `;
+  return row.n;
+}
+
 export async function removeFollow({ userId, subjectType, subjectId }) {
   await sql`delete from follows where user_id = ${userId} and subject_type = ${subjectType} and subject_id = ${subjectId}`;
 }
