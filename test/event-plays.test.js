@@ -92,3 +92,91 @@ describe('event page action log', () => {
     expect(out).not.toContain('>–<');
   });
 });
+
+/**
+ * Not every fixture is a contest between two named sides.
+ *
+ * A grand prix, a golf tournament, a fight card and a tennis draw are one event
+ * with a field, and the provider gives no competitors at all. The page assumed two
+ * sides regardless, so every one of them rendered a pair of blank crests either
+ * side of the literal words "Away vs Home", under a Follow heading standing over an
+ * empty div -- a follow section with nothing in it to follow.
+ */
+describe('an event with no two sides', () => {
+  const SOLO = {
+    id: 61753,
+    name: 'US Open',
+    short_name: null,
+    state: 'pre',
+    sport: 'tennis',
+    league_id: 77,
+    league_slug: 'tennis-atp',
+    league_name: 'ATP',
+    starts_at: new Date('2026-08-25T04:00:00Z'),
+    venue: 'New York, USA',
+    neutral_site: true,
+    home_name: null,
+    away_name: null,
+    home_team_id: null,
+    away_team_id: null,
+    home_score: null,
+    away_score: null,
+  };
+
+  const solo = async (over) =>
+    (
+      await EventPage({
+        user: null,
+        event: { ...SOLO, ...over },
+        offers: [],
+        entitlement: null,
+        plays: [],
+        comments: [],
+        followingLeague: false,
+      }).toString()
+    ).toString();
+
+  test('the name is shown instead of "Away vs Home"', async () => {
+    const out = await solo();
+    expect(out).toContain('US Open');
+    expect(out).not.toContain('>Away<');
+    expect(out).not.toContain('>Home<');
+  });
+
+  test('no blank crest is drawn where there is no team', async () => {
+    const out = await solo();
+    expect(out).not.toContain('team-blank');
+    expect(out).not.toContain('role-tag');
+  });
+
+  test('the scoreboard drops to two columns rather than leaving a hole', async () => {
+    const out = await solo();
+    expect(out).toContain('class="scoreboard solo"');
+    // And "vs" means nothing with one name, so it is not printed either.
+    expect(out).not.toContain('<span class="vs">vs</span>');
+  });
+
+  test('the competition can be followed, since there is no side to', async () => {
+    const out = await solo();
+    expect(out).toContain('Follow ATP');
+    // Signed out, that is a prompt to sign in rather than a dead heading.
+    expect(out).toContain('/login?next=%2Fevents%2F61753');
+  });
+
+  test('a live one still shows its status', async () => {
+    const out = await solo({ state: 'in', status_detail: 'Round 2' });
+    expect(out).toContain('Round 2');
+    expect(out).toContain('badge live');
+  });
+
+  test('a normal fixture is untouched', async () => {
+    const out = await html({ plays: [] });
+    expect(out).toContain('San Francisco 49ers');
+    expect(out).toContain('Los Angeles Chargers');
+    expect(out).not.toContain('scoreboard solo');
+    // Both team follows still offered, and no league follow bolted on.
+    expect(out).toContain('Follow San Francisco 49ers');
+    expect(out).toContain('Follow Los Angeles Chargers');
+    expect(out).not.toContain('Follow National Football League');
+  });
+});

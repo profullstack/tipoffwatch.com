@@ -189,14 +189,19 @@ app.get('/events/:id', async (c) => {
   const user = c.get('user');
   const event = await q.getEvent(Number(c.req.param('id')));
   if (!event) return c.html(await render(<NotFound user={user} />), 404);
-  const [offers, entitlement, plays, comments, followingHome, followingAway] = await Promise.all([
-    pay.offersForEvent(event.id),
-    user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
-    q.playsForEvent(event.id, { limit: 60 }),
-    q.commentsForEvent(event.id),
-    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.home_team_id }),
-    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.away_team_id }),
-  ]);
+  const [offers, entitlement, plays, comments, followingHome, followingAway, followingLeague] =
+    await Promise.all([
+      pay.offersForEvent(event.id),
+      user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
+      q.playsForEvent(event.id, { limit: 60 }),
+      q.commentsForEvent(event.id),
+      q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.home_team_id }),
+      q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: event.away_team_id }),
+      // A race, a tournament or a fight card has no sides to follow, so the
+      // competition is the only subject there is. Without it those pages offered
+      // nothing at all.
+      q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: event.league_id }),
+    ]);
   return c.html(
     await render(
       <EventPage
@@ -208,6 +213,7 @@ app.get('/events/:id', async (c) => {
         comments={comments}
         followingHome={followingHome}
         followingAway={followingAway}
+        followingLeague={followingLeague}
       />,
     ),
   );

@@ -353,10 +353,18 @@ export const EventPage = ({
   comments = [],
   followingHome,
   followingAway,
+  followingLeague,
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
   const showScore = live || done;
+
+  // Not every fixture is a contest between two named sides. A grand prix, a golf
+  // tournament, a fight card and a tennis draw are all one event with a field, and
+  // the provider gives no competitors for them at all. Rendering the two-sided
+  // scoreboard anyway printed a pair of blank crests either side of the literal
+  // words "Away vs Home", and left the Follow heading standing over an empty div.
+  const contested = Boolean(event.home_name || event.away_name);
 
   // The feed arrives newest-first. Scoring plays read better oldest-first, as a
   // narrative; the latest-action list stays newest-first.
@@ -388,19 +396,30 @@ export const EventPage = ({
       {/* data-event-id and data-live let the client refresh this block in place
           while a game is on, instead of showing a score that stopped moving. */}
       <section
-        class={`scoreboard${live ? ' live' : ''}`}
+        class={`scoreboard${contested ? '' : ' solo'}${live ? ' live' : ''}`}
         data-event-id={event.id}
         data-live={live ? 'true' : null}
       >
-        <Side
-          name={event.away_name ?? 'Away'}
-          slug={event.away_slug}
-          logo={event.away_logo}
-          score={event.away_score}
-          record={event.away_record}
-          showScore={showScore}
-          role={event.neutral_site ? null : 'away'}
-        />
+        {contested ? (
+          <Side
+            name={event.away_name ?? 'Away'}
+            slug={event.away_slug}
+            logo={event.away_logo}
+            score={event.away_score}
+            record={event.away_record}
+            showScore={showScore}
+            role={event.neutral_site ? null : 'away'}
+          />
+        ) : (
+          // One event, one field. The name carries it, since there is no matchup
+          // to draw and no crest to draw it with.
+          <div class="side-name solo-name">
+            <strong>{event.name}</strong>
+            {event.short_name && event.short_name !== event.name ? (
+              <span class="meta">{event.short_name}</span>
+            ) : null}
+          </div>
+        )}
 
         <div class="middle">
           {live ? (
@@ -411,20 +430,22 @@ export const EventPage = ({
             <span class="badge done" data-status>
               {event.status_detail ?? 'Final'}
             </span>
-          ) : (
+          ) : contested ? (
             <span class="vs">vs</span>
-          )}
+          ) : null}
         </div>
 
-        <Side
-          name={event.home_name ?? 'Home'}
-          slug={event.home_slug}
-          logo={event.home_logo}
-          score={event.home_score}
-          record={event.home_record}
-          showScore={showScore}
-          role={event.neutral_site ? null : 'home'}
-        />
+        {contested ? (
+          <Side
+            name={event.home_name ?? 'Home'}
+            slug={event.home_slug}
+            logo={event.home_logo}
+            score={event.home_score}
+            record={event.home_record}
+            showScore={showScore}
+            role={event.neutral_site ? null : 'home'}
+          />
+        ) : null}
       </section>
 
       {/* Under the matchup rather than between the teams. The middle column is
@@ -467,9 +488,25 @@ export const EventPage = ({
 
       <h2>Follow</h2>
       <p class="muted small">
-        Following either side puts this game — and the rest of their season — in your reminders.
+        {contested
+          ? 'Following either side puts this game — and the rest of their season — in your reminders.'
+          : `There are no two sides to follow here, so the competition is the subject: following it puts this and every other ${event.league_name ?? 'league'} fixture in your reminders.`}
       </p>
       <div class="follow-pair">
+        {/* A race, a tournament or a fight card has no teams, so these render
+            nothing and the heading used to stand over an empty div -- a Follow
+            section that could not be followed. The league is the only subject the
+            follow table knows that still applies. */}
+        {contested ? null : (
+          <FollowButton
+            user={user}
+            subjectType="league"
+            subjectId={event.league_id}
+            following={followingLeague}
+            next={`/events/${event.id}`}
+            label={event.league_name}
+          />
+        )}
         {event.away_team_id ? (
           <FollowButton
             user={user}

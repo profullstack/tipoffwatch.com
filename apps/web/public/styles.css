@@ -1055,6 +1055,19 @@ ul.comments li {
   background: var(--panel);
 }
 
+/* A race, a tournament or a fight card is one event with a field rather than two
+   named sides, so there is no matchup to lay out. Two columns, not three: the name
+   takes the room the opponent would have had, and the status badge keeps its place
+   on the right instead of floating in a gap where a crest used to be. */
+.scoreboard.solo {
+  grid-template-columns: 1fr auto;
+}
+.solo-name strong {
+  font-family: var(--disp);
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
 /* Away on the left reading inward, home on the right reading outward, and both
    scores pushed to the inner edge so they sit either side of the middle column
    the way a scoreboard is actually read. */
