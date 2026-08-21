@@ -209,6 +209,29 @@ export async function upsertEvents(events) {
 }
 
 /**
+ * Leagues with a fixture in a given window.
+ *
+ * The lever the whole near-window refresh turns on. Measured against production on
+ * 2026-08-21: of 359 active leagues, 48 had a fixture today and 74 within 48 hours
+ * -- so asking only these costs a fifth of a full sweep, and the four fifths it
+ * skips are competitions that are out of season or not playing until next week.
+ *
+ * Distinct on the league, not the fixture: one request answers a whole league's
+ * window, so a league with nine games today is still one row here.
+ */
+export async function leaguesWithFixturesBetween({ from, to }) {
+  return sql`
+    select distinct l.*
+    from leagues l
+    join events e on e.league_id = l.id
+    where l.active
+      and e.starts_at >= ${from}
+      and e.starts_at < ${to}
+    order by l.priority, l.name
+  `;
+}
+
+/**
  * Fixtures inside the horizon that still have nobody broadcasting them.
  *
  * This is the work list for the fallback pass, and it is deliberately narrow. Most

@@ -92,6 +92,15 @@ export const config = {
     proxyUrl: opt('SPORTS_PROXY_URL'),
     /** How far ahead to keep the calendar populated. */
     horizonDays: num('SPORTS_HORIZON_DAYS', 14),
+    /**
+     * How far ahead the frequent refresh reaches, in hours.
+     *
+     * The full sweep runs daily; this window is what gets re-read every few hours,
+     * scoped to the leagues that actually have a game inside it. 48 hours covers
+     * tonight and tomorrow, which measured at 74 of 359 leagues -- a fifth of a
+     * sweep. Widening it costs roughly linearly in leagues, not in days.
+     */
+    nearWindowHours: num('SPORTS_NEAR_WINDOW_HOURS', 48),
     syncConcurrency: num('SPORTS_SYNC_CONCURRENCY', 6),
     /**
      * How far back a finished game is still owed its one closing read.
@@ -190,8 +199,16 @@ export const config = {
   },
 
   sync: {
-    /** Hours before the fixture sweep counts as overdue at boot. */
-    staleHours: num('SYNC_STALE_HOURS', 6),
+    /**
+     * Hours before the FULL fixture sweep counts as overdue at boot.
+     *
+     * 24, matching its repeatable. It was 6 when the sweep itself ran every 6
+     * hours; the near-window pass now carries the freshness that cadence was
+     * buying, at a fifth of the requests, so the sweep only has to cover what
+     * genuinely moves on a slower clock -- rosters, display names, and fixtures
+     * further out than the day after tomorrow.
+     */
+    staleHours: num('SYNC_STALE_HOURS', 24),
     /**
      * Sweep on the next boot whatever the clock says.
      *

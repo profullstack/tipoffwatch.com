@@ -67,8 +67,18 @@ export async function installSchedules({ log = console.log } = {}) {
   // KB, and every one goes through the metered proxy.
   await queues.plays.add('live-plays', {}, { repeat: { every: 120_000 }, jobId: 'plays' });
 
-  // Fixtures move rarely; the horizon only needs refreshing a few times a day.
-  await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 6 * 3600_000 } });
+  // Tonight and tomorrow, for the leagues that actually have a game then. Measured
+  // 2026-08-21: 74 of 359 leagues, one request each without the roster -- about a
+  // tenth of a full sweep, so it can run often enough to catch a postponement or a
+  // late broadcast assignment hours before kickoff rather than at the next sweep.
+  await queues.sync.add('sync-near', { kind: 'near' }, { repeat: { every: 3 * 3600_000 } });
+
+  // The whole catalogue and the full horizon, once a day. This is the expensive one
+  // -- two requests per league across 359 leagues -- and what it uniquely covers
+  // (rosters, display names, fixtures beyond the near window) moves on a scale of
+  // days, not hours. It ran every 6h before the near pass existed to carry the
+  // freshness that was really being paid for.
+  await queues.sync.add('sync-all', { kind: 'all' }, { repeat: { every: 24 * 3600_000 } });
   await queues.sync.add(
     'sync-catalogue',
     { kind: 'catalogue' },
@@ -164,6 +174,19 @@ export async function installSchedules({ log = console.log } = {}) {
     );
     await queues.sync.add('sync-all', { kind: 'all' }, { jobId: reason, delay: 20_000 });
   }
+
+  // The near window always gets one pass on boot, for the same reason the sweep has
+  // a staleness check: a repeatable first fires one interval from NOW, so without
+  // this every deploy leaves tonight's fixtures unrefreshed for three hours. It is
+  // unconditional because it is cheap -- one request for each league with a game in
+  // the next two days, measured at 74 -- and because "was it recently enough" is
+  // exactly the reasoning that let the sweep stop running twice already. Bucketed
+  // by hour so a boot storm collapses onto one job.
+  await queues.sync.add(
+    'sync-near',
+    { kind: 'near' },
+    { jobId: `seed-near-${hourStamp()}`, delay: 30_000 },
+  );
 
   log('[queue] schedules installed');
 }

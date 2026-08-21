@@ -1,7 +1,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
-import { syncAll, syncCatalogue, syncLiveScores, syncPlays } from '@tipoff/sports';
+import { syncAll, syncCatalogue, syncLiveScores, syncNear, syncPlays } from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
 
@@ -184,7 +184,14 @@ export function startWorkers({ concurrency = {} } = {}) {
 
     new Worker(
       QUEUES.sync,
-      async (job) => (job.data.kind === 'catalogue' ? syncCatalogue() : syncAll()),
+      async (job) => {
+        // Explicit rather than a ternary chain: three kinds share this queue so
+        // that concurrency 1 serialises them, and an unknown kind must not
+        // silently fall through to the most expensive one.
+        if (job.data.kind === 'catalogue') return syncCatalogue();
+        if (job.data.kind === 'near') return syncNear();
+        return syncAll();
+      },
       {
         connection,
         concurrency: 1,

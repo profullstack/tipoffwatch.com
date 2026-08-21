@@ -37,7 +37,19 @@ export async function syncCatalogue({ log = console.log } = {}) {
  */
 export async function syncLeague(
   league,
-  { horizonDays = config.sports.horizonDays, backfillDays = config.sports.backfillDays } = {},
+  {
+    horizonDays = config.sports.horizonDays,
+    backfillDays = config.sports.backfillDays,
+    /**
+     * Fetch the roster as well as the schedule.
+     *
+     * Off for the near-window refresh, and it halves that pass: a league costs two
+     * upstream requests here, and the roster is the half that does not change
+     * between now and tonight. Turning it off also means this must NOT stamp
+     * rosters_synced_at -- see below.
+     */
+    roster: wantRoster = true,
+  } = {},
 ) {
   const adapter = ADAPTERS[league.provider];
   if (!adapter) throw new Error(`No adapter for provider ${league.provider}`);
@@ -60,7 +72,9 @@ export async function syncLeague(
   // questions and one failing should not erase the other's answer.
   const [scheduleResult, rosterResult] = await Promise.allSettled([
     adapter.fetchSchedule({ providerKey: league.provider_key, from, to }),
-    adapter.fetchTeams ? adapter.fetchTeams(league.provider_key) : Promise.resolve([]),
+    wantRoster && adapter.fetchTeams
+      ? adapter.fetchTeams(league.provider_key)
+      : Promise.resolve([]),
   ]);
 
   const roster = rosterResult.status === 'fulfilled' ? rosterResult.value : [];
@@ -107,7 +121,11 @@ export async function syncLeague(
         league.id,
       );
     }
-    await q.markRostersSynced(league.id);
+    // Gated for the same reason as the stamp at the end of this function, and this
+    // is the path the near pass takes MOST often: a league with a game tonight but
+    // nothing else inside a two-day window comes back empty here. Stamping from
+    // here would mark the whole catalogue freshly swept every three hours.
+    if (wantRoster) await q.markRostersSynced(league.id);
     return { events: 0, teams: teamRows.size };
   }
 
@@ -175,7 +193,14 @@ export async function syncLeague(
   }));
 
   await q.upsertEvents(eventRows);
-  await q.markRostersSynced(league.id);
+
+  // ONLY when the roster was actually fetched. rosters_synced_at is what the boot
+  // check reads to decide whether the full sweep is overdue, so stamping it from a
+  // partial refresh would make the catalogue look freshly swept forever -- the
+  // exact failure that froze the sweep for months when the reading was taken from
+  // events.updated_at, reached from a different direction.
+  if (wantRoster) await q.markRostersSynced(league.id);
+
   return { events: eventRows.length, teams: teamRows.size };
 }
 
@@ -372,10 +397,16 @@ const BROADCAST_REQUEST_CAP = 240;
  * late kickoff belongs to, and the team-name match is what actually establishes
  * identity, so the wider window costs nothing in precision.
  */
-export async function syncBroadcasts({ log = console.log } = {}) {
+export async function syncBroadcasts({ log = console.log, from = null, to = null } = {}) {
   const now = new Date();
-  const horizon = new Date(now.getTime() + config.sports.horizonDays * 86400_000);
-  const events = await q.listEventsMissingBroadcast({ from: now, to: horizon, limit: 2000 });
+  // Windowed so the near pass can run this too. A broadcaster is assigned close to
+  // kickoff -- the Premier League had a listing for the current week and none for
+  // the following month -- so the fixtures worth re-asking about are the ones about
+  // to be played, and re-scanning the whole fortnight every few hours would spend
+  // the request budget on games nobody has decided about yet.
+  const start = from ?? now;
+  const horizon = to ?? new Date(now.getTime() + config.sports.horizonDays * 86400_000);
+  const events = await q.listEventsMissingBroadcast({ from: start, to: horizon, limit: 2000 });
   if (events.length === 0) return { checked: 0, filled: 0, requests: 0 };
 
   const dayOf = (d, offset = 0) =>
@@ -428,6 +459,82 @@ export async function syncBroadcasts({ log = console.log } = {}) {
         : ''),
   );
   return { checked: events.length, filled: written.length, requests };
+}
+
+/**
+ * Refresh the fixtures that are about to be played, and nothing else.
+ *
+ * The full sweep asks all 359 leagues for a fortnight and costs two requests each,
+ * which is far too much to repeat every few hours -- and almost all of it is spent
+ * re-reading competitions that are out of season or not playing until next week.
+ * Measured 2026-08-21: 48 leagues had a fixture today, 74 within 48 hours. So this
+ * asks those, for a two-day window, without the roster.
+ *
+ * It exists because a fixture is NOT static once written down, which is the
+ * assumption that would otherwise justify fetching a day's schedule once. Three
+ * things about today's games change during today:
+ *
+ *   - the broadcaster, which is assigned late and is why events.broadcast is empty
+ *     for so much of the catalogue when the sweep first sees a fixture;
+ *   - postponements and delays, which move starts_at and state hours ahead of
+ *     kickoff, where the live tick's 30-minute window cannot see them;
+ *   - each side's record, which changes every time either team plays.
+ *
+ * The live tick still owns scores. This owns everything about a fixture that is
+ * not the score.
+ */
+export async function syncNear({ log = console.log, hours = config.sports.nearWindowHours } = {}) {
+  const now = new Date();
+  // Six hours back for the same reason the sweep reaches back: a game that kicked
+  // off before the last pass still needs its final state written.
+  const from = new Date(now.getTime() - 6 * 3600_000);
+  const to = new Date(now.getTime() + hours * 3600_000);
+
+  const leagues = await q.leaguesWithFixturesBetween({ from, to });
+  if (leagues.length === 0) {
+    log('[near] nothing scheduled in the window');
+    return { leagues: 0, events: 0, failed: 0 };
+  }
+
+  let events = 0;
+  let failed = 0;
+  let i = 0;
+
+  async function worker() {
+    while (i < leagues.length) {
+      const league = leagues[i++];
+      try {
+        const r = await syncLeague(league, {
+          // Days, and never less than one -- fetchSchedule takes a date window and
+          // a sub-day one would ask for a range ending before tonight's games.
+          horizonDays: Math.max(1, Math.ceil(hours / 24)),
+          backfillDays: 0,
+          roster: false,
+        });
+        events += r.events;
+      } catch (err) {
+        failed++;
+        if (failed <= 5) log(`[near] ${league.slug} failed: ${err.message}`);
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(config.sports.syncConcurrency, leagues.length) }, worker),
+  );
+
+  // Scoped to the same window: this is where a late broadcast assignment lands.
+  let broadcasts = { checked: 0, filled: 0, requests: 0 };
+  try {
+    broadcasts = await syncBroadcasts({ log, from: now, to });
+  } catch (err) {
+    log(`[near] broadcast pass failed: ${err.message}`);
+  }
+
+  log(
+    `[near] ${leagues.length} league(s) with games inside ${hours}h, ${events} fixtures, ${failed} failed`,
+  );
+  return { leagues: leagues.length, events, failed, broadcasts };
 }
 
 /**
