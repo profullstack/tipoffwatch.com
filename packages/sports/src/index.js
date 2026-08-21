@@ -243,18 +243,21 @@ export async function syncLiveScores({ log = console.log } = {}) {
  * moving, and neither can shut the other out.
  */
 export async function syncPlays({ log = console.log, limit = 8 } = {}) {
-  // The finished games are drawn first, but for a small fixed share rather than
-  // first claim on everything. Whatever they leave goes to the live ones, so an
-  // empty catch-up queue hands its slots back instead of idling them.
+  // A reserved share for the catch-up reads, but only while there is live work to
+  // reserve it against. The live queue is drawn against the whole cap and handed
+  // back down to its share only if it is actually big enough to need capping, so
+  // neither queue can starve the other and neither leaves a slot idle: an evening
+  // with nothing on drains the backlog at full rate, and a busy one still closes
+  // out a couple of finished games per tick.
+  const endedShare = Math.min(2, Math.max(1, limit - 1));
+  const liveAll = await q.eventsNeedingPlays({ staleSeconds: 120, limit, state: 'in' });
+  // Capped only when there is enough live work to cap: a shorter list passes
+  // through whole and leaves the remainder to the catch-up queue.
+  const live = liveAll.slice(0, limit - endedShare);
   const ended = await q.eventsNeedingPlays({
     staleSeconds: 120,
-    limit: Math.min(2, Math.max(1, limit - 1)),
+    limit: limit - live.length,
     state: 'post',
-  });
-  const live = await q.eventsNeedingPlays({
-    staleSeconds: 120,
-    limit: limit - ended.length,
-    state: 'in',
   });
   const due = [...live, ...ended];
   if (due.length === 0) return { events: 0, plays: 0 };
@@ -312,7 +315,9 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   // apart in the log. Reading 8 of 8 and reading 8 of 400 print identically
   // otherwise, and the second one means a live fixture is an hour from its first
   // play -- which is exactly how this went unnoticed.
-  const liveDue = live[0]?.total_due ?? live.length;
+  // From the uncapped draw, so the number is the real live backlog rather than
+  // whatever this tick's share happened to be.
+  const liveDue = liveAll[0]?.total_due ?? liveAll.length;
   const endedDue = ended[0]?.total_due ?? ended.length;
   log(
     `[plays] live ${live.length}/${liveDue}, ended ${ended.length}/${endedDue}, ` +
