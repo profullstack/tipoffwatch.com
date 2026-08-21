@@ -1,0 +1,197 @@
+import { LocalTime } from './components.jsx';
+import { Layout } from './Layout.jsx';
+
+/**
+ * People pages: a profile, an inbox, one conversation.
+ *
+ * Kept out of pages.jsx because that file is already the whole fixture side of the
+ * site, and these share nothing with it but the layout.
+ *
+ * The thread through all three is restraint about what a profile publishes. There
+ * is no email, no location, no last-seen and no activity log -- none of it is
+ * needed to follow a person, and all of it is a liability once the page is public.
+ */
+
+const nameOf = (p) => p.display_name ?? `@${p.handle}`;
+
+/**
+ * Someone's public page.
+ *
+ * Public by default, because the rest of the site reads without an account and a
+ * profile shows only what its owner chose to put there. `profile_public` is the
+ * opt-out; the owner still sees their own page so it never looks broken to them.
+ */
+export const ProfilePage = ({
+  user,
+  profile,
+  counts,
+  followers,
+  following,
+  isFollowing,
+  isSelf,
+}) => (
+  <Layout title={nameOf(profile)} user={user} canonical={`/u/${profile.handle}`}>
+    <div class="page-head">
+      <h1>
+        {nameOf(profile)}
+        {profile.display_name ? <span class="handle muted">@{profile.handle}</span> : null}
+      </h1>
+      {isSelf ? (
+        <a class="ghost small-btn" href="/settings">
+          Edit profile
+        </a>
+      ) : user ? (
+        <div class="form-actions">
+          <form
+            method="post"
+            action={isFollowing ? '/api/users/unfollow' : '/api/users/follow'}
+            class="inline"
+          >
+            <input type="hidden" name="handle" value={profile.handle} />
+            <button class={isFollowing ? 'ghost small-btn' : 'cta small-btn'} type="submit">
+              {isFollowing ? 'Following' : 'Follow'}
+            </button>
+          </form>
+          <a class="ghost small-btn" href={`/messages/${profile.handle}`}>
+            Message
+          </a>
+        </div>
+      ) : (
+        <a class="cta small-btn" href={`/login?next=%2Fu%2F${profile.handle}`}>
+          Sign in to follow
+        </a>
+      )}
+    </div>
+
+    {profile.bio ? <p class="bio">{profile.bio}</p> : null}
+
+    {!profile.profile_public ? (
+      <p class="feedback">Your profile is hidden. Only you can see this page.</p>
+    ) : null}
+
+    <ul class="stat">
+      <li>
+        <strong class="num">{counts.followers.toLocaleString('en-US')}</strong>
+        <span>Followers</span>
+      </li>
+      <li>
+        <strong class="num">{counts.following.toLocaleString('en-US')}</strong>
+        <span>Following</span>
+      </li>
+      <li>
+        <strong class="num">{counts.teams.toLocaleString('en-US')}</strong>
+        <span>Teams followed</span>
+      </li>
+    </ul>
+
+    <h2>Followers</h2>
+    {followers.length === 0 ? (
+      <p class="empty">Nobody yet.</p>
+    ) : (
+      <ul class="people">
+        {followers.map((p) => (
+          <li>
+            <a href={`/u/${p.handle}`}>{nameOf(p)}</a>
+          </li>
+        ))}
+      </ul>
+    )}
+
+    <h2>Following</h2>
+    {following.length === 0 ? (
+      <p class="empty">Not following anyone yet.</p>
+    ) : (
+      <ul class="people">
+        {following.map((p) => (
+          <li>
+            <a href={`/u/${p.handle}`}>{nameOf(p)}</a>
+          </li>
+        ))}
+      </ul>
+    )}
+  </Layout>
+);
+
+/** Every conversation, newest first, with the last thing said in each. */
+export const Inbox = ({ user, threads }) => (
+  <Layout title="Messages" user={user}>
+    <h1>Messages</h1>
+    {threads.length === 0 ? (
+      <p class="empty">No messages yet. Open someone's profile and choose Message to start one.</p>
+    ) : (
+      <ul class="threads">
+        {threads.map((t) => (
+          <li class={t.unread ? 'unread' : ''}>
+            <a href={`/messages/${t.handle}`}>
+              <span class="thread-who">
+                {nameOf(t)}
+                {/* role="img" so the label is actually exposed: aria-label on a
+                    bare span is ignored by screen readers and by the linter. */}
+                {t.unread ? <span class="dot" role="img" aria-label="unread" /> : null}
+              </span>
+              <span class="thread-last muted">
+                {t.outgoing ? 'You: ' : ''}
+                {t.body.length > 90 ? `${t.body.slice(0, 90)}…` : t.body}
+              </span>
+              <LocalTime at={t.created_at} />
+            </a>
+          </li>
+        ))}
+      </ul>
+    )}
+  </Layout>
+);
+
+/** One conversation. Oldest at the top, composer at the bottom. */
+export const Thread = ({ user, other, messages, blocked }) => (
+  <Layout title={nameOf(other)} user={user}>
+    <ol class="crumbs" aria-label="Breadcrumb">
+      <li>
+        <a href="/messages">Messages</a>
+      </li>
+      <li aria-current="page">{nameOf(other)}</li>
+    </ol>
+
+    <div class="page-head">
+      <h1>
+        <a href={`/u/${other.handle}`}>{nameOf(other)}</a>
+      </h1>
+      <form method="post" action="/api/users/block" class="inline">
+        <input type="hidden" name="handle" value={other.handle} />
+        <button class="ghost small-btn danger" type="submit">
+          Block
+        </button>
+      </form>
+    </div>
+
+    {blocked ? (
+      <p class="feedback error">This conversation is closed. One of you has blocked the other.</p>
+    ) : (
+      <>
+        {messages.length === 0 ? (
+          <p class="empty">Say something.</p>
+        ) : (
+          <ul class="messages">
+            {messages.map((m) => (
+              <li class={m.sender_id === user.id ? 'mine' : 'theirs'}>
+                <p class="msg-body">{m.body}</p>
+                <LocalTime at={m.created_at} />
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form method="post" action="/api/messages">
+          <input type="hidden" name="handle" value={other.handle} />
+          <label class="field">
+            <span>Message</span>
+            <textarea name="body" required maxlength="4000" placeholder="Write a message" />
+          </label>
+          <button class="cta" type="submit">
+            Send
+          </button>
+        </form>
+      </>
+    )}
+  </Layout>
+);

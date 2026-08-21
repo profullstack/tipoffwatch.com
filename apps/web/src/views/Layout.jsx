@@ -62,7 +62,7 @@ export const Layout = (props) => (
         />
       ) : null}
 
-      <link rel="stylesheet" href={assetUrl("styles.css")} />
+      <link rel="stylesheet" href={assetUrl('styles.css')} />
       {props.canonical ? (
         <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
       ) : null}
@@ -110,6 +110,16 @@ export const Layout = (props) => (
         <nav>
           <a href="/sports">Sports</a>
           {props.user ? <a href="/following">My games</a> : null}
+          {/* The count rides on the user, set once in middleware, so a view stays
+              a view and no render call has to remember to pass it. */}
+          {props.user ? (
+            <a href="/messages">
+              Messages
+              {props.user.unread ? (
+                <span class="badge">{props.user.unread > 99 ? '99+' : props.user.unread}</span>
+              ) : null}
+            </a>
+          ) : null}
           {props.user ? (
             <a href="/settings">Settings</a>
           ) : (
@@ -142,8 +152,8 @@ export const Layout = (props) => (
 
       {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}
-      <script src={assetUrl("vendor-webauthn.js")} defer />
-      <script src={assetUrl("app.js")} defer />
+      <script src={assetUrl('vendor-webauthn.js')} defer />
+      <script src={assetUrl('app.js')} defer />
       {props.vapidKey ? html`<script>window.__VAPID = "${props.vapidKey}";</script>` : null}
       {/* One page needs a script of its own; the rest must not carry it. */}
       {props.script ? <script src={props.script} defer /> : null}

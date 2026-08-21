@@ -102,6 +102,265 @@ export async function touchPasskey(credentialId, counter) {
   await sql`update passkeys set counter = ${counter}, last_used_at = now() where credential_id = ${credentialId}`;
 }
 
+/* ------------------------------------------------------ profiles & people -- */
+
+/** Handles are the profile URL, so the shape is constrained rather than trusted. */
+export const HANDLE_RE = /^[a-z0-9](?:[a-z0-9_]{1,28}[a-z0-9])$/i;
+
+/**
+ * Names we refuse to hand out, because a profile at one of these would shadow a
+ * real page or impersonate the site. Checked here rather than in the route so it
+ * cannot be bypassed by a second caller later.
+ */
+const RESERVED_HANDLES = new Set([
+  'about',
+  'admin',
+  'api',
+  'calendar',
+  'events',
+  'feeds',
+  'following',
+  'health',
+  'healthz',
+  'help',
+  'leagues',
+  'login',
+  'logout',
+  'messages',
+  'me',
+  'settings',
+  'signup',
+  'sitemap',
+  'sports',
+  'staff',
+  'support',
+  'teams',
+  'tipoffwatch',
+  'u',
+  'watch',
+]);
+
+export const handleAvailableShape = (h) =>
+  HANDLE_RE.test(h ?? '') && !RESERVED_HANDLES.has(String(h).toLowerCase());
+
+export async function getUserByHandle(handle) {
+  const [row] = await sql`
+    select id, handle, display_name, bio, profile_public, created_at
+    from users where handle = ${handle}
+  `;
+  return row ?? null;
+}
+
+/**
+ * Set or change a handle.
+ *
+ * The unique index is the real guard -- two people claiming the same name in the
+ * same instant is a race no read-then-write can close -- so a conflict is caught
+ * and reported rather than pre-checked.
+ */
+export async function updateProfile({ userId, handle, displayName, bio, profilePublic }) {
+  try {
+    const [row] = await sql`
+      update users set
+        handle = ${handle ?? null},
+        display_name = ${displayName ?? null},
+        bio = ${bio ?? null},
+        profile_public = ${profilePublic}
+      where id = ${userId}
+      returning id, handle, display_name, bio, profile_public
+    `;
+    return { ok: true, user: row };
+  } catch (err) {
+    if (String(err?.message ?? '').includes('users_handle_key')) {
+      return { ok: false, error: 'That handle is taken.' };
+    }
+    throw err;
+  }
+}
+
+export async function followUser({ followerId, followeeId }) {
+  if (followerId === followeeId) return false;
+  await sql`
+    insert into user_follows (follower_id, followee_id)
+    values (${followerId}, ${followeeId})
+    on conflict do nothing
+  `;
+  return true;
+}
+
+export async function unfollowUser({ followerId, followeeId }) {
+  await sql`
+    delete from user_follows where follower_id = ${followerId} and followee_id = ${followeeId}
+  `;
+}
+
+export async function isFollowingUser({ followerId, followeeId }) {
+  if (!followerId || !followeeId) return false;
+  const [row] = await sql`
+    select 1 as x from user_follows
+    where follower_id = ${followerId} and followee_id = ${followeeId}
+  `;
+  return Boolean(row);
+}
+
+/** Counts for a profile header, in one round trip rather than two. */
+export async function profileCounts(userId) {
+  const [row] = await sql`
+    select
+      (select count(*)::int from user_follows where followee_id = ${userId}) as followers,
+      (select count(*)::int from user_follows where follower_id = ${userId}) as following,
+      (select count(*)::int from follows where user_id = ${userId}) as teams
+  `;
+  return row;
+}
+
+/**
+ * The people following someone, minus anyone either party has blocked.
+ *
+ * A blocked account must not be able to see itself listed on the blocker's profile
+ * and must not appear on it either, so the filter runs in both directions.
+ */
+export async function followersOf({ userId, viewerId = null, limit = 100 }) {
+  return sql`
+    select u.id, u.handle, u.display_name
+    from user_follows f
+    join users u on u.id = f.follower_id
+    where f.followee_id = ${userId}
+      and u.handle is not null
+      and not exists (
+        select 1 from user_blocks b
+        where (b.blocker_id = u.id and b.blocked_id = ${viewerId}::uuid)
+           or (b.blocker_id = ${viewerId}::uuid and b.blocked_id = u.id)
+      )
+    order by f.created_at desc
+    limit ${Math.min(Math.max(Number(limit) || 100, 1), 200)}
+  `;
+}
+
+export async function followingBy({ userId, limit = 100 }) {
+  return sql`
+    select u.id, u.handle, u.display_name
+    from user_follows f
+    join users u on u.id = f.followee_id
+    where f.follower_id = ${userId} and u.handle is not null
+    order by f.created_at desc
+    limit ${Math.min(Math.max(Number(limit) || 100, 1), 200)}
+  `;
+}
+
+/* --------------------------------------------------------------- blocking -- */
+
+export async function blockUser({ blockerId, blockedId }) {
+  if (blockerId === blockedId) return;
+  await sql`
+    insert into user_blocks (blocker_id, blocked_id) values (${blockerId}, ${blockedId})
+    on conflict do nothing
+  `;
+  // A block ends the relationship in both directions. Leaving the follow in place
+  // means the blocked account keeps receiving the blocker in its feed, which is
+  // exactly what the block was for.
+  await sql`
+    delete from user_follows
+    where (follower_id = ${blockerId} and followee_id = ${blockedId})
+       or (follower_id = ${blockedId} and followee_id = ${blockerId})
+  `;
+}
+
+export async function unblockUser({ blockerId, blockedId }) {
+  await sql`delete from user_blocks where blocker_id = ${blockerId} and blocked_id = ${blockedId}`;
+}
+
+/** Either direction: a block stops the conversation both ways, not just inbound. */
+export async function blockExists({ a, b }) {
+  const [row] = await sql`
+    select 1 as x from user_blocks
+    where (blocker_id = ${a} and blocked_id = ${b}) or (blocker_id = ${b} and blocked_id = ${a})
+  `;
+  return Boolean(row);
+}
+
+/* --------------------------------------------------------------- messages -- */
+
+/**
+ * How many messages this account has sent in the last hour.
+ *
+ * The cheapest useful spam brake: a new account cannot open a hundred
+ * conversations before anyone notices. Counted per sender rather than per pair,
+ * because the abuse worth stopping is breadth, not depth.
+ */
+export async function messagesSentSince({ senderId, minutes = 60 }) {
+  const [row] = await sql`
+    select count(*)::int as n from messages
+    where sender_id = ${senderId} and created_at > now() - (${minutes} || ' minutes')::interval
+  `;
+  return row.n;
+}
+
+export async function sendMessage({ senderId, recipientId, body }) {
+  const [row] = await sql`
+    insert into messages (sender_id, recipient_id, body)
+    values (${senderId}, ${recipientId}, ${body})
+    returning id, sender_id, recipient_id, body, created_at
+  `;
+  return row;
+}
+
+/**
+ * One conversation, oldest last.
+ *
+ * Both orderings of the pair, because a thread is the union of what each person
+ * sent. Reading it also marks the viewer's half as read, which is done in the same
+ * round trip rather than as a second call nobody remembers to make.
+ */
+export async function thread({ userId, otherId, limit = 200 }) {
+  const rows = await sql`
+    select id, sender_id, recipient_id, body, created_at, read_at
+    from messages
+    where (sender_id = ${userId} and recipient_id = ${otherId})
+       or (sender_id = ${otherId} and recipient_id = ${userId})
+    order by created_at desc
+    limit ${Math.min(Math.max(Number(limit) || 200, 1), 500)}
+  `;
+  await sql`
+    update messages set read_at = now()
+    where recipient_id = ${userId} and sender_id = ${otherId} and read_at is null
+  `;
+  return rows.reverse();
+}
+
+/**
+ * The inbox: one row per correspondent, with the latest message.
+ *
+ * distinct on is the right tool and the reason the order by starts with the same
+ * expression it distinguishes on -- Postgres requires that, and getting it wrong
+ * returns an arbitrary message per thread rather than the newest.
+ */
+export async function conversations({ userId, limit = 50 }) {
+  return sql`
+    select distinct on (other_id)
+      other_id, u.handle, u.display_name, m.body, m.created_at,
+      (m.recipient_id = ${userId} and m.read_at is null) as unread,
+      m.sender_id = ${userId} as outgoing
+    from (
+      select *,
+             case when sender_id = ${userId} then recipient_id else sender_id end as other_id
+      from messages
+      where sender_id = ${userId} or recipient_id = ${userId}
+    ) m
+    join users u on u.id = m.other_id
+    order by other_id, m.created_at desc
+    limit ${Math.min(Math.max(Number(limit) || 50, 1), 200)}
+  `;
+}
+
+export async function unreadMessageCount(userId) {
+  if (!userId) return 0;
+  const [row] = await sql`
+    select count(*)::int as n from messages where recipient_id = ${userId} and read_at is null
+  `;
+  return row.n;
+}
+
 /* ---------------------------------------------------------- own playlists -- */
 
 /**

@@ -151,8 +151,13 @@ test('static assets are linked with a content version', async () => {
   const app = await readFile(APP, 'utf8');
 
   // Linked through the helper, never by bare path.
-  expect(layout).toContain('assetUrl("styles.css")');
-  expect(layout).toContain('assetUrl("app.js")');
+  //
+  // Quote-agnostic on purpose: what matters is that the asset goes through
+  // assetUrl, not which quote character the formatter settled on. Pinning the
+  // literal meant a `biome --fix` that merely normalised quotes failed this test
+  // while the property it is guarding was untouched.
+  expect(layout).toMatch(/assetUrl\(['"]styles\.css['"]\)/);
+  expect(layout).toMatch(/assetUrl\(['"]app\.js['"]\)/);
   expect(layout).not.toContain('href="/styles.css"');
   expect(layout).not.toContain('src="/app.js"');
 

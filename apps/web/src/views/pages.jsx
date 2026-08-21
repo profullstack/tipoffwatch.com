@@ -919,9 +919,75 @@ const COMMON_ZONES = [
   'UTC',
 ];
 
-export const Settings = ({ user, prefs, passkeys, playlist, playlistNotice, playlistError }) => (
+export const Settings = ({
+  user,
+  prefs,
+  passkeys,
+  playlist,
+  playlistNotice,
+  playlistError,
+  profileError,
+  profileSaved,
+}) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
+
+    <section>
+      <h2>Profile</h2>
+      <p class="muted small">
+        Choose a handle and other people can find you at{' '}
+        <code>tipoffwatch.com/u/{user.handle ?? 'yourname'}</code>, follow you and send you a
+        message. Until you pick one you have no public page.
+      </p>
+
+      {profileError ? <p class="feedback error">{profileError}</p> : null}
+      {profileSaved ? <p class="feedback ok">Profile saved.</p> : null}
+
+      <form method="post" action="/api/profile">
+        <label class="field">
+          <span>Handle</span>
+          <input
+            type="text"
+            name="handle"
+            value={user.handle ?? ''}
+            placeholder="yourname"
+            pattern="[A-Za-z0-9][A-Za-z0-9_]{1,28}[A-Za-z0-9]"
+            autocomplete="off"
+          />
+          <span class="hint">3–30 letters, numbers or underscores.</span>
+        </label>
+        <label class="field">
+          <span>Display name</span>
+          <input
+            type="text"
+            name="display_name"
+            value={user.display_name ?? ''}
+            placeholder="Optional"
+            autocomplete="off"
+          />
+        </label>
+        <label class="field">
+          <span>Bio</span>
+          <textarea name="bio" maxlength="500" placeholder="Optional, 500 characters">
+            {user.bio ?? ''}
+          </textarea>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="profile_public" checked={user.profile_public !== false} />
+          <span>Let other people see my profile</span>
+        </label>
+        <div class="form-actions">
+          <button class="cta" type="submit">
+            Save profile
+          </button>
+          {user.handle ? (
+            <a class="ghost" href={`/u/${user.handle}`}>
+              View profile
+            </a>
+          ) : null}
+        </div>
+      </form>
+    </section>
 
     {/* A reader's own channel list. Private to this account: never shown to anyone
         else, never pooled, and never offered for sale. */}

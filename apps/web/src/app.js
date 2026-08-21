@@ -27,6 +27,7 @@ import {
   TeamPage,
   WatchPage,
 } from './views/pages.jsx';
+import { Inbox, ProfilePage, Thread } from './views/people.jsx';
 
 export const app = new Hono();
 
@@ -63,7 +64,17 @@ export const render = async (node) => `<!doctype html>${await node.toString()}`;
 
 app.use('*', async (c, next) => {
   const sid = getCookie(c, config.session.cookie);
-  c.set('user', sid ? await auth.userFromRequest(sid) : null);
+  const user = sid ? await auth.userFromRequest(sid) : null;
+
+  // The unread badge hangs off the user rather than being threaded through every
+  // view's props: the header is on every page, and passing it explicitly would
+  // mean touching a dozen render calls to add one number. One indexed count on a
+  // partial index, and only for signed-in requests -- which are never cached, so
+  // it cannot end up in a shared page.
+  if (user) {
+    user.unread = await q.unreadMessageCount(user.id).catch(() => 0);
+  }
+  c.set('user', user);
   await next();
 });
 
@@ -259,6 +270,175 @@ app.get('/events/:id/watch', async (c) => {
   if (!entitlement) return c.redirect(`/events/${event.id}`, 303);
 
   return c.html(await render(<WatchPage user={user} event={event} entitlement={entitlement} />));
+});
+
+/* ------------------------------------------------------ profiles & people -- */
+
+/** Sending is capped per hour. Breadth is the abuse worth stopping, not depth. */
+const MESSAGE_RATE_PER_HOUR = 60;
+
+/**
+ * A public profile.
+ *
+ * Public on purpose: the rest of the site reads without an account and a profile
+ * shows only what its owner chose to put there. `profile_public` is the opt-out,
+ * and the owner still sees their own page so it never looks broken to them.
+ */
+app.get('/u/:handle', async (c) => {
+  const viewer = c.get('user');
+  const profile = await q.getUserByHandle(c.req.param('handle'));
+  if (!profile) return c.html(await render(<NotFound user={viewer} />), 404);
+
+  const isSelf = viewer?.id === profile.id;
+  if (!profile.profile_public && !isSelf) {
+    return c.html(await render(<NotFound user={viewer} />), 404);
+  }
+
+  // A blocked viewer gets the same answer as a stranger looking for a name that
+  // does not exist. Anything more specific confirms the block.
+  if (viewer && !isSelf && (await q.blockExists({ a: viewer.id, b: profile.id }))) {
+    return c.html(await render(<NotFound user={viewer} />), 404);
+  }
+
+  const [counts, followers, following, isFollowing] = await Promise.all([
+    q.profileCounts(profile.id),
+    q.followersOf({ userId: profile.id, viewerId: viewer?.id ?? null, limit: 24 }),
+    q.followingBy({ userId: profile.id, limit: 24 }),
+    q.isFollowingUser({ followerId: viewer?.id, followeeId: profile.id }),
+  ]);
+
+  return c.html(
+    await render(
+      <ProfilePage
+        user={viewer}
+        profile={profile}
+        counts={counts}
+        followers={followers}
+        following={following}
+        isFollowing={isFollowing}
+        isSelf={isSelf}
+      />,
+    ),
+  );
+});
+
+for (const [path, fn] of [
+  ['/api/users/follow', q.followUser],
+  ['/api/users/unfollow', q.unfollowUser],
+]) {
+  app.post(path, async (c) => {
+    const user = requireUser(c);
+    const body = await c.req.parseBody();
+    const target = await q.getUserByHandle(String(body.handle ?? ''));
+    if (!target) return c.json({ error: 'no such person' }, 404);
+    if (await q.blockExists({ a: user.id, b: target.id })) {
+      return c.json({ error: 'unavailable' }, 403);
+    }
+    await fn({ followerId: user.id, followeeId: target.id });
+    return respond(c, { json: { ok: true }, redirectTo: `/u/${target.handle}` });
+  });
+}
+
+for (const [path, fn] of [
+  ['/api/users/block', q.blockUser],
+  ['/api/users/unblock', q.unblockUser],
+]) {
+  app.post(path, async (c) => {
+    const user = requireUser(c);
+    const body = await c.req.parseBody();
+    const target = await q.getUserByHandle(String(body.handle ?? ''));
+    if (!target) return c.json({ error: 'no such person' }, 404);
+    await fn({ blockerId: user.id, blockedId: target.id });
+    return respond(c, { json: { ok: true }, redirectTo: '/messages' });
+  });
+}
+
+app.post('/api/profile', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const handle = String(body.handle ?? '').trim();
+
+  if (handle && !q.handleAvailableShape(handle)) {
+    return respond(c, {
+      json: { error: 'bad handle' },
+      status: 400,
+      redirectTo:
+        '/settings?profile_error=' +
+        encodeURIComponent(
+          'A handle is 3–30 letters, numbers or underscores, and cannot be a reserved word.',
+        ),
+    });
+  }
+
+  const result = await q.updateProfile({
+    userId: user.id,
+    handle: handle || null,
+    displayName: String(body.display_name ?? '').trim() || null,
+    bio:
+      String(body.bio ?? '')
+        .trim()
+        .slice(0, 500) || null,
+    profilePublic: body.profile_public === 'on' || body.profile_public === 'true',
+  });
+
+  if (!result.ok) {
+    return respond(c, {
+      json: { error: result.error },
+      status: 409,
+      redirectTo: `/settings?profile_error=${encodeURIComponent(result.error)}`,
+    });
+  }
+  return respond(c, { json: result.user, redirectTo: '/settings?profile=saved' });
+});
+
+/* --------------------------------------------------------------- messages -- */
+
+app.get('/messages', async (c) => {
+  const user = requireUser(c);
+  const threads = await q.conversations({ userId: user.id });
+  return c.html(await render(<Inbox user={user} threads={threads} />));
+});
+
+app.get('/messages/:handle', async (c) => {
+  const user = requireUser(c);
+  const other = await q.getUserByHandle(c.req.param('handle'));
+  if (!other) return c.html(await render(<NotFound user={user} />), 404);
+  if (other.id === user.id) return c.redirect('/messages', 303);
+
+  const blocked = await q.blockExists({ a: user.id, b: other.id });
+  const messages = blocked ? [] : await q.thread({ userId: user.id, otherId: other.id });
+  return c.html(
+    await render(<Thread user={user} other={other} messages={messages} blocked={blocked} />),
+  );
+});
+
+app.post('/api/messages', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const other = await q.getUserByHandle(String(body.handle ?? ''));
+  const text = String(body.body ?? '').trim();
+
+  if (!other || other.id === user.id) return c.json({ error: 'no such person' }, 404);
+  if (!text) return c.redirect(`/messages/${other.handle}`, 303);
+  if (text.length > 4000) return c.json({ error: 'too long' }, 400);
+
+  // A block is checked in both directions, so neither party can reopen a
+  // conversation the other closed.
+  if (await q.blockExists({ a: user.id, b: other.id })) {
+    return c.json({ error: 'unavailable' }, 403);
+  }
+
+  const sent = await q.messagesSentSince({ senderId: user.id, minutes: 60 });
+  if (sent >= MESSAGE_RATE_PER_HOUR) {
+    return respond(c, {
+      json: { error: 'rate limited' },
+      status: 429,
+      redirectTo: `/messages/${other.handle}?slow=1`,
+    });
+  }
+
+  await q.sendMessage({ senderId: user.id, recipientId: other.id, body: text });
+  return respond(c, { json: { ok: true }, redirectTo: `/messages/${other.handle}` });
 });
 
 /* --------------------------------------------------------- own playlists -- */
@@ -550,6 +730,8 @@ app.get('/settings', async (c) => {
         playlist={playlist}
         playlistNotice={playlistNotice}
         playlistError={c.req.query('playlist_error') ?? null}
+        profileError={c.req.query('profile_error') ?? null}
+        profileSaved={c.req.query('profile') === 'saved'}
       />,
     ),
   );

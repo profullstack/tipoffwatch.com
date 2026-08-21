@@ -1801,3 +1801,138 @@ button,
 .topbar nav a.ghost {
   color: var(--fg);
 }
+
+/* ================================================================== people ==
+   Profiles, the inbox and one conversation. */
+
+.handle {
+  font-family: var(--mono);
+  font-size: 0.7em;
+  font-weight: 400;
+  margin-left: 0.5rem;
+}
+.bio {
+  max-width: 46rem;
+  margin: 0.5rem 0 1rem;
+}
+
+ul.people {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+ul.people li a {
+  display: inline-block;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+ul.people li a:hover {
+  border-color: var(--accent);
+}
+
+/* An unread count beside a nav item. Sized in em so it tracks the link. */
+.badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.05em 0.45em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: oklch(0.16 0.02 45);
+  font-family: var(--mono);
+  font-size: 0.7em;
+  font-weight: 600;
+  vertical-align: 0.1em;
+}
+
+ul.threads {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+ul.threads li a {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--fg);
+  text-decoration: none;
+}
+ul.threads li a:hover {
+  border-color: var(--accent);
+}
+.thread-who {
+  font-weight: 600;
+}
+.thread-last {
+  grid-column: 1;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+ul.threads time {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+ul.threads li.unread .thread-who {
+  color: var(--accent);
+}
+.dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 0.1em;
+}
+
+ul.messages {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+ul.messages li {
+  max-width: min(42rem, 85%);
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+/* Mine on the right, in the accent, so a conversation reads at a glance without
+   needing to parse the names. */
+ul.messages li.mine {
+  align-self: flex-end;
+  background: oklch(0.72 0.19 45 / 0.14);
+  border-color: oklch(0.72 0.19 45 / 0.4);
+}
+.msg-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+ul.messages time {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
