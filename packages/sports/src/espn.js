@@ -551,14 +551,56 @@ function tennisMatches(tournament, providerKey) {
 }
 
 /**
+ * The tournament itself, alongside its matches.
+ *
+ * A draw is only published a few days out, so a tournament that has not been drawn
+ * fans out to nothing -- which left the US Open invisible a week before it started,
+ * inside the horizon and with a date, simply because none of its matches had names
+ * yet. The tournament is a fixture in its own right: it is the thing someone wants
+ * in their calendar before the draw exists, and it is the same shape as a grand prix
+ * or a fight card, which this adapter already stores with no competitors at all.
+ *
+ * A combined tournament lands once per tour. That is two rows for one fortnight, but
+ * they sit in different leagues, and an ATP follower looking at the ATP calendar
+ * should see it there.
+ */
+function tennisTournament(t, providerKey) {
+  if (!t?.id || !t.date) return null;
+
+  return {
+    providerKey: `${providerKey}/${t.id}`,
+    startsAt: new Date(t.date),
+    state: normaliseState(t),
+    statusDetail: t.status?.type?.shortDetail ?? null,
+    name: t.name ?? t.shortName ?? 'Tournament',
+    shortName: t.shortName ?? null,
+    venue: t.venue?.displayName ?? null,
+    venueCity: null,
+    venueRegion: null,
+    neutralSite: true,
+    broadcast: null,
+    attendance: null,
+    period: null,
+    displayClock: null,
+    home: null,
+    away: null,
+    homeScore: null,
+    awayScore: null,
+    homeRecord: null,
+    awayRecord: null,
+  };
+}
+
+/**
  * One scoreboard entry -> the fixtures it represents, which is usually itself.
  *
  * Tennis is the exception: its entry is a tournament holding a fortnight of
- * matches, so it fans out rather than mapping across.
+ * matches, so it fans out into both the tournament and every match in it.
  */
 function normaliseEntry(e, providerKey) {
   if (Array.isArray(e?.groupings) && e.groupings.length > 0) {
-    return tennisMatches(e, providerKey);
+    const tournament = tennisTournament(e, providerKey);
+    return [...(tournament ? [tournament] : []), ...tennisMatches(e, providerKey)];
   }
   const one = normaliseEvent(e, providerKey);
   return one ? [one] : [];

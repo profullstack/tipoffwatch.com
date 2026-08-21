@@ -233,21 +233,27 @@ describe('tennis tournaments', () => {
     globalThis.fetch = async () =>
       new Response(JSON.stringify({ events: [tournament] }), { status: 200 });
     try {
-      return await espn.fetchSchedule({
+      const r = await espn.fetchSchedule({
         providerKey,
         from: new Date(),
         to: new Date(Date.now() + 86400000),
       });
+      return {
+        ...r,
+        // The tournament itself has no sides; every match has two.
+        tournaments: r.events.filter((e) => !e.home && !e.away),
+        matches: r.events.filter((e) => e.home && e.away),
+      };
     } finally {
       globalThis.fetch = realFetch;
     }
   };
 
   test('a tournament fans out into its matches', async () => {
-    const { events } = await schedule('tennis/atp');
-    expect(events.length).toBe(1);
+    const { matches } = await schedule('tennis/atp');
+    expect(matches.length).toBe(1);
 
-    const [m] = events;
+    const [m] = matches;
     expect(m.providerKey).toBe('tennis/atp/184414');
     expect(m.name).toBe("Dane Sweeny v Christopher O'Connell");
     expect(m.shortName).toBe("D. Sweeny v C. O'Connell");
@@ -258,12 +264,12 @@ describe('tennis tournaments', () => {
   test('the score is sets won, not games', async () => {
     // The linescores are games per set, and their sum is not a scoreline anyone
     // quotes. This match went 2-1 to O'Connell.
-    const [m] = (await schedule('tennis/atp')).events;
+    const [m] = (await schedule('tennis/atp')).matches;
     expect({ away: m.awayScore, home: m.homeScore }).toEqual({ away: 1, home: 2 });
   });
 
   test('the tournament and the court both survive', async () => {
-    const [m] = (await schedule('tennis/atp')).events;
+    const [m] = (await schedule('tennis/atp')).matches;
     expect(m.venue).toBe('Cincinnati Open');
     expect(m.venueCity).toBe('Cincinnati, USA · Court 9');
     // Neither player is at home, which the UI renders as "vs" with no role tags.
@@ -279,22 +285,36 @@ describe('tennis tournaments', () => {
   });
 
   test('a doubles pair is one followable side', async () => {
-    const { events } = await schedule('tennis/wta');
-    expect(events.length).toBe(1);
+    const { matches } = await schedule('tennis/wta');
+    expect(matches.length).toBe(1);
 
-    const [m] = events;
+    const [m] = matches;
     expect(m.providerKey).toBe('tennis/wta/182450');
     expect(m.away.name).toBe('Ulrikke Eikeri / Quinn Gleason');
     expect(m.away.providerKey).toBe('tennis/wta/1652-3970');
     expect(m.away.logoUrl).toBe('https://x/nor.png');
   });
 
+  test('the tournament is stored too, so it exists before the draw does', async () => {
+    // A draw is published a few days out, so a tournament that has not been drawn
+    // fans out to nothing -- which left the US Open invisible a week ahead, inside
+    // the horizon and with a date, purely because no match had names yet.
+    const { tournaments } = await schedule('tennis/atp');
+    expect(tournaments.length).toBe(1);
+
+    const [t] = tournaments;
+    expect(t.providerKey).toBe('tennis/atp/718-2026');
+    expect(t.name).toBe('Cincinnati Open');
+    expect(t.home).toBeNull();
+    expect(t.away).toBeNull();
+  });
+
   test('a combined tournament is split by draw, not stored twice', async () => {
     // Cincinnati and the slams are returned in full by BOTH tour scoreboards. Taken
     // at face value every match lands twice under two keys, with a second copy of
     // each player.
-    const atp = (await schedule('tennis/atp')).events.map((e) => e.providerKey.split('/').pop());
-    const wta = (await schedule('tennis/wta')).events.map((e) => e.providerKey.split('/').pop());
+    const atp = (await schedule('tennis/atp')).matches.map((e) => e.providerKey.split('/').pop());
+    const wta = (await schedule('tennis/wta')).matches.map((e) => e.providerKey.split('/').pop());
     expect(atp).toEqual(['184414']);
     expect(wta).toEqual(['182450']);
     expect(atp.filter((id) => wta.includes(id))).toEqual([]);
@@ -309,12 +329,20 @@ describe('tennis tournaments', () => {
     // Out of season this can legitimately be empty; when it is not, it must be
     // matches rather than the single tournament row the sport used to store.
     if (events.length === 0) return;
-    expect(events.length).toBeGreaterThan(20);
-    for (const e of events) {
+
+    const tournaments = events.filter((e) => !e.home && !e.away);
+    const matches = events.filter((e) => e.home && e.away);
+
+    // Both halves matter: the matches are the content, and the tournaments are what
+    // a follower sees in the weeks before a draw is published.
+    expect(matches.length).toBeGreaterThan(20);
+    expect(tournaments.length).toBeGreaterThan(0);
+
+    for (const e of matches) {
       expect(e.home?.providerKey).toBeTruthy();
       expect(e.away?.providerKey).toBeTruthy();
-      expect(e.name).not.toContain('TBD');
     }
+    for (const e of events) expect(e.name).not.toContain('TBD');
     expect(new Set(events.map((e) => e.providerKey)).size).toBe(events.length);
   }, 60000);
 });
