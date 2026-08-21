@@ -2,6 +2,61 @@ import { assetUrl } from '../lib/asset-version.js';
 import { EventList, FollowButton, KickoffTime, LocalTime, TeamRow } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
+/**
+ * The markets a fixture is carried in, normalised for rendering.
+ *
+ * The column is jsonb and reaches us either parsed or as a string depending on the
+ * driver, and every row written before migration 0014 has nothing in it at all --
+ * so this is the one place that decides what "no markets" looks like, rather than
+ * three call sites each guessing differently.
+ */
+function marketsOf(event) {
+  const raw = event?.broadcast_markets;
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((m) => m?.country && Array.isArray(m.channels) && m.channels.length);
+}
+
+/**
+ * Which channels are showing this game, and where.
+ *
+ * Rendered as a plain list of every market, and upgraded into a tab strip by
+ * app.js once it knows the reader's region -- so with scripting off the page is
+ * longer but complete, rather than silently showing one country's channels to
+ * everybody. That is the whole reason this is not a CSS-only tab widget: the
+ * default tab depends on who is reading, and the page is cached in Redis and
+ * served byte-identical to everyone, exactly like the kickoff time above it.
+ */
+const BroadcastMarkets = ({ event }) => {
+  const markets = marketsOf(event);
+  if (markets.length < 2) return null;
+  return (
+    <section class="markets" data-markets>
+      <h2>Where to watch</h2>
+      <p class="muted small">
+        This game is carried in {markets.length} countries. Pick yours — we open on it automatically
+        where we can tell.
+      </p>
+      <ul class="market-list">
+        {markets.map((m) => (
+          <li class="market" data-country={m.country}>
+            <h3 class="market-name">{m.country}</h3>
+            <p class="market-channels">{m.channels.join(' · ')}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+};
+
 export const Landing = ({ user, today, vapidKey }) => (
   <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
     <section class="hero">
@@ -472,7 +527,9 @@ export const EventPage = ({
             </span>
           </li>
         ) : null}
-        {event.broadcast ? (
+        {/* One market stays a stat tile; more than one gets the picker below, so
+            the tile does not claim a single answer the fixture does not have. */}
+        {event.broadcast && marketsOf(event).length < 2 ? (
           <li>
             <strong>{event.broadcast}</strong>
             {/* Named market, because a listing is only true somewhere. ESPN's are
@@ -491,6 +548,8 @@ export const EventPage = ({
           </li>
         ) : null}
       </ul>
+
+      <BroadcastMarkets event={event} />
 
       <h2>Follow</h2>
       <p class="muted small">
@@ -684,9 +743,14 @@ export const EventPage = ({
         ) : offers.length === 0 ? (
           <p class="muted">
             Nobody is sharing a stream for this game yet.
-            {event.broadcast
+            {/* Only when there is a single market to name. With the picker above
+                this sentence contradicted it -- a reader in London saw the UK tab
+                selected and then "It is on CBS, Paramount+ in United States"
+                underneath, asserting one market as though it were the answer. */}
+            {event.broadcast && marketsOf(event).length < 2
               ? ` It is on ${event.broadcast}${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`
               : ''}
+            {marketsOf(event).length > 1 ? ' See “Where to watch” above for TV listings.' : ''}
           </p>
         ) : (
           <ul class="offers">

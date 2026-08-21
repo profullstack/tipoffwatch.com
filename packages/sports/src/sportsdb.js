@@ -128,18 +128,23 @@ export function matchListings(event, listings) {
 }
 
 /**
- * Collapse a fixture's listings to the channels for a single market.
+ * Group a fixture's listings by market, most-covered first.
  *
  * Several listings for one game is the normal case rather than an edge case: a
  * match is carried in a dozen countries and TheSportsDB returns a row per
- * broadcaster. Showing all of them would be noise, and showing them unlabelled
- * would be a lie -- "7 Queensland" is the right answer for an AFL game and a
- * useless one for a reader in Ohio. So one country is chosen and named.
+ * broadcaster. All of them are kept, because collapsing to one country meant most
+ * readers were shown a channel they cannot watch -- and an unlabelled channel is
+ * worse than none, since "7 Queensland" is the right answer for an AFL game in
+ * Australia and no use at all in Ohio.
+ *
+ * Ordering is by breadth then name. It decides which market the page opens on for
+ * a reader whose own country is not carried, and alphabetical is only a tiebreak so
+ * that equal markets do not reshuffle between syncs.
  *
  * @param {Array<{channel:string, country:string|null}>} rows
- * @param {string|null} preferCountry
+ * @returns {Array<{country:string, channels:string[]}>}
  */
-export function pickMarket(rows, preferCountry = null) {
+export function allMarkets(rows) {
   /** @type {Map<string, string[]>} */
   const byCountry = new Map();
   for (const r of rows) {
@@ -149,14 +154,24 @@ export function pickMarket(rows, preferCountry = null) {
     const list = byCountry.get(c);
     if (!list.includes(r.channel)) list.push(r.channel);
   }
-  if (byCountry.size === 0) return null;
-  const key =
-    preferCountry && byCountry.has(preferCountry)
-      ? preferCountry
-      : [...byCountry.keys()].sort(
-          (a, b) => byCountry.get(b).length - byCountry.get(a).length || a.localeCompare(b),
-        )[0];
-  return { country: key, channels: byCountry.get(key) };
+  return [...byCountry.entries()]
+    .map(([country, channels]) => ({ country, channels }))
+    .sort((a, b) => b.channels.length - a.channels.length || a.country.localeCompare(b.country));
+}
+
+/**
+ * The one market the flat `events.broadcast` column carries.
+ *
+ * The feeds, the ICS summaries and the reminder emails have nowhere to put a tab
+ * strip, so they still get a single answer; the picker reads the full list.
+ *
+ * @param {Array<{channel:string, country:string|null}>} rows
+ * @param {string|null} preferCountry
+ */
+export function pickMarket(rows, preferCountry = null) {
+  const markets = allMarkets(rows);
+  if (markets.length === 0) return null;
+  return (preferCountry && markets.find((m) => m.country === preferCountry)) || markets[0];
 }
 
 async function getJson(url, { timeoutMs = 15000 } = {}) {

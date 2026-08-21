@@ -15,7 +15,7 @@ alter table events add column if not exists broadcast_country text;
 -- Everything already stored came from ESPN, which is US-only by construction.
 update events
    set broadcast_source = 'espn',
-       broadcast_country = 'US'
+       broadcast_country = 'United States'
  where broadcast is not null
    and broadcast_source is null;
 

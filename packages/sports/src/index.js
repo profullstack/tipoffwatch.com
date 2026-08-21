@@ -159,7 +159,10 @@ export async function syncLeague(
     // seen for the first time takes the INSERT path, and without these it would
     // arrive holding an ESPN listing labelled as coming from nowhere.
     broadcast_source: f.broadcast ? 'espn' : null,
-    broadcast_country: f.broadcast ? 'US' : null,
+    broadcast_country: f.broadcast ? 'United States' : null,
+    broadcast_markets: f.broadcastNames?.length
+      ? JSON.stringify([{ country: 'United States', channels: f.broadcastNames }])
+      : null,
     attendance: f.attendance,
     period: f.period,
     display_clock: f.displayClock,
@@ -207,6 +210,9 @@ export async function syncLeagueScores(league) {
       display_clock: f.displayClock,
       attendance: f.attendance,
       broadcast: f.broadcast,
+      markets: f.broadcastNames?.length
+        ? [{ country: 'United States', channels: f.broadcastNames }]
+        : [],
     })),
   );
   return { events: fixtures.length };
@@ -400,12 +406,17 @@ export async function syncBroadcasts({ log = console.log } = {}) {
       ...(await listings(e.sport, dayOf(e.starts_at))),
     ];
     const hits = sportsdb.matchListings({ home: e.home_name, away: e.away_name }, rows);
-    const market = sportsdb.pickMarket(hits);
-    if (!market) continue;
+    const markets = sportsdb.allMarkets(hits);
+    if (markets.length === 0) continue;
+    // Every market is stored for the picker; the flat columns keep carrying the
+    // primary one, because the feeds and the reminder emails have nowhere to put
+    // a tab strip and still need a single sentence.
+    const [primary] = markets;
     updates.push({
       id: e.id,
-      broadcast: market.channels.join(', '),
-      country: market.country === 'International' ? null : market.country,
+      broadcast: primary.channels.join(', '),
+      country: primary.country === 'International' ? null : primary.country,
+      markets,
     });
   }
 

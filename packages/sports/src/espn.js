@@ -396,8 +396,12 @@ function normaliseEvent(e, providerKey) {
 
   // Broadcasters come grouped by market (national / home / away). Flattened and
   // de-duplicated, because "MLB.TV, Tigers.TV" is what a viewer wants to read.
-  const broadcast =
-    [...new Set((comp.broadcasts ?? []).flatMap((b) => b.names ?? []))].join(', ') || null;
+  //
+  // Kept as a list as well as a string. The joined form is what the feeds and the
+  // legacy column want; the list is what the market picker needs, and splitting the
+  // string back apart would be guessing that no broadcaster has a comma in its name.
+  const broadcastNames = [...new Set((comp.broadcasts ?? []).flatMap((b) => b.names ?? []))];
+  const broadcast = broadcastNames.join(', ') || null;
 
   return {
     providerKey: `${providerKey}/${e.id}`,
@@ -414,6 +418,7 @@ function normaliseEvent(e, providerKey) {
     // Absent on most leagues and null on soccer, so anything but true is false.
     neutralSite: comp.neutralSite === true,
     broadcast,
+    broadcastNames,
     attendance: Number.isFinite(comp.attendance) ? comp.attendance : null,
     period: Number.isFinite(e.status?.period) ? e.status.period : null,
     displayClock: e.status?.displayClock ?? null,
@@ -534,6 +539,7 @@ function tennisMatches(tournament, providerKey) {
         neutralSite: true,
         broadcast:
           [...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []))].join(', ') || null,
+        broadcastNames: [...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []))],
         attendance: null,
         period: Number.isFinite(m.status?.period) ? m.status.period : null,
         displayClock: null,
@@ -579,6 +585,7 @@ function tennisTournament(t, providerKey) {
     venueRegion: null,
     neutralSite: true,
     broadcast: null,
+    broadcastNames: [],
     attendance: null,
     period: null,
     displayClock: null,

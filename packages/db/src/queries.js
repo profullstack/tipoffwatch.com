@@ -194,7 +194,10 @@ export async function upsertEvents(events) {
       broadcast_source =
         case when excluded.broadcast is not null then 'espn' else events.broadcast_source end,
       broadcast_country =
-        case when excluded.broadcast is not null then 'US' else events.broadcast_country end,
+        case when excluded.broadcast is not null then 'United States' else events.broadcast_country end,
+      broadcast_markets =
+        case when excluded.broadcast is not null
+             then excluded.broadcast_markets else events.broadcast_markets end,
       attendance = coalesce(excluded.attendance, events.attendance),
       period = excluded.period,
       display_clock = excluded.display_clock,
@@ -252,13 +255,18 @@ export async function fillMissingBroadcasts(rows) {
       broadcast = v.broadcast,
       broadcast_source = 'thesportsdb',
       broadcast_country = v.country,
+      broadcast_markets = v.markets::jsonb,
       updated_at = now()
     from (
       select * from unnest(
         ${pgArray(rows.map((r) => r.id))}::bigint[],
         ${pgArray(rows.map((r) => r.broadcast))}::text[],
-        ${pgArray(rows.map((r) => r.country ?? null))}::text[]
-      ) as t(id, broadcast, country)
+        ${pgArray(rows.map((r) => r.country ?? null))}::text[],
+        -- Serialised here rather than bound as an object: these go through the
+        -- same text[] unnest as everything else, and Bun's client flattens a JS
+        -- array with Array.prototype.toString rather than into a Postgres literal.
+        ${pgArray(rows.map((r) => JSON.stringify(r.markets ?? [])))}::text[]
+      ) as t(id, broadcast, country, markets)
     ) v
     where e.id = v.id and e.broadcast is null
     returning e.id
@@ -810,7 +818,9 @@ export async function updateEventScores(rows) {
       -- that upgrades a fallback listing to the real broadcaster.
       broadcast = coalesce(v.broadcast, e.broadcast),
       broadcast_source = case when v.broadcast is not null then 'espn' else e.broadcast_source end,
-      broadcast_country = case when v.broadcast is not null then 'US' else e.broadcast_country end,
+      broadcast_country = case when v.broadcast is not null then 'United States' else e.broadcast_country end,
+      broadcast_markets =
+        case when v.broadcast is not null then v.markets::jsonb else e.broadcast_markets end,
       updated_at = now()
     from (
       select * from unnest(
@@ -823,9 +833,10 @@ export async function updateEventScores(rows) {
         ${pgArray(rows.map((r) => r.period ?? null))}::int[],
         ${pgArray(rows.map((r) => r.display_clock ?? null))}::text[],
         ${pgArray(rows.map((r) => r.attendance ?? null))}::int[],
-        ${pgArray(rows.map((r) => r.broadcast ?? null))}::text[]
+        ${pgArray(rows.map((r) => r.broadcast ?? null))}::text[],
+        ${pgArray(rows.map((r) => (r.broadcast ? JSON.stringify(r.markets ?? []) : null)))}::text[]
       ) as t(provider, provider_key, state, status_detail, home_score, away_score,
-             period, display_clock, attendance, broadcast)
+             period, display_clock, attendance, broadcast, markets)
     ) v
     where e.provider = v.provider and e.provider_key = v.provider_key
     returning e.id

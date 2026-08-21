@@ -1423,3 +1423,84 @@ time.line {
   margin: 0 0.4rem;
   font-size: 0.9em;
 }
+
+/* ------------------------------------------------------------ where to watch -- */
+
+/* A fixture carried in several countries. Without scripting every market is listed
+   in full, which is longer but true; app.js collapses it to a tab strip once it can
+   tell which country the reader is in. Both states are styled here so the upgrade
+   is a class flip rather than a rebuild. */
+.markets {
+  margin: 1.5rem 0;
+}
+.market-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.market-name {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.15rem;
+  font-weight: 400;
+}
+.market-channels {
+  margin: 0;
+  font-family: var(--disp);
+  font-size: 1.4rem;
+  line-height: 1.2;
+}
+
+/* Tabbed: the country headings become the strip, so only the selected market's
+   channels are on screen. */
+.markets.is-tabbed .market-name {
+  display: none;
+}
+.markets.is-tabbed .market[hidden] {
+  display: none;
+}
+.market-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+}
+.market-tab {
+  appearance: none;
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  padding: 0.4rem 0.7rem;
+  margin-bottom: -1px;
+}
+.market-tab:hover {
+  color: var(--fg);
+}
+.market-tab[aria-selected='true'] {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--fg);
+}
+.markets.is-tabbed .market-list {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  margin-top: 0;
+  padding: 0.9rem 1rem;
+}
