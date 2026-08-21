@@ -426,10 +426,51 @@ export async function deletePlaylist(userId) {
   await sql`delete from user_playlists where user_id = ${userId}`;
 }
 
+/**
+ * Record a failure and back off.
+ *
+ * Exponential on the streak, capped at an hour. A provider that is down, or a line
+ * that has expired, must not be pulled for 800KB every five minutes -- that is both
+ * pointless and the sort of traffic that gets the account behind it noticed.
+ */
 export async function markPlaylistError({ userId, error }) {
   await sql`
-    update user_playlists set last_error = ${String(error).slice(0, 300)}, last_synced_at = now()
+    update user_playlists set
+      last_error = ${String(error).slice(0, 300)},
+      last_synced_at = now(),
+      error_streak = least(error_streak + 1, 8),
+      refresh_after = now() + (least(power(2, least(error_streak + 1, 6))::int, 60) || ' minutes')::interval
     where user_id = ${userId}
+  `;
+}
+
+/** A successful poll, whether or not the content had actually changed. */
+export async function markPlaylistFresh({ userId, contentHash, nextAt }) {
+  await sql`
+    update user_playlists set
+      last_synced_at = now(),
+      last_error = null,
+      error_streak = 0,
+      content_hash = ${contentHash},
+      refresh_after = ${nextAt}
+    where user_id = ${userId}
+  `;
+}
+
+/**
+ * Lists due for a poll.
+ *
+ * `refresh_after is null` covers a list added before this column existed and one
+ * added a moment ago, both of which should be picked up on the next tick. Ordered
+ * oldest-first so a backlog drains fairly rather than starving whoever sorts last.
+ */
+export async function playlistsDueForRefresh({ limit = 25 } = {}) {
+  return sql`
+    select user_id, source_url, label, content_hash
+    from user_playlists
+    where refresh_after is null or refresh_after <= now()
+    order by refresh_after nulls first, last_synced_at nulls first
+    limit ${Math.min(Math.max(Number(limit) || 25, 1), 200)}
   `;
 }
 

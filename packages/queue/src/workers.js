@@ -1,6 +1,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
+import { refreshDuePlaylists } from '@tipoff/playlists';
 import { syncAll, syncCatalogue, syncLiveScores, syncNear, syncPlays } from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
@@ -204,6 +205,11 @@ export function startWorkers({ concurrency = {} } = {}) {
 
     // Concurrency 1: these responses are large and the point is to stagger them.
     new Worker(QUEUES.plays, () => syncPlays(), { connection, concurrency: 1 }),
+
+    // Concurrency 1, and the poller itself is sequential inside. These are other
+    // people's subscriptions: several ~800KB pulls at once from one datacenter IP
+    // is the traffic pattern that gets a line cut off.
+    new Worker(QUEUES.playlists, () => refreshDuePlaylists(), { connection, concurrency: 1 }),
 
     new Worker(QUEUES.fanout, runFanout, {
       connection,

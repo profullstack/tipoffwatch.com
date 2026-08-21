@@ -27,6 +27,8 @@ export const QUEUES = {
   live: 'live-scores',
   /** Pulls play-by-play for games in progress. */
   plays: 'live-plays',
+  /** Re-fetches readers' own channel lists from their providers. */
+  playlists: 'playlist-refresh',
 };
 
 const defaults = {
@@ -51,7 +53,7 @@ export const queues = Object.fromEntries(
  * every boot makes the code the single source of truth for what is scheduled.
  */
 export async function installSchedules({ log = console.log } = {}) {
-  for (const q of [queues.scan, queues.sync, queues.live, queues.plays]) {
+  for (const q of [queues.scan, queues.sync, queues.live, queues.plays, queues.playlists]) {
     for (const r of await q.getRepeatableJobs()) await q.removeRepeatableByKey(r.key);
   }
 

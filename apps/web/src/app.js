@@ -3,13 +3,14 @@ import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
+import { importPlaylist, ownChannelsForEvent, refreshPlaylist } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import { oneChannelM3u } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { buildCalendar } from './lib/ics.js';
-import { importPlaylist, ownChannelsForEvent, refreshPlaylist } from './lib/playlist.js';
+
 import { buildFeed } from './lib/rss.js';
 import { Feeds } from './views/feeds.jsx';
 import {

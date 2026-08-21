@@ -10,8 +10,9 @@
   "dependencies": {
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
-    "@tipoff/sports": "workspace:*",
     "@tipoff/notify": "workspace:*",
+    "@tipoff/playlists": "workspace:*",
+    "@tipoff/sports": "workspace:*",
     "bullmq": "^5.63.0",
     "ioredis": "^5.9.0"
   }
