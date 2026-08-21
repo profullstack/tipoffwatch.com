@@ -1,7 +1,7 @@
 import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
-import { channelsForFixture, MAX_CHANNELS, normaliseTeam, parseM3u } from '@tipoff/sports';
+import { MAX_CHANNELS, normaliseTeam, parseM3u, rankChannelsForFixture } from '@tipoff/sports';
 
 /**
  * Importing and reading a reader's own channel list.
@@ -95,27 +95,43 @@ export async function refreshPlaylist(userId) {
  * have established that the requester owns them.
  */
 export async function ownChannelsForEvent({ userId, event }) {
-  const none = { hasList: false, channelCount: 0, matches: [] };
+  const none = { hasList: false, channelCount: 0, matches: [], competition: [] };
   if (!config.playlists.enabled || !userId) return none;
 
   const rows = await q.playlistChannels(userId);
   if (rows.length === 0) return none;
 
-  const matches = channelsForFixture(
+  const ranked = rankChannelsForFixture(
     rows.map((r) => ({ title: r.title, url: r.stream_url })),
-    { home: event.home_name, away: event.away_name },
+    {
+      home: event.home_name,
+      away: event.away_name,
+      // Carried so a race, a fight card or a tournament -- which have no two sides
+      // and so could never match on teams -- have something to match on.
+      eventName: event.name,
+      leagueName: event.league_name,
+      leagueAbbr: event.league_abbr,
+    },
   );
+  const matches = [...ranked.certain, ...ranked.likely];
 
   // The count comes back even when nothing matched, and that is the point. Showing
   // nothing at all is indistinguishable from the feature being broken -- which is
   // exactly how it read when a list was added and no game ever lit up. "None of
   // your 7,059 channels look like they have this" is an answer; silence is not.
+  const unseal = (list) =>
+    list
+      .map((m) => ({ title: m.title, url: open(m.url) }))
+      .filter((m) => m.url)
+      .slice(0, 10);
+
   return {
     hasList: true,
     channelCount: rows.length,
-    matches: matches
-      .map((m) => ({ title: m.title, url: open(m.url) }))
-      .filter((m) => m.url)
-      .slice(0, 10),
+    matches: unseal(matches),
+    // Channels for the SERIES rather than this fixture -- a 24/7 "F1 TV" carries
+    // whatever Formula 1 is on. Shown separately so the page never claims more
+    // than it knows.
+    competition: unseal(ranked.competition),
   };
 }

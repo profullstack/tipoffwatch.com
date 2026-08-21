@@ -509,13 +509,17 @@ app.get('/events/:id/playlist.m3u', async (c) => {
   const event = await q.getEvent(Number(c.req.param('id')));
   if (!event) return c.notFound();
 
-  const { matches } = await ownChannelsForEvent({ userId: user.id, event });
-  if (matches.length === 0) return c.redirect(`/events/${event.id}`, 303);
+  const { matches, competition } = await ownChannelsForEvent({ userId: user.id, event });
 
-  // The first match, which channelsForFixture has already ranked most-specific
-  // first, unless the reader asked for a particular one by index.
-  const wanted = Number(c.req.query('n') ?? 0);
-  const pick = matches[Number.isInteger(wanted) && matches[wanted] ? wanted : 0];
+  // `series` picks from the competition tier, `n` from the fixture matches. Two
+  // parameters rather than one index across a concatenated list, so adding a match
+  // cannot silently shift which channel an existing link points at.
+  const seriesIdx = c.req.query('series');
+  const list = seriesIdx === undefined ? matches : competition;
+  const wanted = Number(seriesIdx ?? c.req.query('n') ?? 0);
+  if (list.length === 0) return c.redirect(`/events/${event.id}`, 303);
+
+  const pick = list[Number.isInteger(wanted) && list[wanted] ? wanted : 0];
 
   c.header('content-type', 'audio/x-mpegurl; charset=utf-8');
   c.header('content-disposition', `attachment; filename="${event.short_name ?? 'game'}.m3u"`);

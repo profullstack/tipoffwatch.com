@@ -773,6 +773,7 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
 export async function getEvent(eventId) {
   const [row] = await sql`
     select e.*, l.name as league_name, l.slug as league_slug, l.sport,
+           l.abbreviation as league_abbr,
            ht.display_name as home_name, ht.logo_url as home_logo, ht.slug as home_slug,
            at.display_name as away_name, at.logo_url as away_logo, at.slug as away_slug
     from events e

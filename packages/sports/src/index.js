@@ -14,6 +14,7 @@ export {
   MAX_CHANNELS,
   oneChannelM3u,
   parseM3u,
+  rankChannelsForFixture,
 } from './m3u.js';
 export { normaliseTeam } from './sportsdb.js';
 

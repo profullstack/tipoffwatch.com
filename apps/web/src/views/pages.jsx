@@ -745,10 +745,13 @@ export const EventPage = ({
           <h2>On your line</h2>
           {ownChannels.matches.length === 0 ? (
             <p class="muted">
-              None of your {ownChannels.channelCount.toLocaleString('en-US')} channels look like
-              they are carrying this game. That usually means your provider does not have it
-              {event.broadcast ? `, which is on ${event.broadcast}` : ''}
-              {event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.
+              None of your {ownChannels.channelCount.toLocaleString('en-US')} channels name this
+              fixture
+              {ownChannels.competition?.length
+                ? '.'
+                : `. That usually means your provider does not have it${
+                    event.broadcast ? `, which is on ${event.broadcast}` : ''
+                  }${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`}
             </p>
           ) : (
             <>
@@ -771,6 +774,36 @@ export const EventPage = ({
               </ul>
             </>
           )}
+
+          {/* Channels for the SERIES rather than this fixture. A 24/7 "F1 TV"
+              carries whatever Formula 1 is on, which is the right answer for a
+              race -- and a different claim from "this channel has your game", so
+              it is worded as one. This is the whole reason a race matched nothing
+              before: it has no two sides, so there was never anything to match. */}
+          {ownChannels.competition?.length ? (
+            <>
+              <p class="muted small">
+                {ownChannels.matches.length ? 'You also have ' : 'You have '}
+                {ownChannels.competition.length}
+                {ownChannels.competition.length === 1 ? ' channel' : ' channels'} for{' '}
+                {event.league_name ?? 'this competition'}. One of these usually carries whatever is
+                on right now.
+              </p>
+              <ul class="own-channels">
+                {ownChannels.competition.map((ch, i) => (
+                  <li>
+                    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
+                    <a
+                      class="ghost small-btn"
+                      href={`/events/${event.id}/playlist.m3u?series=${i}`}
+                    >
+                      Open in your player
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </section>
       ) : null}
 

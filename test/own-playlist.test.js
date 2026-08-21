@@ -6,8 +6,10 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import {
   channelMatchesFixture,
   channelsForFixture,
+  isPlaceholder,
   oneChannelM3u,
   parseM3u,
+  rankChannelsForFixture,
 } from '../packages/sports/src/m3u.js';
 
 process.env.PLAYLIST_SECRET = 'test-secret-for-sealing-values';
@@ -262,5 +264,85 @@ describe('a list that matches nothing still says so', () => {
     expect(channelsForFixture(channels, { home: 'Collingwood', away: 'Brisbane Lions' })).toEqual(
       [],
     );
+  });
+});
+
+describe('matching what a provider actually writes', () => {
+  // Real titles from the 7,059-entry list, verified 2026-08-21.
+  const real = [
+    { title: 'NFL 01: 8PM Las Vegas Raiders  vs  Houston Texans', url: 'nfl1' },
+    { title: 'DAZN UK | Event 7: 8PM Raiders @ Texans', url: 'dazn' },
+    {
+      title: 'US (ESPN+ 021) | Soccer: Betis vs. R. Sociedad (2026-08-21 14:50:00)',
+      url: 'laliga',
+    },
+    { title: 'NCAAF06: UConn vs. Syracuse', url: 'cfb' },
+    { title: 'F1: F1 TV FHD', url: 'f1tv' },
+    { title: 'F1: BLANK', url: 'f1blank' },
+    { title: 'NFL 03:', url: 'nflempty' },
+  ];
+
+  test('a provider abbreviating a name is still a match', () => {
+    // The gap that made this feature look broken: ours are "Real Betis" and "Real
+    // Sociedad", the provider writes "Betis vs. R. Sociedad", and whole-name
+    // matching found nothing.
+    const r = rankChannelsForFixture(real, { home: 'Real Sociedad', away: 'Real Betis' });
+    expect([...r.certain, ...r.likely].map((c) => c.url)).toContain('laliga');
+  });
+
+  test('a mascot we store but the provider omits is still a match', () => {
+    const r = rankChannelsForFixture(real, { home: 'Syracuse Orange', away: 'UConn Huskies' });
+    expect([...r.certain, ...r.likely].map((c) => c.url)).toContain('cfb');
+  });
+
+  test('a full-name match still outranks a partial one', () => {
+    const r = rankChannelsForFixture(real, { home: 'Houston Texans', away: 'Las Vegas Raiders' });
+    expect(r.certain.map((c) => c.url)).toEqual(['nfl1']);
+    expect(r.likely.map((c) => c.url)).toContain('dazn');
+  });
+
+  test('a race matches on its own name, having no two sides at all', () => {
+    // This is the shape that could never match: home and away are null, so the
+    // old test returned false before looking at anything.
+    const r = rankChannelsForFixture(
+      [{ title: 'Sky Sports F1: Dutch Grand Prix, Zandvoort', url: 'dutch' }],
+      { eventName: 'Heineken Dutch Grand Prix', leagueName: 'Formula 1', leagueAbbr: 'F1' },
+    );
+    expect(r.certain.map((c) => c.url)).toEqual(['dutch']);
+  });
+
+  test('a series channel is offered separately, not as the fixture', () => {
+    const r = rankChannelsForFixture(real, {
+      eventName: 'Heineken Dutch Grand Prix',
+      leagueName: 'Formula 1',
+      leagueAbbr: 'F1',
+    });
+    // "F1 TV" carries whatever F1 is on. Useful, but not a claim about this race.
+    expect(r.certain).toEqual([]);
+    expect(r.competition.map((c) => c.url)).toContain('f1tv');
+  });
+
+  test('one shared word cannot satisfy both sides', () => {
+    // "Iowa" alone must not make Iowa and Iowa State the same team, and
+    // "Manchester" must not settle a derby.
+    const r = rankChannelsForFixture([{ title: 'Manchester City vs Arsenal', url: 'derby' }], {
+      home: 'Arsenal',
+      away: 'Manchester United',
+    });
+    expect(r.certain).toEqual([]);
+    expect(r.likely).toEqual([]);
+  });
+
+  test('parked slots are never offered', () => {
+    expect(isPlaceholder('NFL 03:')).toBe(true);
+    expect(isPlaceholder('F1: BLANK')).toBe(true);
+    expect(isPlaceholder('F1: F1 TV FHD')).toBe(false);
+    const r = rankChannelsForFixture(real, { leagueName: 'Formula 1', leagueAbbr: 'F1' });
+    expect(r.competition.map((c) => c.url)).not.toContain('f1blank');
+  });
+
+  test('the AFL fixture still finds nothing, on the looser rules too', () => {
+    const r = rankChannelsForFixture(real, { home: 'Collingwood', away: 'Brisbane Lions' });
+    expect([...r.certain, ...r.likely]).toEqual([]);
   });
 });
