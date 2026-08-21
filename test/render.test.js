@@ -93,9 +93,15 @@ test('every page carries the crawlproof tracker', async () => {
   );
 
   expect(layout).toContain('https://crawlproof.com/stats.js');
-  expect(layout).toContain('6b0f55e8-5760-430e-a988-ee04b7519d11');
+  /*
+   * And NO literal id. This assertion replaces one that pinned the id here,
+   * which is how a sibling site cloned from this repo spent its first day
+   * counting its own visitors against this dashboard: the value came across
+   * with the code, this test agreed with it, and nothing looked wrong.
+   */
+  expect(layout).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
   // async, or it blocks first paint on a third-party host.
-  expect(/crawlproof\.com\/stats\.js"\s*\n?\s*async/.test(layout)).toBe(true);
+  expect(/crawlproof\.com\/stats\.js"\s*\n?\s*data-site[\s\S]{0,80}async/.test(layout)).toBe(true);
 });
 
 /**

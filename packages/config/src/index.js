@@ -273,6 +273,31 @@ export const config = {
     onBoot: bool('SYNC_ON_BOOT', false),
   },
 
+  /**
+   * Analytics, if this deployment has any.
+   *
+   * No default, deliberately. This id used to be hardcoded in the layout, and it
+   * travelled -- a sibling site cloned from this repository spent its first day
+   * counting every one of its own visitors against THIS dashboard. Nothing looked
+   * wrong from either end: the tag was valid, the script loaded, views were
+   * recorded. They were simply recorded here.
+   *
+   * The id is not a secret; it is served in the HTML to every visitor. It lives
+   * in configuration because it identifies the DEPLOYMENT rather than the code.
+   *
+   * Read on use rather than snapshotted at import, like the playlist secret: a
+   * value frozen when the module first loads cannot be changed afterwards, which
+   * makes it untestable.
+   */
+  analytics: {
+    get crawlproofSite() {
+      return opt('CRAWLPROOF_SITE_ID');
+    },
+    get enabled() {
+      return Boolean(this.crawlproofSite);
+    },
+  },
+
   cache: {
     /** Schedule pages are identical for every visitor, so they are rendered once and
      *  served from Redis. Personalisation is layered client-side. */

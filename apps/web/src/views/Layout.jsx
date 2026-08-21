@@ -71,15 +71,26 @@ export const Layout = (props) => (
       <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
       <meta name="twitter:card" content="summary" />
 
-      {/* Crawlproof analytics. In the head with `async` so a page view is counted
-          even if the reader leaves before the rest of the document finishes, and
-          `async` so it never delays first paint. Every page goes through this
-          layout, which is the point -- there is no second place to forget it. */}
-      <script
-        data-site="6b0f55e8-5760-430e-a988-ee04b7519d11"
-        src="https://crawlproof.com/stats.js"
-        async
-      />
+      {/*
+        Traffic counting, when a site id is configured.
+
+        In the head with `async`: a view should be counted even if the reader
+        leaves before the document finishes, and async means it never delays
+        first paint. Every page renders through this layout, which is the point --
+        there is no second place to forget it.
+
+        The id comes from configuration and has NO default. It was hardcoded
+        here, and it travelled: a sibling site cloned from this repo spent its
+        first day counting its own visitors against this dashboard, with a test
+        pinning the value so the mistake looked deliberate.
+      */}
+      {config.analytics.enabled ? (
+        <script
+          src="https://crawlproof.com/stats.js"
+          data-site={config.analytics.crawlproofSite}
+          async
+        />
+      ) : null}
     </head>
     {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens

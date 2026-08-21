@@ -1491,7 +1491,7 @@ time.line {
 .market-tab:hover {
   color: var(--fg);
 }
-.market-tab[aria-selected='true'] {
+.market-tab[aria-selected="true"] {
   background: var(--panel);
   border-color: var(--line);
   color: var(--fg);
