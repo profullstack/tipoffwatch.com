@@ -317,6 +317,9 @@ export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
   </Layout>
 );
 
+/** Whether a play carries the running score, which only some sports attach. */
+const hasScore = (p) => p.away_score != null && p.home_score != null;
+
 /** One side of the scoreboard. */
 /**
  * One side of the scoreboard.
@@ -500,12 +503,20 @@ export const EventPage = ({
             <ul class="plays scoring">
               {scoringPlays.map((p) => (
                 <li>
-                  <span class="play-when num">
-                    {p.away_score}–{p.home_score}
-                  </span>
+                  {/* Not every sport attaches a running score to the play. Soccer
+                      states it in the sentence and leaves the columns null, which
+                      renders as a lone dash where a score should be -- so those fall
+                      back to showing when it happened. */}
+                  {hasScore(p) ? (
+                    <span class="play-when num">
+                      {p.away_score}–{p.home_score}
+                    </span>
+                  ) : (
+                    <span class="play-when">{p.period_label ?? ''}</span>
+                  )}
                   <span class="play-text">
                     {p.text}
-                    <span class="meta"> {p.period_label}</span>
+                    {hasScore(p) ? <span class="meta"> {p.period_label}</span> : null}
                   </span>
                 </li>
               ))}

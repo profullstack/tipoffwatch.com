@@ -170,6 +170,98 @@ export async function fetchTeams(providerKey) {
     }));
 }
 
+/** 1 -> "1st". Only used when the provider ships no period label of its own. */
+const ordinal = (n) => {
+  if (!Number.isFinite(n)) return null;
+  const teens = n % 100;
+  if (teens >= 11 && teens <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+};
+
+/**
+ * One provider play -> our row shape, or null if it is not usable.
+ *
+ * Every sport's play object carries the same core fields (`id`, `text`,
+ * `scoringPlay`, `period`), which is what makes one mapper enough for the three
+ * different containers below.
+ */
+const normalisePlay = (p, { sequence = null } = {}) => {
+  if (!p?.id || !p?.text) return null;
+
+  // Checked for absence before conversion, because Number(null) is 0 -- which would
+  // file every unsequenced play at the top of the log rather than leaving it
+  // unordered for the id to break.
+  const rawSeq = p.sequenceNumber ?? sequence;
+  const seq =
+    rawSeq === null || rawSeq === undefined || rawSeq === '' ? Number.NaN : Number(rawSeq);
+  const periodNumber = Number.isFinite(p.period?.number) ? p.period.number : null;
+
+  // Baseball labels its own periods ("1st Inning") and we use that verbatim.
+  // Football ships no label at all -- just a number and a game clock, and expects
+  // the caller to phrase it -- so without this fallback every NFL play would render
+  // with an empty "when" column.
+  const label =
+    p.period?.displayValue ??
+    [p.clock?.displayValue || null, ordinal(periodNumber)].filter(Boolean).join(' · ');
+
+  return {
+    providerPlayId: String(p.id),
+    sequence: Number.isFinite(seq) ? seq : null,
+    text: String(p.text),
+    awayScore: Number.isFinite(p.awayScore) ? p.awayScore : null,
+    homeScore: Number.isFinite(p.homeScore) ? p.homeScore : null,
+    scoring: Boolean(p.scoringPlay),
+    periodNumber,
+    periodLabel: label || null,
+    playType: p.type?.text ?? null,
+  };
+};
+
+/**
+ * Pull the play list out of a summary, whichever way this sport happens to ship it.
+ *
+ * There is no single field, and reading only the flat one is why football and soccer
+ * fixtures carried no action log at all: the request succeeded and the array was
+ * simply absent, which the empty-is-normal path upstream reads as "no plays yet".
+ *
+ *   - `plays`      baseball, basketball -- flat and already ordered
+ *   - `drives`     football -- nested one level under the current and previous drives
+ *   - `commentary` soccer -- each entry wraps a play and carries the sequence that
+ *                  the play itself lacks; `keyEvents` is the same feed minus the
+ *                  filler, and covers matches with no commentary
+ *
+ * All four are read on every call rather than switched on the sport: the sport is not
+ * in scope here, and a league shipping two of them should yield both. Ids repeated
+ * across shapes -- every soccer keyEvent also appears in commentary -- collapse to
+ * one row, which is also what the unique index downstream expects.
+ */
+export function playsFromSummary(data) {
+  const seen = new Map();
+  const add = (play, opts) => {
+    const row = normalisePlay(play, opts);
+    if (row && !seen.has(row.providerPlayId)) seen.set(row.providerPlayId, row);
+  };
+
+  for (const p of data.plays ?? []) add(p);
+
+  // `drives.current` is one drive and `drives.previous` a list -- and a finished game
+  // drops `current` altogether, so neither key can be assumed to be there.
+  const drives = data.drives;
+  const driveList = Array.isArray(drives)
+    ? drives
+    : [drives?.current, ...(drives?.previous ?? [])].filter(Boolean);
+  for (const drive of driveList) {
+    for (const p of drive?.plays ?? []) add(p);
+  }
+
+  // Commentary holds the ordering: the play it wraps has an id but no
+  // sequenceNumber, so reading keyEvents alone comes back with nothing to sort on.
+  for (const entry of data.commentary ?? []) add(entry?.play, { sequence: entry?.sequence });
+  for (const p of data.keyEvents ?? []) add(p);
+
+  return [...seen.values()];
+}
+
 /**
  * Play-by-play for one fixture.
  *
@@ -194,19 +286,7 @@ export async function fetchPlays(providerKey, eventProviderKey) {
     return [];
   }
 
-  return (data.plays ?? [])
-    .filter((p) => p?.id && p?.text)
-    .map((p) => ({
-      providerPlayId: String(p.id),
-      sequence: Number.isFinite(Number(p.sequenceNumber)) ? Number(p.sequenceNumber) : null,
-      text: String(p.text),
-      awayScore: Number.isFinite(p.awayScore) ? p.awayScore : null,
-      homeScore: Number.isFinite(p.homeScore) ? p.homeScore : null,
-      scoring: Boolean(p.scoringPlay),
-      periodNumber: Number.isFinite(p.period?.number) ? p.period.number : null,
-      periodLabel: p.period?.displayValue ?? null,
-      playType: p.type?.text ?? null,
-    }));
+  return playsFromSummary(data);
 }
 
 /** ESPN's status states are already pre/in/post; anything unknown is treated as pre. */

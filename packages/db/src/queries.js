@@ -829,20 +829,37 @@ export async function leaguesWithUpcoming(limit = 400) {
 /* --------------------------------------------------------------- plays --- */
 
 /**
- * Live events whose play log is due a refresh.
+ * Events whose play log is due a refresh.
  *
- * A summary response is ~500KB, so this is deliberately narrow and spaced: only
- * games actually in progress, oldest-refreshed first, and capped. Re-reading every
- * live game every minute would cost more bandwidth than the rest of the app
- * combined -- and all of it metered, since these go through the proxy.
+ * A summary response is ~500KB, so this is deliberately narrow and spaced: games
+ * actually in progress, oldest-refreshed first, and capped. Re-reading every live
+ * game every minute would cost more bandwidth than the rest of the app combined --
+ * and all of it metered, since these go through the proxy.
+ *
+ * Plus one last read after the whistle. Scoping this to `in` alone lost the end of
+ * every game: the poll runs every two minutes, the final score and the flip to
+ * `post` arrive on the one-minute score tick, and the event stops matching before
+ * the last drive is ever fetched -- so the recap on a finished game ended somewhere
+ * short of the finish. The score tick stamps `updated_at`, so a play log older than
+ * it means the game moved since we last read it; after that single catch-up read
+ * nothing touches the row again and it stops matching on its own. The 12-hour
+ * window keeps a backfill or a re-stated old fixture from dragging in a season's
+ * worth of summaries at 500KB each.
  */
 export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10 } = {}) {
   return sql`
     select e.id, e.provider_key, l.provider_key as league_key, l.provider
     from events e
     join leagues l on l.id = e.league_id
-    where e.state = 'in'
-      and (e.plays_synced_at is null or e.plays_synced_at < now() - (${staleSeconds} * interval '1 second'))
+    where (
+        (e.state = 'in'
+          and (e.plays_synced_at is null
+               or e.plays_synced_at < now() - (${staleSeconds} * interval '1 second')))
+        or
+        (e.state = 'post'
+          and e.starts_at > now() - interval '12 hours'
+          and (e.plays_synced_at is null or e.plays_synced_at < e.updated_at))
+      )
     order by e.plays_synced_at asc nulls first
     limit ${limit}
   `;

@@ -429,3 +429,114 @@ describe('fixture ↔ team re-linking', () => {
     expect(row.home_team_id).toBe(t.id);
   });
 });
+
+/**
+ * Which fixtures the play poller picks up.
+ *
+ * Scoped to live games alone, this lost the end of every match: the poll runs every
+ * two minutes, the final score and the flip to `post` land on the one-minute score
+ * tick, and the event stopped matching before the last drive was ever fetched. The
+ * predicate below is the one in eventsNeedingPlays -- the guard at the bottom of
+ * this block fails if the two drift apart.
+ */
+describe('play log selection', () => {
+  const DUE = `
+    select e.id from events e
+    where (
+        (e.state = 'in'
+          and (e.plays_synced_at is null
+               or e.plays_synced_at < now() - ($1 * interval '1 second')))
+        or
+        (e.state = 'post'
+          and e.starts_at > now() - interval '12 hours'
+          and (e.plays_synced_at is null or e.plays_synced_at < e.updated_at))
+      )`;
+
+  let league;
+  beforeAll(async () => {
+    league = await one(
+      `insert into leagues (provider, provider_key, sport, slug, name)
+       values ('espn','football/nflp','football','football-nflp','NFL P') returning id`,
+    );
+  });
+
+  /** One fixture, positioned in time and in sync state exactly as described. */
+  const mk = async ({ key, state, startsHoursAgo, syncedSecondsAgo, updatedSecondsAgo = 3600 }) =>
+    (
+      await one(
+        `insert into events (provider, provider_key, league_id, starts_at, name, state,
+                             plays_synced_at, updated_at)
+         values ('espn',$1,$2, now() - ($3 * interval '1 hour'),'G',$4,
+                 case when $5::int is null then null else now() - ($5 * interval '1 second') end,
+                 now() - ($6 * interval '1 second'))
+         returning id`,
+        [key, league.id, startsHoursAgo, state, syncedSecondsAgo, updatedSecondsAgo],
+      )
+    ).id;
+
+  const due = async () => (await db.query(DUE, [120])).rows.map((r) => r.id);
+
+  test('a live game is picked up once its log goes stale, and not before', async () => {
+    const fresh = await mk({ key: 'a1', state: 'in', startsHoursAgo: 1, syncedSecondsAgo: 30 });
+    const stale = await mk({ key: 'a2', state: 'in', startsHoursAgo: 1, syncedSecondsAgo: 300 });
+    const never = await mk({ key: 'a3', state: 'in', startsHoursAgo: 1, syncedSecondsAgo: null });
+
+    const ids = await due();
+    expect(ids).not.toContain(fresh);
+    expect(ids).toContain(stale);
+    expect(ids).toContain(never);
+  });
+
+  test('a game that just ended gets one more read, then stops matching', async () => {
+    // The score tick stamped updated_at when it wrote the final score, and that is
+    // newer than our last play read -- so the last drive is still owed.
+    const ended = await mk({
+      key: 'b1',
+      state: 'post',
+      startsHoursAgo: 3,
+      syncedSecondsAgo: 300,
+      updatedSecondsAgo: 60,
+    });
+    expect(await due()).toContain(ended);
+
+    // markPlaysSynced touches plays_synced_at and nothing else -- there is no
+    // updated_at trigger on events -- so the catch-up read does not re-arm itself.
+    await db.query(`update events set plays_synced_at = now() where id = $1`, [ended]);
+    expect(await due()).not.toContain(ended);
+  });
+
+  test('a game finished long ago is not re-read', async () => {
+    // Without the window, a backfill that restates old fixtures would pull a whole
+    // season of 500KB summaries through a metered proxy.
+    const old = await mk({
+      key: 'b2',
+      state: 'post',
+      startsHoursAgo: 30,
+      syncedSecondsAgo: null,
+      updatedSecondsAgo: 60,
+    });
+    expect(await due()).not.toContain(old);
+  });
+
+  test('a fixture that has not started is never fetched', async () => {
+    const upcoming = await mk({
+      key: 'c1',
+      state: 'pre',
+      startsHoursAgo: -2,
+      syncedSecondsAgo: null,
+    });
+    expect(await due()).not.toContain(upcoming);
+  });
+
+  test('the predicate under test is still the one the query uses', async () => {
+    const src = await Bun.file(
+      new URL('../packages/db/src/queries.js', import.meta.url).pathname,
+    ).text();
+    const normalise = (s) =>
+      s
+        .replace(/\$\d+|\$\{[^}]+\}/g, '?')
+        .replace(/\s+/g, ' ')
+        .trim();
+    expect(normalise(src)).toContain(normalise(DUE.slice(DUE.indexOf('where'))));
+  });
+});

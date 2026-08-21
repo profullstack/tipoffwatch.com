@@ -320,3 +320,133 @@ describe('provider transport', () => {
     expect(teams.length).toBe(32);
   }, 45000);
 });
+
+/**
+ * Play-by-play arrives in three different containers depending on the sport, and
+ * reading only the flat one is why every football and soccer fixture rendered with
+ * no action log at all: the summary fetch succeeded, `plays` was simply absent, and
+ * an empty result is indistinguishable from a game that has not kicked off.
+ */
+describe('play log shapes', () => {
+  test('football plays are nested under drives, not a top-level array', () => {
+    const summary = {
+      drives: {
+        current: {
+          plays: [{ id: '1', sequenceNumber: '15100', text: 'K.Black left tackle for 5 yards' }],
+        },
+        previous: [
+          {
+            plays: [
+              {
+                id: '2',
+                sequenceNumber: '10200',
+                text: 'CJ Donaldson 1 Yd Run',
+                scoringPlay: true,
+                awayScore: 0,
+                homeScore: 7,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const plays = espn.playsFromSummary(summary);
+    expect(plays.length).toBe(2);
+    expect(plays.map((p) => p.providerPlayId)).toEqual(['1', '2']);
+    expect(plays[1].scoring).toBe(true);
+    expect(plays[1].homeScore).toBe(7);
+  });
+
+  test('a finished football game drops `current` entirely', () => {
+    // Reaching into drives.current unconditionally throws here, which would break
+    // the sync on exactly the games whose recap is worth keeping.
+    const plays = espn.playsFromSummary({
+      drives: { previous: [{ plays: [{ id: '9', text: 'End of game' }] }] },
+    });
+    expect(plays.map((p) => p.text)).toEqual(['End of game']);
+  });
+
+  test('a drives array is read the same as a drives object', () => {
+    const plays = espn.playsFromSummary({ drives: [{ plays: [{ id: '3', text: 'Punt' }] }] });
+    expect(plays.length).toBe(1);
+  });
+
+  test('soccer takes its ordering from commentary, which wraps the play', () => {
+    const summary = {
+      commentary: [
+        { sequence: 0, play: { id: '100', text: 'First Half begins.' } },
+        { sequence: 5, play: { id: '101', text: 'Foul by Agustin Resch.' } },
+      ],
+      // Every keyEvent also appears in commentary; the ids have to collapse to one
+      // row or the unique index downstream rejects the batch.
+      keyEvents: [{ id: '101', text: 'Foul by Agustin Resch.', scoringPlay: false }],
+    };
+
+    const plays = espn.playsFromSummary(summary);
+    expect(plays.length).toBe(2);
+    expect(plays.map((p) => p.sequence)).toEqual([0, 5]);
+  });
+
+  test('a keyEvent with no commentary is still kept', () => {
+    const plays = espn.playsFromSummary({
+      keyEvents: [{ id: '70', text: 'Goal! Houston Dynamo FC 1.', scoringPlay: true }],
+    });
+    expect(plays.length).toBe(1);
+    expect(plays[0].scoring).toBe(true);
+    expect(plays[0].sequence).toBe(null);
+  });
+
+  test('flat plays still work, and keep the label the provider wrote', () => {
+    const plays = espn.playsFromSummary({
+      plays: [
+        {
+          id: '5',
+          sequenceNumber: '4',
+          text: 'Pitch 3 : Ball 1',
+          period: { number: 1, displayValue: '1st Inning' },
+        },
+      ],
+    });
+    expect(plays[0].periodLabel).toBe('1st Inning');
+  });
+
+  test('a period with no label of its own is phrased from clock and number', () => {
+    // Football ships period.number and a clock and no displayValue at all, so with
+    // no fallback the "when" column on every NFL play renders blank.
+    const [play] = espn.playsFromSummary({
+      drives: {
+        previous: [
+          {
+            plays: [
+              { id: '1', text: 'Kickoff', period: { number: 1 }, clock: { displayValue: '13:43' } },
+            ],
+          },
+        ],
+      },
+    });
+    expect(play.periodLabel).toBe('13:43 · 1st');
+    expect(play.periodNumber).toBe(1);
+  });
+
+  test('plays with no id or no text are dropped rather than stored blank', () => {
+    const plays = espn.playsFromSummary({
+      plays: [{ id: '1' }, { text: 'orphan' }, null, { id: '2', text: 'ok' }],
+    });
+    expect(plays.map((p) => p.providerPlayId)).toEqual(['2']);
+  });
+
+  test('a summary with none of the three shapes is empty, not a throw', () => {
+    expect(espn.playsFromSummary({})).toEqual([]);
+  });
+
+  test('a real finished football game yields a full play log', async () => {
+    // Completed, so the response is stable -- and it is the exact case that returned
+    // zero plays until drives were read.
+    const plays = await espn.fetchPlays('football/college-football', 'football/cfb/401752677');
+    expect(plays.length).toBeGreaterThan(100);
+    expect(plays.some((p) => p.scoring)).toBe(true);
+    expect(new Set(plays.map((p) => p.providerPlayId)).size).toBe(plays.length);
+    for (const p of plays) expect(typeof p.text).toBe('string');
+  }, 45000);
+});
