@@ -77,7 +77,10 @@ h2 {
 main {
   max-width: 74rem;
   margin: 0 auto;
-  padding: 1.5rem 1.15rem 4rem;
+  /* Side insets matter in landscape, where viewport-fit=cover puts the notch
+     beside the content rather than above it. */
+  padding: 1.5rem max(1.15rem, env(safe-area-inset-right, 0px)) 4rem
+    max(1.15rem, env(safe-area-inset-left, 0px));
 }
 
 .skip {
@@ -101,7 +104,16 @@ main {
   gap: 1rem;
   /* Tight vertical padding: the logo sets the bar's height now, and stacking the
      old padding on top of it made the header taller than it needed to be. */
-  padding: 0.35rem 1.15rem;
+  /* The safe-area insets are not cosmetic here. The document declares
+     viewport-fit=cover and black-translucent, so an installed home-screen app
+     starts painting at y=0 -- underneath the status bar and the Dynamic Island.
+     iOS claims that strip for itself and swallows every tap inside it, which put
+     the nav links (y 29-71) in a band where nothing could be pressed while the
+     taller logo poked out below and still worked. Padding the bar down by the
+     inset moves the links out from under the system chrome. */
+  padding: calc(0.35rem + env(safe-area-inset-top, 0px))
+    max(1.15rem, env(safe-area-inset-right, 0px)) 0.35rem
+    max(1.15rem, env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--line);
   background: linear-gradient(oklch(0.19 0.014 260), var(--ground));
   position: sticky;
@@ -146,6 +158,13 @@ main {
 .topbar nav a {
   color: var(--muted);
   font-size: 0.95rem;
+  /* A 23px-tall link is under every tap-target minimum going. Grown with
+     min-height rather than padding so the nav's gap keeps setting the horizontal
+     rhythm, and so the bar itself does not get taller -- the 76px logo is still
+     what sets its height. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 .topbar nav a:hover,
 .topbar nav a[aria-current] {
@@ -648,7 +667,10 @@ ul.passkeys .muted {
 
 footer {
   border-top: 1px solid var(--line);
-  padding: 1.5rem 1.15rem;
+  /* The bottom inset clears the home indicator, which otherwise sits over the
+     footer links for the same reason the status bar sat over the nav. */
+  padding: 1.5rem max(1.15rem, env(safe-area-inset-right, 0px))
+    calc(1.5rem + env(safe-area-inset-bottom, 0px)) max(1.15rem, env(safe-area-inset-left, 0px));
   color: var(--muted);
   font-size: 0.82rem;
   text-align: center;
@@ -690,7 +712,9 @@ footer {
     justify-self: end;
   }
   .topbar {
-    padding: 0.75rem 0.9rem;
+    padding: calc(0.75rem + env(safe-area-inset-top, 0px))
+      max(0.9rem, env(safe-area-inset-right, 0px)) 0.75rem
+      max(0.9rem, env(safe-area-inset-left, 0px));
   }
   .topbar nav {
     gap: 0.9rem;
