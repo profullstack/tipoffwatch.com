@@ -10,6 +10,20 @@ import { Layout } from './Layout.jsx';
  * so this is the one place that decides what "no markets" looks like, rather than
  * three call sites each guessing differently.
  */
+/**
+ * What to sign a comment with.
+ *
+ * Order matters and is the whole point: a chosen display name, then the handle,
+ * and only then the local part of an email address. That last one used to be the
+ * ONLY option, so every public comment was signed with a fragment of the author's
+ * address -- something they never chose to publish. It survives as a fallback for
+ * accounts that have not picked a handle, and nothing beyond the local part is
+ * ever rendered.
+ */
+function commenterName(c) {
+  return c.display_name || (c.handle ? `@${c.handle}` : String(c.email ?? '?').split('@')[0]);
+}
+
 function marketsOf(event) {
   const raw = event?.broadcast_markets;
   if (!raw) return [];
@@ -705,14 +719,25 @@ export const EventPage = ({
             {comments.map((c) => (
               <li>
                 <span class="avatar" aria-hidden="true">
-                  {String(c.email ?? '?')
-                    .slice(0, 1)
-                    .toUpperCase()}
+                  {commenterName(c).slice(0, 1).toUpperCase()}
                 </span>
                 <div class="comment-main">
                   <div class="comment-head">
-                    {/* Local part only: the full address is nobody else's business. */}
-                    <strong>{String(c.email ?? '').split('@')[0]}</strong>
+                    {/* A chosen name where there is one, and a link to its owner --
+                        which is how a profile is reachable from the site at all,
+                        rather than only by typing the URL.
+
+                        The email fallback is now genuinely a fallback. Signing
+                        every public comment with the local part of an address was
+                        publishing something nobody chose to publish; a handle
+                        replaces it the moment one is set. */}
+                    {c.handle && c.profile_public !== false ? (
+                      <a class="comment-author" href={`/u/${c.handle}`}>
+                        {commenterName(c)}
+                      </a>
+                    ) : (
+                      <strong>{commenterName(c)}</strong>
+                    )}
                     <LocalTime at={c.created_at} />
                     {user && c.user_id === user.id ? (
                       <form method="post" action={`/api/comments/${c.id}/delete`} class="inline">

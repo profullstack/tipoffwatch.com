@@ -120,6 +120,10 @@ export const Layout = (props) => (
               ) : null}
             </a>
           ) : null}
+          {/* Your own profile, once you have a handle. Without this the page was
+              reachable only by typing its URL, which is a strange way to own a
+              page that other people can see. */}
+          {props.user?.handle ? <a href={`/u/${props.user.handle}`}>Profile</a> : null}
           {props.user ? (
             <a href="/settings">Settings</a>
           ) : (

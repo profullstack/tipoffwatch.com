@@ -1414,7 +1414,11 @@ export async function playsForEvent(eventId, { limit = 60 } = {}) {
 
 export async function commentsForEvent(eventId, { limit = 200 } = {}) {
   return sql`
-    select c.id, c.body, c.created_at, u.email, u.id as user_id
+    -- handle/display_name so a comment can be signed with a chosen name and link
+    -- to its author. email stays only as the fallback for accounts that have not
+    -- picked a handle, and the view never prints more than its local part.
+    select c.id, c.body, c.created_at, u.email, u.id as user_id,
+           u.handle, u.display_name, u.profile_public
     from event_comments c
     join users u on u.id = c.user_id
     where c.event_id = ${eventId} and c.deleted_at is null

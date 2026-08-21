@@ -208,3 +208,44 @@ describe('profile privacy', () => {
     expect(rows[0].handle).toBeNull();
   });
 });
+
+describe('a profile is reachable from the site, not only by URL', () => {
+  test('comments carry the author handle so the name can link', async () => {
+    const q = await readFile(
+      new URL('../packages/db/src/queries.js', import.meta.url).pathname,
+      'utf8',
+    );
+    const fn = q.slice(q.indexOf('export async function commentsForEvent'));
+    expect(fn.slice(0, 700)).toContain('u.handle');
+    expect(fn.slice(0, 700)).toContain('u.display_name');
+  });
+
+  test('a handle replaces the email fragment a comment used to be signed with', async () => {
+    const src = await readFile(
+      new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
+      'utf8',
+    );
+    // The regression: every public comment was signed with the local part of the
+    // author's address, which nobody chose to publish. It is a fallback now.
+    expect(src).toContain('function commenterName');
+    expect(src).toContain('c.display_name ||');
+  });
+
+  test('a hidden profile is named but not linked', async () => {
+    const src = await readFile(
+      new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
+      'utf8',
+    );
+    // profile_public === false must not become a link to a 404.
+    expect(src).toContain('c.profile_public !== false');
+  });
+
+  test('the header links your own profile once you have a handle', async () => {
+    const src = await readFile(
+      new URL('../apps/web/src/views/Layout.jsx', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(src).toContain('props.user?.handle');
+    expect(src).toContain('Profile</a>');
+  });
+});

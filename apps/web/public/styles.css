@@ -1936,3 +1936,14 @@ ul.messages time {
   color: var(--muted);
   margin-top: 0.25rem;
 }
+
+/* A comment author who has a profile. Same weight as the plain <strong> it
+   replaces, so a signed comment and an unsigned one line up. */
+.comment-author {
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: none;
+}
+.comment-author:hover {
+  color: var(--accent);
+}
