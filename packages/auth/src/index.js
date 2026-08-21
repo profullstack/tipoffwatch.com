@@ -182,3 +182,5 @@ export function safeEqualHex(a, b) {
   const bb = Buffer.from(b, 'hex');
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
+
+export { open, seal } from './secretbox.js';

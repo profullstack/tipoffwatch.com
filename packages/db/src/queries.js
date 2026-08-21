@@ -102,6 +102,103 @@ export async function touchPasskey(credentialId, counter) {
   await sql`update passkeys set counter = ${counter}, last_used_at = now() where credential_id = ${credentialId}`;
 }
 
+/* ---------------------------------------------------------- own playlists -- */
+
+/**
+ * Every query here takes a user_id and uses it, without exception.
+ *
+ * That is the whole security model for this feature: a channel list is one
+ * person's own subscription, and there must be no query that can return another
+ * account's rows even by mistake. A `getPlaylistById` taking only an id is exactly
+ * the shape that leaks it later, so it does not exist -- ownership is part of the
+ * lookup rather than something a caller is trusted to remember.
+ */
+
+/** One list per account: adding a second replaces the first. */
+export async function savePlaylist({ userId, label, sourceUrl }) {
+  const [row] = await sql`
+    insert into user_playlists (user_id, label, source_url)
+    values (${userId}, ${label ?? null}, ${sourceUrl})
+    on conflict (user_id) do update set
+      label = excluded.label,
+      source_url = excluded.source_url,
+      last_error = null
+    returning id, user_id, label, channel_count, last_synced_at, last_error, created_at
+  `;
+  return row;
+}
+
+export async function getPlaylist(userId) {
+  const [row] = await sql`select * from user_playlists where user_id = ${userId}`;
+  return row ?? null;
+}
+
+export async function deletePlaylist(userId) {
+  await sql`delete from user_playlists where user_id = ${userId}`;
+}
+
+export async function markPlaylistError({ userId, error }) {
+  await sql`
+    update user_playlists set last_error = ${String(error).slice(0, 300)}, last_synced_at = now()
+    where user_id = ${userId}
+  `;
+}
+
+/**
+ * Replace a list's channels wholesale.
+ *
+ * Delete-then-insert rather than a diff: a provider rewrites its numbered event
+ * slots constantly, so almost every row changes on every refresh and a diff would
+ * be more work for the same answer. Both statements run in one transaction so a
+ * failed import cannot leave the reader holding half a list.
+ */
+export async function replacePlaylistChannels({ userId, channels }) {
+  return sql.begin(async (tx) => {
+    const [pl] = await tx`select id from user_playlists where user_id = ${userId}`;
+    if (!pl) return 0;
+
+    await tx`delete from user_playlist_channels where playlist_id = ${pl.id}`;
+
+    // Chunked because a real list is thousands of rows, and one statement per row
+    // would be thousands of round trips.
+    const CHUNK = 500;
+    for (let i = 0; i < channels.length; i += CHUNK) {
+      const slice = channels.slice(i, i + CHUNK).map((c, n) => ({
+        playlist_id: pl.id,
+        position: i + n,
+        title: c.title,
+        stream_url: c.streamUrl,
+        norm_title: c.normTitle,
+      }));
+      if (slice.length) await tx`insert into user_playlist_channels ${tx(slice)}`;
+    }
+
+    await tx`
+      update user_playlists
+         set channel_count = ${channels.length}, last_synced_at = now(), last_error = null
+       where id = ${pl.id}
+    `;
+    return channels.length;
+  });
+}
+
+/**
+ * The reader's own channels, for matching against a fixture.
+ *
+ * Joined through user_playlists on user_id, so ownership is enforced by the
+ * statement rather than by the caller remembering to check it.
+ */
+export async function playlistChannels(userId, { limit = 20000 } = {}) {
+  return sql`
+    select c.title, c.stream_url, c.norm_title
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId}
+    order by c.position
+    limit ${limit}
+  `;
+}
+
 /* --------------------------------------------------------------- catalogue -- */
 
 /**

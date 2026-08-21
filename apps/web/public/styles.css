@@ -1504,3 +1504,300 @@ time.line {
   margin-top: 0;
   padding: 0.9rem 1rem;
 }
+
+/* --------------------------------------------------------------- own line -- */
+
+/* A reader's own channels, matched to this fixture. Only ever rendered for the
+   account that added the list. */
+.own-line {
+  margin: 1.5rem 0;
+}
+.own-channels {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.own-channels li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+}
+.own-channel-name {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+/* =============================================================== form system ==
+   One place that decides what a control looks like.
+
+   Before this, styling was scattered and partial: only `.auth input[type=email]`
+   and bare `select` were styled at all, so a url or text input inherited nothing,
+   a textarea inherited nothing, `fieldset` carried a border with no padding, and
+   `legend` sat on top of that border rather than in a gap in it. The settings page
+   showed the result -- a label, a select and a button jammed together on one line
+   with no space between them.
+
+   Everything below is additive and late in the file, so it wins on order without
+   needing !important or ID selectors. */
+
+/* ---- the controls themselves ---- */
+
+input[type="text"],
+input[type="email"],
+input[type="url"],
+input[type="password"],
+input[type="search"],
+input[type="number"],
+input[type="tel"],
+select,
+textarea {
+  width: 100%;
+  max-width: 34rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ground);
+  color: var(--fg);
+  font: inherit;
+  line-height: 1.4;
+}
+
+/* A select is sized by its longest option, so a full-width one looks broken next
+   to a short label. It gets its own width and keeps the shared skin. */
+select {
+  width: auto;
+  min-width: 12rem;
+  margin-top: 0;
+  /* Room for the native arrow, which otherwise overlaps a long zone name. */
+  padding-right: 2rem;
+}
+
+textarea {
+  min-height: 5.5rem;
+  resize: vertical;
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* One focus treatment everywhere, including buttons and links, so tabbing through
+   a form never loses the caret. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+input[aria-invalid="true"],
+.field.invalid input {
+  border-color: var(--live);
+}
+
+/* ---- labelled fields ---- */
+
+/* Both spellings are in the markup: `.field > span` on the newer forms and
+   `.field-label` on the older ones. Supporting both beats a rename that would
+   touch every view for no visible gain. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.85rem 0;
+  max-width: 34rem;
+}
+.field > span,
+.field-label {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 400;
+}
+.field .hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* A control and its button on one line, which is what the time zone form wanted
+   and did not have. Wraps rather than overflowing on a narrow screen, and aligns
+   on the baseline of the controls rather than the top of the label. */
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin: 0.85rem 0;
+}
+.form-row .field {
+  margin: 0;
+}
+
+/* ---- checkboxes and radios ---- */
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* The gap is the fix: these were `display:block` with no spacing, so the box sat
+   flush against its own text. */
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.3rem 0;
+  cursor: pointer;
+  line-height: 1.3;
+}
+label.check:hover {
+  color: var(--fg);
+}
+
+/* ---- grouping ---- */
+
+fieldset {
+  padding: 0.9rem 1rem 1rem;
+}
+legend {
+  /* Padding on both sides puts the legend INTO a gap in the border rather than on
+     top of it, and the background makes that gap opaque. */
+  padding: 0 0.45rem;
+  margin-left: 0.35rem;
+  background: var(--panel);
+}
+
+/* ---- buttons ---- */
+
+/* Buttons were three different heights on one page because only some carried a
+   size class. This gives every button the same vertical rhythm as an input, so a
+   button next to a select lines up with it. */
+button,
+.cta,
+.ghost {
+  font: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.form-row button,
+.form-row .cta,
+.form-row .ghost {
+  padding: 0.55rem 0.9rem;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.85rem 0;
+}
+
+.small-btn.danger {
+  color: var(--live);
+  border-color: oklch(0.72 0.19 25 / 0.45);
+}
+
+/* ---- feedback ---- */
+
+.feedback.error {
+  color: var(--live);
+}
+.feedback.ok {
+  color: var(--ok);
+}
+
+/* ---- own-line channel rows ---- */
+
+.own-line {
+  margin: 1.5rem 0;
+}
+.own-channels {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.own-channels li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+}
+.own-channel-name {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 34rem) {
+  .own-channels li {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  input[type="text"],
+  input[type="email"],
+  input[type="url"],
+  input[type="password"],
+  select,
+  textarea {
+    max-width: none;
+  }
+}
+
+/* A timestamp inside a card's description line is prose, not a stat block, so it
+   reads across rather than stacking. The gap stands in for the whitespace the
+   markup deliberately omits between the parts -- see the note on time[data-local].
+   Without this, "7,059 channels · updated 3:19 AM Fri, Aug 21" broke onto three
+   lines in the middle of a sentence. */
+.card-desc time[data-local],
+.field .hint time[data-local] {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 0.3rem;
+  vertical-align: baseline;
+}
+
+/* The header's Sign in button rendered muted-orange on orange, near-unreadable.
+   `.topbar nav a` (0,1,2) outranks `.cta` (0,1,0) on specificity, so the nav's
+   muted colour won no matter which came later in the file. Restated at a
+   specificity that can actually reach it. */
+.topbar nav a.cta,
+.topbar nav a.cta:hover {
+  color: oklch(0.16 0.02 45);
+}
+.topbar nav a.ghost {
+  color: var(--fg);
+}

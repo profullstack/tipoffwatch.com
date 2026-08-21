@@ -409,6 +409,7 @@ export const EventPage = ({
   followingHome,
   followingAway,
   followingLeague,
+  ownChannels = [],
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
@@ -731,6 +732,31 @@ export const EventPage = ({
         ) : null}
       </section>
 
+      {/* The reader's OWN channels, visible only to them. Safe because this page
+          is not one of the Redis-cached ones -- see the note in app.js. */}
+      {ownChannels?.length ? (
+        <section class="own-line">
+          <h2>On your line</h2>
+          <p class="muted small">
+            {ownChannels.length === 1
+              ? 'One of your channels looks like it is carrying this game.'
+              : `${ownChannels.length} of your channels look like they are carrying this game.`}{' '}
+            Opening one downloads a playlist file for the player you already use — nothing plays
+            here.
+          </p>
+          <ul class="own-channels">
+            {ownChannels.map((ch, i) => (
+              <li>
+                <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
+                <a class="cta small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
+                  Open in your player
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section class="stream">
         <h2>Watch</h2>
         {entitlement ? (
@@ -893,9 +919,78 @@ const COMMON_ZONES = [
   'UTC',
 ];
 
-export const Settings = ({ user, prefs, passkeys }) => (
+export const Settings = ({ user, prefs, passkeys, playlist, playlistNotice, playlistError }) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
+
+    {/* A reader's own channel list. Private to this account: never shown to anyone
+        else, never pooled, and never offered for sale. */}
+    <section>
+      <h2>Your channel list</h2>
+      <p class="muted small">
+        If you subscribe to a service that gives you an M3U playlist, add it here and we will tell
+        you which of your own channels is carrying a game. It stays private to your account, and
+        nothing is streamed through TipoffWatch — opening a channel hands a playlist file to the
+        player you already use.
+      </p>
+
+      {playlistError ? <p class="feedback error">{playlistError}</p> : null}
+      {playlistNotice ? <p class="feedback ok">{playlistNotice}</p> : null}
+
+      {playlist ? (
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">{playlist.label ?? 'Your list'}</h3>
+            <p class="card-desc">
+              {playlist.channel_count.toLocaleString('en-US')} channels
+              {playlist.last_synced_at ? (
+                <>
+                  {' · updated '}
+                  <LocalTime at={playlist.last_synced_at} />
+                </>
+              ) : null}
+            </p>
+          </div>
+          {playlist.last_error ? <p class="feedback error">{playlist.last_error}</p> : null}
+          <div class="card-actions">
+            <form method="post" action="/api/playlist/refresh" class="inline">
+              <button class="ghost small-btn" type="submit">
+                Refresh
+              </button>
+            </form>
+            <form method="post" action="/api/playlist/delete" class="inline">
+              <button class="ghost small-btn danger" type="submit">
+                Remove
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      <form method="post" action="/api/playlist">
+        <label class="field">
+          <span>Playlist URL</span>
+          <input
+            type="url"
+            name="url"
+            required
+            placeholder="http://your-provider.example/playlist/…"
+            autocomplete="off"
+          />
+        </label>
+        <label class="field">
+          <span>Name (optional)</span>
+          <input type="text" name="label" placeholder="My subscription" autocomplete="off" />
+        </label>
+        <button class="cta" type="submit">
+          {playlist ? 'Replace list' : 'Add list'}
+        </button>
+      </form>
+      <p class="muted small">
+        The address is stored encrypted because it usually contains your username and password. Only
+        you ever see it, and removing the list deletes it.
+      </p>
+    </section>
 
     <section>
       <h2>Reminders</h2>
@@ -943,9 +1038,11 @@ export const Settings = ({ user, prefs, passkeys }) => (
         Every time on the site, and in emailed reminders, is shown in this zone. Leave it as
         detected and it follows your device (<span data-tz-label>your device</span>).
       </p>
-      <form method="post" action="/api/timezone">
-        <label>
-          Zone for emails
+      <form method="post" action="/api/timezone" class="form-row">
+        <label class="field">
+          {/* Not "Zone for emails" any more: this drives every time on the site,
+              which is the whole point of the note above it. */}
+          <span>Time zone</span>
           <select name="timezone">
             {[...new Set([user.timezone ?? 'UTC', ...COMMON_ZONES])].map((z) => (
               <option value={z} selected={z === (user.timezone ?? 'UTC')}>

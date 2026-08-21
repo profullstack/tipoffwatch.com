@@ -3,6 +3,20 @@ import * as q from '@tipoff/db/queries';
 import * as espn from './espn.js';
 import * as sportsdb from './sportsdb.js';
 
+/**
+ * Re-exported rather than reached for by subpath: this package publishes a single
+ * entry point, and importing '@tipoff/sports/m3u' resolves only by accident of the
+ * linker until package.json says otherwise. The web app uses both of these.
+ */
+export {
+  channelMatchesFixture,
+  channelsForFixture,
+  MAX_CHANNELS,
+  oneChannelM3u,
+  parseM3u,
+} from './m3u.js';
+export { normaliseTeam } from './sportsdb.js';
+
 const ADAPTERS = { espn };
 
 export function adapters() {

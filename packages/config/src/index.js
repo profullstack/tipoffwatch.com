@@ -143,6 +143,26 @@ export const config = {
     backfillDays: num('SPORTS_BACKFILL_DAYS', 0),
   },
 
+  /**
+   * A reader's own channel list.
+   *
+   * Strictly personal: one list per account, never pooled, never shown to anyone
+   * else, and never wired to the resale offers. The playlist URL carries the
+   * reader's provider credentials in its path, so it is encrypted at rest -- and
+   * without a secret to encrypt it with, the feature turns itself off rather than
+   * storing credentials in the clear.
+   */
+  playlists: {
+    get secret() {
+      return opt('PLAYLIST_SECRET');
+    },
+    get enabled() {
+      return Boolean(this.secret);
+    },
+    /** Refuse a list bigger than this, in bytes. A real provider list is ~800KB. */
+    maxBytes: num('PLAYLIST_MAX_BYTES', 8 * 1024 * 1024),
+  },
+
   push: {
     publicKey: opt('VAPID_PUBLIC_KEY'),
     privateKey: opt('VAPID_PRIVATE_KEY'),

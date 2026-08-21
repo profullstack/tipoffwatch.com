@@ -1,13 +1,15 @@
 import * as auth from '@tipoff/auth';
 import { config } from '@tipoff/config';
-import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
 import { connection } from '@tipoff/queue';
+import { oneChannelM3u } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
+import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { buildCalendar } from './lib/ics.js';
+import { importPlaylist, ownChannelsForEvent, refreshPlaylist } from './lib/playlist.js';
 import { buildFeed } from './lib/rss.js';
 import { Feeds } from './views/feeds.jsx';
 import {
@@ -37,10 +39,13 @@ export const app = new Hono();
  * where it came from and the page works with JavaScript off. A caller that asked
  * for JSON gets JSON. One helper, so the two can never drift apart.
  */
-function respond(c, { json, redirectTo }) {
+function respond(c, { json, redirectTo, status }) {
   const accept = c.req.header('accept') ?? '';
   if (accept.includes('application/json') || c.req.header('x-requested-with') === 'fetch') {
-    return c.json(json ?? { ok: true });
+    // A status only makes sense on the JSON branch: the form path carries failure
+    // in the query string it redirects to, because a 400 there would replace the
+    // settings page with a bare error instead of showing it in context.
+    return c.json(json ?? { ok: true }, status ?? 200);
   }
   return c.redirect(redirectTo ?? c.req.header('referer') ?? '/', 303);
 }
@@ -203,6 +208,11 @@ app.get('/events/:id', async (c) => {
       // nothing at all.
       q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: event.league_id }),
     ]);
+
+  // Per-viewer, and safe only because this page is NOT one of the cached() ones.
+  // If it is ever put behind Redis, this has to move out or one reader's channel
+  // list -- credentials and all -- is served to the next visitor.
+  const ownChannels = await ownChannelsForEvent({ userId: user?.id, event });
   return c.html(
     await render(
       <EventPage
@@ -215,6 +225,7 @@ app.get('/events/:id', async (c) => {
         followingHome={followingHome}
         followingAway={followingAway}
         followingLeague={followingLeague}
+        ownChannels={ownChannels}
       />,
     ),
   );
@@ -248,6 +259,88 @@ app.get('/events/:id/watch', async (c) => {
   if (!entitlement) return c.redirect(`/events/${event.id}`, 303);
 
   return c.html(await render(<WatchPage user={user} event={event} entitlement={entitlement} />));
+});
+
+/* --------------------------------------------------------- own playlists -- */
+
+/**
+ * A reader's own channel list.
+ *
+ * Every route here is behind requireUser and scoped to that user's rows. The list
+ * is theirs: it is never pooled, never shown to another account, and never joined
+ * to stream_offers -- this is a personal player feature, not a distribution one.
+ */
+app.post('/api/playlist', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  try {
+    const result = await importPlaylist({
+      userId: user.id,
+      url: String(body.url ?? '').trim(),
+      label: String(body.label ?? '').trim(),
+    });
+    return respond(c, {
+      json: result,
+      redirectTo: `/settings?playlist=${result.channels}`,
+    });
+  } catch (err) {
+    return respond(c, {
+      json: { error: err.message },
+      status: 400,
+      redirectTo: `/settings?playlist_error=${encodeURIComponent(err.message)}`,
+    });
+  }
+});
+
+app.post('/api/playlist/refresh', async (c) => {
+  const user = requireUser(c);
+  try {
+    const result = await refreshPlaylist(user.id);
+    return respond(c, { json: result, redirectTo: `/settings?playlist=${result.channels}` });
+  } catch (err) {
+    return respond(c, {
+      json: { error: err.message },
+      status: 400,
+      redirectTo: `/settings?playlist_error=${encodeURIComponent(err.message)}`,
+    });
+  }
+});
+
+app.post('/api/playlist/delete', async (c) => {
+  const user = requireUser(c);
+  await q.deletePlaylist(user.id);
+  return respond(c, { json: { deleted: true }, redirectTo: '/settings' });
+});
+
+/**
+ * Hand one channel back to the person who supplied it.
+ *
+ * This is the entire playback story, and its smallness is the point: the reader's
+ * own URL, returned to the reader's own browser, as a file their own player opens.
+ * Nothing is proxied, so tipoffwatch is never in the path of the stream itself --
+ * which also sidesteps the two walls a browser puts up, since an http:// source is
+ * blocked as mixed content and a self-signed upstream certificate is rejected
+ * outright. A desktop player has neither restriction.
+ *
+ * `no-store`, because the response body is a credential.
+ */
+app.get('/events/:id/playlist.m3u', async (c) => {
+  const user = requireUser(c);
+  const event = await q.getEvent(Number(c.req.param('id')));
+  if (!event) return c.notFound();
+
+  const own = await ownChannelsForEvent({ userId: user.id, event });
+  if (own.length === 0) return c.redirect(`/events/${event.id}`, 303);
+
+  // The first match, which channelsForFixture has already ranked most-specific
+  // first, unless the reader asked for a particular one by index.
+  const wanted = Number(c.req.query('n') ?? 0);
+  const pick = own[Number.isInteger(wanted) && own[wanted] ? wanted : 0];
+
+  c.header('content-type', 'audio/x-mpegurl; charset=utf-8');
+  c.header('content-disposition', `attachment; filename="${event.short_name ?? 'game'}.m3u"`);
+  c.header('cache-control', 'no-store, private');
+  return c.body(oneChannelM3u(pick));
 });
 
 /* -------------------------------------------------------------------- auth -- */
@@ -434,7 +527,15 @@ app.post('/api/timezone', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = requireUser(c);
-  const [prefs, passkeys] = await Promise.all([q.getPrefs(user.id), q.listPasskeys(user.id)]);
+  const [prefs, passkeys, playlist] = await Promise.all([
+    q.getPrefs(user.id),
+    q.listPasskeys(user.id),
+    q.getPlaylist(user.id),
+  ]);
+  const added = c.req.query('playlist');
+  const playlistNotice = added
+    ? `Imported ${Number(added).toLocaleString('en-US')} channels.`
+    : null;
   return c.html(
     await render(
       <Settings
@@ -446,6 +547,9 @@ app.get('/settings', async (c) => {
           }
         }
         passkeys={passkeys}
+        playlist={playlist}
+        playlistNotice={playlistNotice}
+        playlistError={c.req.query('playlist_error') ?? null}
       />,
     ),
   );
