@@ -243,16 +243,18 @@ export async function syncLiveScores({ log = console.log } = {}) {
  * moving, and neither can shut the other out.
  */
 export async function syncPlays({ log = console.log, limit = 8 } = {}) {
-  const endedShare = Math.min(2, Math.max(1, limit - 1));
-  const live = await q.eventsNeedingPlays({
-    staleSeconds: 120,
-    limit: limit - endedShare,
-    state: 'in',
-  });
+  // The finished games are drawn first, but for a small fixed share rather than
+  // first claim on everything. Whatever they leave goes to the live ones, so an
+  // empty catch-up queue hands its slots back instead of idling them.
   const ended = await q.eventsNeedingPlays({
     staleSeconds: 120,
-    limit: limit - live.length,
+    limit: Math.min(2, Math.max(1, limit - 1)),
     state: 'post',
+  });
+  const live = await q.eventsNeedingPlays({
+    staleSeconds: 120,
+    limit: limit - ended.length,
+    state: 'in',
   });
   const due = [...live, ...ended];
   if (due.length === 0) return { events: 0, plays: 0 };
