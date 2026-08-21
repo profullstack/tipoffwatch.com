@@ -34,11 +34,21 @@ export async function syncCatalogue({ log = console.log } = {}) {
  * real foreign keys. Doing it per league (rather than globally) keeps the working set
  * small enough that the whole league lands in one transaction-sized batch.
  */
-export async function syncLeague(league, { horizonDays = config.sports.horizonDays } = {}) {
+export async function syncLeague(
+  league,
+  { horizonDays = config.sports.horizonDays, backfillDays = config.sports.backfillDays } = {},
+) {
   const adapter = ADAPTERS[league.provider];
   if (!adapter) throw new Error(`No adapter for provider ${league.provider}`);
 
-  const from = new Date(Date.now() - 6 * 3600_000);
+  // Six hours back is all the calendar needs -- enough to close out whatever was in
+  // progress at the last pass. It is also the reason a widened play catch-up window
+  // finds nothing to do: a fixture that was never fetched was never stored, and the
+  // catch-up window only ranks rows that already exist. backfillDays reaches back
+  // for the fixtures themselves; max() keeps the six-hour floor, so the default of
+  // zero is the old behaviour exactly and this can only ever widen.
+  const backMs = Math.max(6 * 3600_000, backfillDays * 86_400_000);
+  const from = new Date(Date.now() - backMs);
   const to = new Date(Date.now() + horizonDays * 86_400_000);
 
   // Roster and fixtures are fetched independently on purpose.

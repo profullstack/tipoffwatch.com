@@ -99,6 +99,29 @@ export const config = {
      * ~4 fixtures a minute and ~500KB each.
      */
     playsCatchupHours: num('SPORTS_PLAYS_CATCHUP_HOURS', 12),
+    /**
+     * How far BACK the fixture sweep asks the provider for, in days.
+     *
+     * The sweep's job is the calendar, so it only ever looked forward: `from` was
+     * six hours ago, enough to close out whatever was in progress at the last pass.
+     * That is also why widening SPORTS_PLAYS_CATCHUP_HOURS on its own backfills
+     * nothing. The catch-up window decides which STORED fixtures are still owed a
+     * play log; it cannot reach a game that was never written down, and at a
+     * six-hour `from` no game older than this morning ever was. Setting the window
+     * to 336 changed the backlog by zero rows, which is the symptom.
+     *
+     * So: this reaches back for the fixtures themselves, and the catch-up window
+     * then reaches them. Both are needed, in that order.
+     *
+     * Zero by default, which is exactly the old behaviour -- the six-hour floor
+     * below still applies, so this can only ever widen the window. Turning it on is
+     * not free in either direction: the provider caps a response near 100 events
+     * and the adapter splits and refetches, so a 14-day reach costs extra upstream
+     * requests on a busy league; and every finished fixture it stores then becomes
+     * eligible for a ~500KB summary read through the metered proxy. Same
+     * on/deploy/off shape as SYNC_ON_BOOT -- set it, let one sweep run, put it back.
+     */
+    backfillDays: num('SPORTS_BACKFILL_DAYS', 0),
   },
 
   push: {
