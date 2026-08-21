@@ -447,12 +447,12 @@ describe('play log selection', () => {
                or e.plays_synced_at < now() - ($1 * interval '1 second')))
         or
         (e.state = 'post'
-          and e.starts_at > now() - interval '12 hours'
+          and e.starts_at > now() - ($4 * interval '1 hour')
           and not e.plays_final)
       )`;
 
   const DUE = `
-    select e.id, (count(*) over ())::int as total_due
+    select e.id, e.plays_synced_at, (count(*) over ())::int as total_due
     from events e
     join leagues l on l.id = e.league_id
     where e.state = $3
@@ -489,8 +489,10 @@ describe('play log selection', () => {
       )
     ).id;
 
-  const rows = async (limit = 100, state = 'in') => (await db.query(DUE, [120, limit, state])).rows;
-  const due = async (limit = 100, state = 'in') => (await rows(limit, state)).map((r) => r.id);
+  const rows = async (limit = 100, state = 'in', hours = 12) =>
+    (await db.query(DUE, [120, limit, state, hours])).rows;
+  const due = async (limit = 100, state = 'in', hours = 12) =>
+    (await rows(limit, state, hours)).map((r) => r.id);
   /** Both queues, as the worker sees them once it has drawn each separately. */
   const allDue = async () => [...(await due(100, 'in')), ...(await due(100, 'post'))];
 
@@ -606,6 +608,10 @@ describe('play log selection', () => {
       updatedSecondsAgo: 60,
     });
     expect(await due(100, 'post')).not.toContain(old);
+
+    // The window bounds cost, it is not a claim the game has no recap -- so widening
+    // it reaches back and picks the same fixture up. That is the backfill lever.
+    expect(await due(100, 'post', 168)).toContain(old);
   });
 
   test('a fixture that has not started is never fetched', async () => {
@@ -646,18 +652,12 @@ describe('play log selection', () => {
   test('live games still take turns, oldest read first', async () => {
     // The post ordering must not disturb this: the case is null for every live row,
     // so the live queue falls through to the second key unchanged.
-    const queue = await db.query(
-      `select e.id, e.plays_synced_at from events e
-       where e.state = 'in' and ${PREDICATE}
-       order by (case when e.state = 'post' then e.starts_at end) desc nulls last,
-                e.plays_synced_at asc nulls first`,
-      [120],
-    );
-    expect(queue.rows.length).toBeGreaterThan(1);
+    const queue = await rows(100, 'in');
+    expect(queue.length).toBeGreaterThan(1);
 
     // Never-read first, then non-decreasing. Stated as an invariant rather than an
     // exact sequence, because equal stamps may legitimately come back either way.
-    const stamps = queue.rows.map((r) => r.plays_synced_at);
+    const stamps = queue.map((r) => r.plays_synced_at);
     const firstStamped = stamps.findIndex((s) => s !== null);
     expect(stamps.slice(0, firstStamped).every((s) => s === null)).toBe(true);
     for (let i = firstStamped + 1; i < stamps.length; i++) {

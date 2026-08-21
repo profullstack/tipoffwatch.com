@@ -250,6 +250,7 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   // with nothing on drains the backlog at full rate, and a busy one still closes
   // out a couple of finished games per tick.
   const endedShare = Math.min(2, Math.max(1, limit - 1));
+  const catchupHours = config.sports.playsCatchupHours;
   const liveAll = await q.eventsNeedingPlays({ staleSeconds: 120, limit, state: 'in' });
   // Capped only when there is enough live work to cap: a shorter list passes
   // through whole and leaves the remainder to the catch-up queue.
@@ -258,6 +259,7 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
     staleSeconds: 120,
     limit: limit - live.length,
     state: 'post',
+    catchupHours,
   });
   const due = [...live, ...ended];
   if (due.length === 0) return { events: 0, plays: 0 };

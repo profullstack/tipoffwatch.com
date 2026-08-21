@@ -846,8 +846,9 @@ export async function leaguesWithUpcoming(limit = 400) {
  * scoreboard -- finished ones included -- for as long as that league has any game
  * in progress. Games that had ended hours earlier kept re-qualifying every minute,
  * so the queue churned instead of draining and each pass spent another 500KB per
- * fixture. The 12-hour window keeps a backfill or a re-stated old fixture from
- * dragging in a season's worth of summaries.
+ * fixture. `catchupHours` bounds how far back that closing read reaches, which is a
+ * cost limit rather than a rule -- see config.sports.playsCatchupHours for widening
+ * it to backfill history.
  *
  * `state = 'in'` on its own is not a claim that a game is on right now, only that
  * nothing ever said otherwise. A fixture the provider stops returning keeps that
@@ -878,7 +879,12 @@ export async function leaguesWithUpcoming(limit = 400) {
  * fixtures actually being played got nothing -- so the caller asks for each
  * separately and gives the live ones the bulk of the quota.
  */
-export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state = 'in' } = {}) {
+export async function eventsNeedingPlays({
+  staleSeconds = 120,
+  limit = 10,
+  state = 'in',
+  catchupHours = 12,
+} = {}) {
   return sql`
     select e.id, e.state, e.provider_key, l.provider_key as league_key, l.provider,
            (count(*) over ())::int as total_due
@@ -893,7 +899,7 @@ export async function eventsNeedingPlays({ staleSeconds = 120, limit = 10, state
                or e.plays_synced_at < now() - (${staleSeconds} * interval '1 second')))
         or
         (e.state = 'post'
-          and e.starts_at > now() - interval '12 hours'
+          and e.starts_at > now() - (${catchupHours} * interval '1 hour')
           and not e.plays_final)
       )
     -- Each queue wants the opposite end. Among live games the fairest next read is

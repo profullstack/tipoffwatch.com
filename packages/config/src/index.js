@@ -83,6 +83,22 @@ export const config = {
     /** How far ahead to keep the calendar populated. */
     horizonDays: num('SPORTS_HORIZON_DAYS', 14),
     syncConcurrency: num('SPORTS_SYNC_CONCURRENCY', 6),
+    /**
+     * How far back a finished game is still owed its one closing read.
+     *
+     * A game gets its play log while it is on, plus one read after the whistle for
+     * whatever landed in between. This is the cutoff on that second read, and it
+     * exists to bound cost rather than to express a rule: every summary is ~500KB
+     * through the metered proxy, so an unbounded window would pull a season of them
+     * the first time it ran.
+     *
+     * Twelve hours covers any fixture played since the last poll. Widen it to
+     * backfill history -- 168 for a week -- and put it back afterwards, the same
+     * on/deploy/off shape as SYNC_ON_BOOT. The poller still reads only 8 summaries
+     * per tick, so a wide window costs time and bandwidth, not a spike: reckon
+     * ~4 fixtures a minute and ~500KB each.
+     */
+    playsCatchupHours: num('SPORTS_PLAYS_CATCHUP_HOURS', 12),
   },
 
   push: {
