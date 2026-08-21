@@ -351,3 +351,68 @@ describe('the market picker renders', () => {
     expect(out).toContain('data-country="France"');
   });
 });
+
+describe('a thin listing can be upgraded, an ESPN one cannot', () => {
+  let db2;
+
+  beforeAll(async () => {
+    db2 = await new PGlite({ extensions: { citext, pg_trgm } });
+    const dir = new URL('../packages/db/migrations/', import.meta.url).pathname;
+    for (const f of (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort()) {
+      await db2.exec(await readFile(dir + f, 'utf8'));
+    }
+    await db2.exec(`
+      insert into leagues (provider, provider_key, sport, slug, name)
+        values ('espn','australian-football/afl','australian-football','afl','AFL');
+      insert into events (provider, provider_key, league_id, starts_at, state, name)
+        values
+          ('espn','a','1',now() + interval '1 day','pre','never filled'),
+          ('espn','b','1',now() + interval '1 day','pre','filled by us, thinly'),
+          ('espn','c','1',now() + interval '1 day','pre','filled by espn');
+      update events set broadcast = '7 Queensland', broadcast_source = 'thesportsdb',
+                        broadcast_country = 'Australia'
+        where provider_key = 'b';
+      update events set broadcast = 'NFL Net', broadcast_source = 'espn',
+                        broadcast_country = 'United States'
+        where provider_key = 'c';
+    `);
+  }, 60_000);
+
+  const workList = async () =>
+    (
+      await db2.query(
+        `select provider_key from events
+          where (broadcast is null or broadcast_source = 'thesportsdb')
+          order by provider_key`,
+      )
+    ).rows.map((r) => r.provider_key);
+
+  test('the work list includes our own thin rows, never ESPN rows', async () => {
+    // The bug this exists for: "missing" was read as "null", so a row written while
+    // the shared key truncated to one channel kept that single answer forever, even
+    // after a subscriber key made a much better one available.
+    expect(await workList()).toEqual(['a', 'b']);
+  });
+
+  test('the writer replaces our own answer', async () => {
+    const { rows } = await db2.query(
+      `update events e set broadcast = 'Kayo Sports, Fox Footy', broadcast_source = 'thesportsdb'
+        where e.provider_key = 'b'
+          and (e.broadcast is null or e.broadcast_source = 'thesportsdb')
+        returning e.id`,
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  test('the writer still refuses to touch an ESPN listing', async () => {
+    const { rows } = await db2.query(
+      `update events e set broadcast = 'something else', broadcast_source = 'thesportsdb'
+        where e.provider_key = 'c'
+          and (e.broadcast is null or e.broadcast_source = 'thesportsdb')
+        returning e.id`,
+    );
+    expect(rows).toHaveLength(0);
+    const after = await db2.query(`select broadcast from events where provider_key = 'c'`);
+    expect(after.rows[0].broadcast).toBe('NFL Net');
+  });
+});

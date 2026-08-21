@@ -659,12 +659,17 @@ export async function leaguesWithFixturesBetween({ from, to }) {
 }
 
 /**
- * Fixtures inside the horizon that still have nobody broadcasting them.
+ * Fixtures the fallback pass should look at.
  *
- * This is the work list for the fallback pass, and it is deliberately narrow. Most
- * of the table is in this state -- ESPN carries listings for a minority of the 354
- * leagues -- so the query is bounded by the same window the sweep keeps populated
- * rather than by row count, and leans on the partial index added in 0013.
+ * Two groups, and the second is easy to forget. The obvious one is fixtures with
+ * no broadcaster at all. The other is fixtures WE filled previously: a row written
+ * while the shared key was truncating carries a single channel and a single
+ * market, and it would keep that thin answer forever, because "missing" was read
+ * as "null" and the row is not null. Buying a subscriber key changed what a good
+ * answer looks like; rows already written have to be allowed to catch up.
+ *
+ * ESPN's listings are never in scope. broadcast_source = 'espn' is the more precise
+ * answer wherever it exists and this pass must not reopen it.
  *
  * Both sides are required. A fixture with an unresolved team cannot be matched
  * against a listing titled "Home vs Away", so fetching it would only waste a
@@ -679,7 +684,7 @@ export async function listEventsMissingBroadcast({ from, to, limit = 500 }) {
     join leagues l on l.id = e.league_id
     join teams ht on ht.id = e.home_team_id
     join teams at on at.id = e.away_team_id
-    where e.broadcast is null
+    where (e.broadcast is null or e.broadcast_source = 'thesportsdb')
       and e.starts_at >= ${from}
       and e.starts_at < ${to}
     order by e.starts_at
@@ -718,7 +723,9 @@ export async function fillMissingBroadcasts(rows) {
         ${pgArray(rows.map((r) => JSON.stringify(r.markets ?? [])))}::text[]
       ) as t(id, broadcast, country, markets)
     ) v
-    where e.id = v.id and e.broadcast is null
+    -- Null, or a previous answer from this same pass. Never ESPN's: that guard is
+    -- the reason a live tick landing a US listing mid-run cannot be undone here.
+    where e.id = v.id and (e.broadcast is null or e.broadcast_source = 'thesportsdb')
     returning e.id
   `;
 }
