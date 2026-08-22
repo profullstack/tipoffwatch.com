@@ -1883,8 +1883,16 @@ ul.people li a:hover {
   margin: 1.25rem 0;
 }
 
-/* An unread count beside a nav item. Sized in em so it tracks the link. */
-.badge {
+/* An unread count beside a nav item. Sized in em so it tracks the link.
+
+   Named .unread-count rather than .badge, which it was until it collided with the
+   OTHER .badge 1500 lines above -- the live/final label on every fixture. Two
+   unrelated components, one class name, and this one came later in the file, so it
+   won the background: an accent-filled pill. The label kept its own colour, since
+   `.badge.live` outranks a bare `.badge`, which left `--live` orange-red text on
+   `--accent` orange. Invisible, and invisible everywhere a fixture is rendered
+   rather than on one page. */
+.unread-count {
   display: inline-block;
   margin-left: 0.35rem;
   padding: 0.05em 0.45em;

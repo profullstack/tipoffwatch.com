@@ -122,7 +122,9 @@ export const Layout = (props) => (
             <a href="/messages">
               Messages
               {props.user.unread ? (
-                <span class="badge">{props.user.unread > 99 ? '99+' : props.user.unread}</span>
+                <span class="unread-count">
+                  {props.user.unread > 99 ? '99+' : props.user.unread}
+                </span>
               ) : null}
             </a>
           ) : null}
