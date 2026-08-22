@@ -48,12 +48,43 @@ describe('migrations', () => {
     }
   });
 
-  test('there is no password column anywhere', async () => {
+  /**
+   * This test used to assert that no password column existed anywhere. One does
+   * now -- an optional password, for televisions, which have no mail client to
+   * open a link in and no authenticator to hold a passkey.
+   *
+   * It is replaced rather than deleted because the property it was really
+   * defending still holds and is the thing worth guarding: a password is opt-in.
+   * Nothing issues one, nothing defaults one, and an account that never sets one
+   * has none. A default on either column, or a not-null, would quietly turn an
+   * optional second credential into one every account carries.
+   */
+  test('a password is optional, and lives only on users', async () => {
     const { rows } = await db.query(
-      `select table_name, column_name from information_schema.columns
-       where table_schema='public' and column_name ilike '%password%'`,
+      `select table_name, column_name, is_nullable, column_default
+         from information_schema.columns
+        where table_schema='public' and column_name ilike '%password%'
+        order by column_name`,
     );
-    expect(rows).toEqual([]);
+    expect(rows.map((r) => `${r.table_name}.${r.column_name}`)).toEqual([
+      'users.password_hash',
+      'users.password_set_at',
+    ]);
+    for (const r of rows) {
+      expect(r.is_nullable).toBe('YES');
+      expect(r.column_default).toBe(null);
+    }
+  });
+
+  test('a new account is created without a password', async () => {
+    // The guarantee above is only worth anything if the signup path honours it:
+    // magic link creates accounts, and it must not invent a credential.
+    const { rows } = await db.query(
+      `insert into users (email) values ('nopass@example.test')
+       returning password_hash, password_set_at`,
+    );
+    expect(rows[0].password_hash).toBe(null);
+    expect(rows[0].password_set_at).toBe(null);
   });
 });
 
