@@ -1959,6 +1959,21 @@ ul.messages time {
   gap: 0.5rem;
 }
 
+/* "Following (12)" with Unfollow all opposite it, on My games. The heading keeps
+   its own margins -- baseline aligns the button with the text rather than with the
+   box -- and the button drops under the heading on a narrow screen instead of
+   squeezing the count. */
+.follows-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.follows-head h2 {
+  margin-bottom: 0.4rem;
+}
+
 /* Player buttons on a channel row. They wrap under the name on a phone, which is
    where these are actually tapped. */
 .own-channel-actions {

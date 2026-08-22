@@ -821,6 +821,30 @@ export async function followAllLeagues(userId) {
   return rows.length;
 }
 
+/**
+ * Clear the whole follow list -- teams as well as leagues.
+ *
+ * Deliberately NOT the same thing as unfollowAllLeagues. That one is the undo for
+ * the follow-everything button, and it spares team follows because they were chosen
+ * one at a time. This one backs the "Unfollow everything" control on My games, where
+ * the list being cleared is the one in front of you: leaving the teams behind there
+ * would be the surprise, not the safeguard.
+ *
+ * Returns the counts by kind, because "removed 40" tells someone who is about to
+ * wonder whether their teams survived exactly nothing.
+ */
+export async function unfollowAll(userId) {
+  const rows = await sql`
+    delete from follows where user_id = ${userId}
+    returning subject_type
+  `;
+  return {
+    removed: rows.length,
+    leagues: rows.filter((r) => r.subject_type === 'league').length,
+    teams: rows.filter((r) => r.subject_type === 'team').length,
+  };
+}
+
 /** The undo. Only leagues: a team follow was chosen one at a time and is left alone. */
 export async function unfollowAllLeagues(userId) {
   const rows = await sql`

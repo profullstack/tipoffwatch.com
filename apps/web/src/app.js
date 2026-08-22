@@ -175,6 +175,25 @@ app.post('/api/unfollow-all', async (c) => {
   return respond(c, { json: { removed }, redirectTo: `/sports?unfollowed=${removed}` });
 });
 
+/**
+ * Clear the whole follow list, from My games.
+ *
+ * Sibling of /api/unfollow-all above, and not a duplicate of it: that one is the
+ * undo for the follow-everything button and spares hand-picked teams on purpose.
+ * This one is pressed while looking at the list it empties, so it takes the teams
+ * too -- clearing half of what is on screen is the behaviour that would surprise.
+ * The counts come back so the page can say what went, rather than leaving someone
+ * to work out from an empty list whether their teams were included.
+ */
+app.post('/api/unfollow-everything', async (c) => {
+  const user = requireUser(c);
+  const result = await q.unfollowAll(user.id);
+  return respond(c, {
+    json: result,
+    redirectTo: `/following?cleared=${result.removed}&teams=${result.teams}&leagues=${result.leagues}`,
+  });
+});
+
 app.get('/sports/:sport', async (c) => {
   const user = c.get('user');
   const sport = c.req.param('sport');
@@ -223,12 +242,23 @@ app.get('/teams/:slug', async (c) => {
 app.get('/following', async (c) => {
   const user = requireUser(c);
   const [events, follows] = await Promise.all([q.upcomingForUser(user.id), q.listFollows(user.id)]);
+  // What the last clear removed, if that is how we got here. Read back off the query
+  // string rather than held in a session: the redirect is the only thing carrying it,
+  // and a stale flash on a reload is worse than none.
+  const cleared = c.req.query('cleared')
+    ? {
+        removed: Number(c.req.query('cleared')) || 0,
+        teams: Number(c.req.query('teams')) || 0,
+        leagues: Number(c.req.query('leagues')) || 0,
+      }
+    : null;
   return c.html(
     await render(
       <Following
         user={user}
         events={events}
         follows={follows}
+        cleared={cleared}
         vapidKey={config.push.publicKey}
         calendarUrl={`${config.siteUrl}/calendar/me/${user.calendar_token}.ics`}
       />,

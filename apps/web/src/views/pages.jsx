@@ -328,7 +328,28 @@ export const TeamPage = ({ user, team, events, following }) => (
   </Layout>
 );
 
-export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
+/**
+ * "3 teams and 12 leagues", for the confirm text and for the receipt afterwards.
+ *
+ * Both halves need the breakdown rather than a total. The question anyone pressing
+ * "Unfollow all" has is whether the teams they picked one at a time are included --
+ * the button on /sports deliberately spares them, so the answer is not obvious --
+ * and the question afterwards is whether those teams really went. A bare number
+ * answers neither. Counts come from a follow list, or from the delete's own tally.
+ */
+const countPhrase = (follows, counts) => {
+  const teams = counts ? counts.teams : follows.filter((f) => f.subject_type === 'team').length;
+  const leagues = counts
+    ? counts.leagues
+    : follows.filter((f) => f.subject_type === 'league').length;
+  const parts = [];
+  if (teams) parts.push(`${teams.toLocaleString('en-US')} ${teams === 1 ? 'team' : 'teams'}`);
+  if (leagues)
+    parts.push(`${leagues.toLocaleString('en-US')} ${leagues === 1 ? 'league' : 'leagues'}`);
+  return parts.join(' and ') || 'nothing';
+};
+
+export const Following = ({ user, events, follows, cleared, vapidKey, calendarUrl }) => (
   <Layout title="My games" user={user} vapidKey={vapidKey}>
     <h1>My games</h1>
 
@@ -425,13 +446,38 @@ export const Following = ({ user, events, follows, vapidKey, calendarUrl }) => (
       </section>
     ) : null}
 
+    {cleared ? (
+      <p class="feedback ok" role="status">
+        {cleared.removed === 0
+          ? 'There was nothing left to unfollow.'
+          : `Unfollowed ${cleared.removed.toLocaleString('en-US')} — ${countPhrase(null, cleared)}.`}
+      </p>
+    ) : null}
+
     {follows.length === 0 ? (
       <p class="empty">
         You're not following anything yet. <a href="/sports">Browse by sport</a> to find your teams.
       </p>
     ) : (
       <>
-        <h2>Following ({follows.length})</h2>
+        <div class="follows-head">
+          <h2>Following ({follows.length})</h2>
+          {/* The wipe. Unlike the one on /sports -- which is the undo for "follow
+              everything" and spares teams on purpose -- this clears the list it sits
+              above, teams included, because that list is what is being looked at.
+              data-confirm makes the browser ask first and names what goes; with
+              script off the form still posts, the same trade the rest of the site
+              makes, which is why the count is also on the receipt afterwards. */}
+          <form method="post" action="/api/unfollow-everything" class="inline">
+            <button
+              type="submit"
+              class="ghost small-btn"
+              data-confirm={`Unfollow all ${follows.length}? That is ${countPhrase(follows)}. Your reminders and calendar stay empty until you follow something again.`}
+            >
+              Unfollow all
+            </button>
+          </form>
+        </div>
         <ul class="chips">
           {follows.map((f) => (
             <li class="chip">
