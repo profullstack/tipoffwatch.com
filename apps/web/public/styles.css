@@ -541,6 +541,18 @@ button.following {
   padding: 0.3rem 0.8rem;
   font-size: 0.88rem;
 }
+/* A chip that is a link, which is what a public profile lists.
+   Inherits the body colour rather than taking the global accent: a profile can
+   show sixty of these at once, and sixty accent-coloured pills read as sixty
+   warnings. The pill is already the affordance, so the colour is saved for
+   hover, which is also what the unfollow x below does. */
+.chip a {
+  color: inherit;
+}
+.chip a:hover {
+  color: var(--accent);
+}
+
 /* The unfollow x inside a chip.
    Scoped through .inline deliberately: the button sits in a <form class="inline">,
    and `.inline button` further down the file matches it at the same specificity, so

@@ -885,10 +885,19 @@ export async function removeFollow({ userId, subjectType, subjectId }) {
   await sql`delete from follows where user_id = ${userId} and subject_type = ${subjectType} and subject_id = ${subjectId}`;
 }
 
+/**
+ * Everything a user follows, teams and competitions together.
+ *
+ * `slug` is selected so a caller can link each row to the thing it names. The
+ * private list on /following does not use it -- every chip there is an unfollow
+ * control rather than a link -- but a public profile has nothing to offer but
+ * the link.
+ */
 export async function listFollows(userId) {
   return sql`
     select f.subject_type, f.subject_id,
            coalesce(t.display_name, l.name) as label,
+           coalesce(t.slug, l.slug) as slug,
            coalesce(t.logo_url, l.logo_url) as logo_url,
            coalesce(tl.sport, l.sport) as sport
     from follows f
@@ -897,6 +906,35 @@ export async function listFollows(userId) {
     left join leagues l on f.subject_type = 'league' and l.id = f.subject_id
     where f.user_id = ${userId}
     order by label
+  `;
+}
+
+/**
+ * The same list, capped, for somebody else's profile.
+ *
+ * Capped rather than complete because "follow everything" is one button on
+ * /sports: a page rendering every row would print 359 chips for anyone who
+ * pressed it. The caller already has the true total from profileCounts and says
+ * how many are not shown, so the cap never reads as the whole story.
+ *
+ * Teams sort first. Someone who picked a handful of clubs and then took the whole
+ * catalogue would otherwise have those clubs buried alphabetically among hundreds
+ * of competitions they never chose one at a time.
+ */
+export async function publicFollows(userId, { limit = 60 } = {}) {
+  return sql`
+    select f.subject_type, f.subject_id,
+           coalesce(t.display_name, l.name) as label,
+           coalesce(t.slug, l.slug) as slug,
+           coalesce(t.logo_url, l.logo_url) as logo_url,
+           coalesce(tl.sport, l.sport) as sport
+    from follows f
+    left join teams t on f.subject_type = 'team' and t.id = f.subject_id
+    left join leagues tl on tl.id = t.league_id
+    left join leagues l on f.subject_type = 'league' and l.id = f.subject_id
+    where f.user_id = ${userId}
+    order by (f.subject_type = 'team') desc, label
+    limit ${limit}
   `;
 }
 
@@ -918,6 +956,39 @@ export async function upcomingForUser(userId, { limit = 100 } = {}) {
         or (f.subject_type = 'team' and f.subject_id in (e.home_team_id, e.away_team_id))
       )
     where e.starts_at > now() - interval '3 hours'
+    order by e.starts_at
+    limit ${limit}
+  `;
+}
+
+/**
+ * Somebody else's upcoming games, for their public profile.
+ *
+ * Deliberately not upcomingForUser with a flag. That query stamps every row
+ * `following: true`, which EventRow draws as a star titled "You follow one of
+ * these teams" -- true on the owner's own My games list, a lie on a stranger's
+ * profile, where it would tell every visitor they follow whatever the profile's
+ * owner follows. Here the star is the viewer's business and is left off.
+ *
+ * Finished games are excluded outright rather than kept for three hours the way
+ * My games keeps them. That grace exists so the owner can find a match that just
+ * ended; a visitor reading a profile is asking what is coming, not what was.
+ */
+export async function upcomingForProfile(userId, { limit = 10 } = {}) {
+  return sql`
+    select distinct e.*, l.name as league_name, l.sport, false as following,
+           ht.display_name as home_name, ht.logo_url as home_logo,
+           at.display_name as away_name, at.logo_url as away_logo
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    join follows f on f.user_id = ${userId}
+      and (
+        (f.subject_type = 'league' and f.subject_id = e.league_id)
+        or (f.subject_type = 'team' and f.subject_id in (e.home_team_id, e.away_team_id))
+      )
+    where e.starts_at > now()
     order by e.starts_at
     limit ${limit}
   `;

@@ -365,10 +365,15 @@ app.get('/u/:handle', async (c) => {
     return c.html(await render(<NotFound user={viewer} />), 404);
   }
 
-  const [counts, followers, following, isFollowing] = await Promise.all([
+  const [counts, followers, following, follows, upcoming, isFollowing] = await Promise.all([
     q.profileCounts(profile.id),
     q.followersOf({ userId: profile.id, viewerId: viewer?.id ?? null, limit: 24 }),
     q.followingBy({ userId: profile.id, limit: 24 }),
+    // Which teams, and when they play. The stat row has counted both since the page
+    // was written and named neither, so the only thing a visitor could learn from
+    // "44 teams followed" was the 44.
+    q.publicFollows(profile.id, { limit: 60 }),
+    q.upcomingForProfile(profile.id, { limit: 10 }),
     q.isFollowingUser({ followerId: viewer?.id, followeeId: profile.id }),
   ]);
 
@@ -380,6 +385,8 @@ app.get('/u/:handle', async (c) => {
         counts={counts}
         followers={followers}
         following={following}
+        follows={follows}
+        upcoming={upcoming}
         isFollowing={isFollowing}
         isSelf={isSelf}
       />,

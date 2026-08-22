@@ -1,4 +1,4 @@
-import { LocalTime } from './components.jsx';
+import { EventList, LocalTime } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
 /**
@@ -27,6 +27,8 @@ export const ProfilePage = ({
   counts,
   followers,
   following,
+  follows = [],
+  upcoming = [],
   isFollowing,
   isSelf,
 }) => (
@@ -83,6 +85,49 @@ export const ProfilePage = ({
         <span>Teams followed</span>
       </li>
     </ul>
+
+    {/* What they follow, and what that means is about to happen. Both were counted
+        in the stat row above and named nowhere, which made the number the end of the
+        page rather than the start of it: 44 teams followed, and no way to ask which
+        44 or when any of them play.
+
+        The chips are links, not the unfollow controls the owner gets on /following.
+        Nobody can unfollow on somebody else's behalf, and a chip that did nothing
+        would be the only dead one on the site. */}
+    <h2>Teams &amp; competitions</h2>
+    {follows.length === 0 ? (
+      <p class="empty">Not following any teams yet.</p>
+    ) : (
+      <>
+        <ul class="chips">
+          {follows.map((f) => (
+            <li class="chip">
+              <a href={`/${f.subject_type === 'team' ? 'teams' : 'leagues'}/${f.slug}`}>
+                {f.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+        {/* The list is capped, so say so with the real total rather than letting the
+            last chip imply the end. counts.teams is the count the stat row shows. */}
+        {counts.teams > follows.length ? (
+          <p class="muted small">
+            Showing {follows.length.toLocaleString('en-US')} of{' '}
+            {counts.teams.toLocaleString('en-US')}.
+          </p>
+        ) : null}
+      </>
+    )}
+
+    <h2>Coming up</h2>
+    <EventList
+      events={upcoming}
+      emptyText={
+        follows.length === 0
+          ? 'Nothing coming up yet.'
+          : 'Nothing scheduled for what they follow right now.'
+      }
+    />
 
     <h2>Followers</h2>
     {followers.length === 0 ? (
