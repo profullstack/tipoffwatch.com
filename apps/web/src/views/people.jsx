@@ -12,19 +12,31 @@ import { Layout } from './Layout.jsx';
  * needed to follow a person, and all of it is a liability once the page is public.
  */
 
-const nameOf = (p) => p.display_name ?? `@${p.handle}`;
+/**
+ * What to call somebody in a list.
+ *
+ * A chosen display name, then the handle. Accounts have neither until their owner
+ * visits Settings, and a magic link makes an account without asking -- so this has
+ * to render something for a real person who has published no name at all. It says
+ * so, rather than printing "@null" or falling back to a fragment of their email
+ * address, which they never chose to publish either.
+ */
+const nameOf = (p) => p.display_name ?? (p.handle ? `@${p.handle}` : 'Someone');
 
 /**
  * One person in a follower or following list.
  *
- * Linked only when there is a page at the other end. /u/:handle answers 404 for a
- * profile its owner has hidden, so linking every name put dead links on a public
- * page -- and made hiding your profile look like being deleted. The name still
- * appears: the follow is a fact about the profile being read, and the hidden thing
- * is the page, not the person.
+ * Linked only when there is a page at the other end, which needs both a handle and
+ * a profile its owner has not hidden -- /u/:handle answers 404 for a hidden one,
+ * and there is no URL at all without a handle. Linking unconditionally put dead
+ * links on a public page and made hiding your profile look like being deleted.
+ *
+ * Everyone is still listed. The follow is a fact about the profile being read, and
+ * what somebody has not set up is a page, not their existence: a follower list that
+ * quietly dropped them reported fewer followers than there are.
  */
 const Person = ({ person }) =>
-  person.profile_public ? (
+  person.handle && person.profile_public ? (
     <a href={`/u/${person.handle}`}>{nameOf(person)}</a>
   ) : (
     <span>{nameOf(person)}</span>

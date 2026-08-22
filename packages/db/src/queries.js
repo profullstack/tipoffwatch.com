@@ -304,16 +304,22 @@ export async function isFollowingUser({ followerId, followeeId }) {
 
 /** Counts for a profile header, in one round trip rather than two. */
 /**
- * The three numbers on a profile, counting exactly what the page can show.
+ * The three numbers on a profile, counting exactly what the lists below show.
  *
- * These used to count rows in user_follows outright while the lists below filtered
- * to accounts that have picked a handle -- so a profile followed by somebody who
- * never chose one read "1 Followers" above the words "Nobody yet." The number and
- * the list disagreed, and the number was the one that looked authoritative.
+ * The number and the list disagreed once already, in both possible directions. The
+ * count used to be a raw row count while the lists dropped anyone without a handle,
+ * so a profile followed by somebody who had not picked one read "1 Followers" above
+ * the words "Nobody yet."
  *
- * An account with no handle has no public page by design; there is nothing to put
- * in the list and therefore nothing to count. The block filter is here for the same
- * reason: a viewer who cannot see a follower must not be told one is there.
+ * Making the count match by dropping those followers too was the wrong half to
+ * change: they are real people who really did follow, and a follower count that
+ * silently omits them under-reports the thing it exists to report. So nobody is
+ * filtered here for want of a handle, and the lists no longer filter for it either
+ * -- a follower without one is shown, just not linked, because there is no page to
+ * link to.
+ *
+ * The block filter stays, and stays only on followers, mirroring followersOf: a
+ * viewer who cannot see a follower must not be told one is there.
  *
  * Teams are counted whole rather than capped, because publicFollows caps the chips
  * and needs the real total to say how many it is not showing.
@@ -325,7 +331,6 @@ export async function profileCounts(userId, { viewerId = null } = {}) {
          from user_follows f
          join users u on u.id = f.follower_id
         where f.followee_id = ${userId}
-          and u.handle is not null
           and not exists (
             select 1 from user_blocks b
             where (b.blocker_id = u.id and b.blocked_id = ${viewerId}::uuid)
@@ -333,9 +338,7 @@ export async function profileCounts(userId, { viewerId = null } = {}) {
           )) as followers,
       (select count(*)::int
          from user_follows f
-         join users u on u.id = f.followee_id
-        where f.follower_id = ${userId}
-          and u.handle is not null) as following,
+        where f.follower_id = ${userId}) as following,
       (select count(*)::int from follows where user_id = ${userId}) as teams
   `;
   return row;
@@ -353,7 +356,6 @@ export async function followersOf({ userId, viewerId = null, limit = 100 }) {
     from user_follows f
     join users u on u.id = f.follower_id
     where f.followee_id = ${userId}
-      and u.handle is not null
       and not exists (
         select 1 from user_blocks b
         where (b.blocker_id = u.id and b.blocked_id = ${viewerId}::uuid)
@@ -369,7 +371,7 @@ export async function followingBy({ userId, limit = 100 }) {
     select u.id, u.handle, u.display_name, u.profile_public
     from user_follows f
     join users u on u.id = f.followee_id
-    where f.follower_id = ${userId} and u.handle is not null
+    where f.follower_id = ${userId}
     order by f.created_at desc
     limit ${Math.min(Math.max(Number(limit) || 100, 1), 200)}
   `;

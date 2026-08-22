@@ -91,22 +91,25 @@ describe('the number and the list agree', () => {
     subject = await mkUser('subject@example.test', 'subject');
   });
 
-  test('a follower who never picked a handle is neither counted nor listed', async () => {
-    // The actual production bug: this follower was counted and not listed, so the
-    // page said "1 Followers" over "Nobody yet."
+  test('a follower who never picked a handle is counted AND listed', async () => {
+    // The production bug, and then its overcorrection. A magic link makes an
+    // account without asking for a handle, so this is an ordinary signed-up person
+    // who followed somebody -- not a broken row. Dropping them made the profile
+    // report fewer followers than it has, which is the one thing a follower count
+    // must not do.
     const anon = await mkUser('anon@example.test', null);
     await follow(anon, subject);
 
-    expect((await counts(subject)).followers).toBe(0);
-    expect(await followers(subject)).toEqual([]);
+    expect((await counts(subject)).followers).toBe(1);
+    expect((await followers(subject)).map((p) => p.id)).toEqual([anon]);
   });
 
-  test('a follower with a handle is both counted and listed', async () => {
+  test('a follower with a handle is counted and listed too', async () => {
     const named = await mkUser('named@example.test', 'named');
     await follow(named, subject);
 
-    expect((await counts(subject)).followers).toBe(1);
-    expect((await followers(subject)).map((p) => p.handle)).toEqual(['named']);
+    expect((await counts(subject)).followers).toBe(2);
+    expect((await followers(subject)).map((p) => p.handle)).toContain('named');
   });
 
   test('the same holds for who somebody follows', async () => {
@@ -116,13 +119,14 @@ describe('the number and the list agree', () => {
     await follow(follower, anon);
     await follow(follower, named);
 
-    expect((await counts(follower)).following).toBe(1);
-    expect((await following(follower)).map((p) => p.handle)).toEqual(['named2']);
+    expect((await counts(follower)).following).toBe(2);
+    expect((await following(follower)).map((p) => p.id).sort()).toEqual([anon, named].sort());
   });
 
   test('a blocked follower is hidden from the count as well as the list', async () => {
     // followersOf has always filtered these out. The count did not, so a blocked
-    // viewer saw a number they could not account for.
+    // viewer saw a number they could not account for. This is the one thing the
+    // count is still allowed to leave out, because it is per-viewer.
     const viewer = await mkUser('viewer@example.test', 'viewer');
     const blocker = await mkUser('blocker@example.test', 'blocker');
     await follow(blocker, subject);
@@ -131,10 +135,17 @@ describe('the number and the list agree', () => {
       viewer,
     ]);
 
-    expect((await counts(subject, viewer)).followers).toBe(1);
-    expect((await followers(subject, viewer)).map((p) => p.handle)).toEqual(['named']);
-    // ...and everyone else still sees both.
-    expect((await counts(subject)).followers).toBe(2);
+    expect((await counts(subject, viewer)).followers).toBe(2);
+    expect((await followers(subject, viewer)).map((p) => p.id)).not.toContain(blocker);
+    // ...and everyone else still sees all three.
+    expect((await counts(subject)).followers).toBe(3);
+  });
+
+  test('the count equals the length of the list it sits above', async () => {
+    // The invariant both earlier bugs broke, stated directly rather than implied by
+    // the numbers above.
+    const n = (await counts(subject)).followers;
+    expect((await followers(subject)).length).toBe(n);
   });
 });
 
@@ -189,5 +200,26 @@ describe('how the page renders people', () => {
       followers: [{ id: 4, handle: 'h', display_name: 'Real Name', profile_public: true }],
     });
     expect(out).toContain('Real Name');
+  });
+
+  test('shows a follower who has set no name at all, without inventing one', async () => {
+    const out = await html({
+      followers: [{ id: 5, handle: null, display_name: null, profile_public: true }],
+    });
+    expect(out).toContain('Someone');
+    // Not "@null", which is what naming them by handle produced.
+    expect(out).not.toContain('@null');
+    // And not a link: there is no URL to build without a handle.
+    expect(out).not.toContain('href="/u/null"');
+    expect(out).not.toContain('<p class="empty">Nobody yet.</p>');
+  });
+
+  test('uses a display name even when there is no handle', async () => {
+    // Somebody can set a name in Settings without claiming a handle.
+    const out = await html({
+      followers: [{ id: 6, handle: null, display_name: 'Named Only', profile_public: true }],
+    });
+    expect(out).toContain('Named Only');
+    expect(out).not.toContain('Someone');
   });
 });
