@@ -69,6 +69,30 @@ export async function installSchedules({ log = console.log } = {}) {
   // KB, and every one goes through the metered proxy.
   await queues.plays.add('live-plays', {}, { repeat: { every: 120_000 }, jobId: 'plays' });
 
+  /*
+   * Readers' own channel lists.
+   *
+   * The provider rewrites its numbered event slots close to kickoff, so a list
+   * imported an hour ago has the wrong titles by the time the game starts and the
+   * match finds nothing. There is no cheap poll to lean on: this provider answers
+   * If-Modified-Since with a full 200 and sends no ETag, so every fetch is the
+   * whole file. Each list therefore carries its own refresh_after and this tick
+   * only picks up what is genuinely due; the interval is PLAYLIST_REFRESH_MINUTES
+   * rather than a constant here.
+   *
+   * This line went missing in a rebase and nothing noticed, because the worker on
+   * the other end stayed registered: a consumer with no producer is silent, not
+   * broken. It is the reason the refresh never ran.
+   */
+  await queues.playlists.add(
+    'playlist-refresh',
+    {},
+    {
+      repeat: { every: Math.max(1, config.playlists.refreshMinutes) * 60_000 },
+      jobId: 'playlists',
+    },
+  );
+
   // Tonight and tomorrow, for the leagues that actually have a game then. Measured
   // 2026-08-21: 74 of 359 leagues, one request each without the roster -- about a
   // tenth of a full sweep, so it can run often enough to catch a postponement or a
