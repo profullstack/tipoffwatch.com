@@ -483,6 +483,21 @@ export async function markPlaylistFresh({ userId, contentHash, nextAt }) {
  * added a moment ago, both of which should be picked up on the next tick. Ordered
  * oldest-first so a backlog drains fairly rather than starving whoever sorts last.
  */
+/**
+ * When the next list becomes due, for the idle log line.
+ *
+ * Cheap and answers the question the logs could not: an idle poller and an
+ * unregistered one both printed nothing, so "is the refresh running" was
+ * unanswerable without this.
+ */
+export async function nextPlaylistRefreshAt() {
+  return sql`
+    select min(coalesce(refresh_after, now())) as next_at,
+           count(*)::int as lists
+    from user_playlists
+  `;
+}
+
 export async function playlistsDueForRefresh({ limit = 25 } = {}) {
   return sql`
     select user_id, source_url, label, content_hash

@@ -129,7 +129,25 @@ export async function refreshPlaylist(userId, { knownHash = null } = {}) {
  */
 export async function refreshDuePlaylists({ log = console.log, limit = 25 } = {}) {
   const due = await q.playlistsDueForRefresh({ limit });
-  if (due.length === 0) return { checked: 0, changed: 0, failed: 0 };
+  if (due.length === 0) {
+    /*
+     * Say so out loud, rather than returning in silence.
+     *
+     * This tick logged nothing at all when there was nothing due, which made a
+     * poller that was idle indistinguishable from a poller that was never
+     * registered -- and that is exactly the question asked of it: "is the
+     * five-minute refresh actually running?" could not be answered from the logs,
+     * because the healthy state and the broken state both printed nothing.
+     *
+     * The next due time comes with it, so one line answers both "is it alive" and
+     * "why has it not fetched".
+     */
+    const [next] = await q.nextPlaylistRefreshAt();
+    log(
+      `[playlists] nothing due${next?.next_at ? `, next at ${new Date(next.next_at).toISOString()}` : ' (no lists stored)'}`,
+    );
+    return { checked: 0, changed: 0, failed: 0 };
+  }
 
   let changed = 0;
   let failed = 0;
