@@ -57,13 +57,21 @@ beforeAll(async () => {
   followersSql = lift(source, 'followersOf', [
     ['\\$\\{userId\\}', 1],
     ['\\$\\{viewerId\\}', 2],
-    ['\\$\\{Math\\.min\\(Math\\.max\\(Number\\(limit\\) \\|\\| 100, 1\\), 200\\)\\}', 3],
+    [LIMIT, 3],
+    [OFFSET, 4],
   ]);
   followingSql = lift(source, 'followingBy', [
     ['\\$\\{userId\\}', 1],
-    ['\\$\\{Math\\.min\\(Math\\.max\\(Number\\(limit\\) \\|\\| 100, 1\\), 200\\)\\}', 2],
+    [LIMIT, 2],
+    [OFFSET, 3],
   ]);
 }, 60_000);
+
+// The limit and offset expressions as they are written in queries.js. Named
+// because both list queries share them, and because a change to either is the
+// thing that breaks this file loudly rather than quietly.
+const LIMIT = '\\$\\{Math\\.min\\(Math\\.max\\(Number\\(limit\\) \\|\\| 100, 1\\), 200\\)\\}';
+const OFFSET = '\\$\\{Math\\.max\\(Number\\(offset\\) \\|\\| 0, 0\\)\\}';
 
 const rows = async (sql, params) => (await db.query(sql, params)).rows;
 const one = async (sql, params) => (await rows(sql, params))[0];
@@ -81,8 +89,8 @@ const follow = (a, b) =>
   db.query(`insert into user_follows (follower_id, followee_id) values ($1,$2)`, [a, b]);
 
 const counts = async (userId, viewerId = null) => one(countsSql, [userId, viewerId]);
-const followers = async (userId, viewerId = null) => rows(followersSql, [userId, viewerId, 24]);
-const following = async (userId) => rows(followingSql, [userId, 24]);
+const followers = async (userId, viewerId = null) => rows(followersSql, [userId, viewerId, 24, 0]);
+const following = async (userId) => rows(followingSql, [userId, 24, 0]);
 
 describe('the number and the list agree', () => {
   let subject;

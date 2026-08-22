@@ -157,33 +157,128 @@ export const ProfilePage = ({
       }
     />
 
-    <h2>Followers</h2>
-    {followers.length === 0 ? (
-      <p class="empty">Nobody yet.</p>
-    ) : (
-      <ul class="people">
-        {followers.map((p) => (
-          <li>
-            <Person person={p} />
-          </li>
-        ))}
-      </ul>
-    )}
+    {/* Both lists are a preview of a page of their own. The profile shows the
+        most recent handful and says how many there are in total, so the heading
+        is never a promise the list below it does not keep. */}
+    <PeopleSection
+      title="Followers"
+      href={`/u/${profile.handle}/followers`}
+      people={followers}
+      total={counts.followers}
+      emptyText="Nobody yet."
+    />
 
-    <h2>Following</h2>
-    {following.length === 0 ? (
-      <p class="empty">Not following anyone yet.</p>
-    ) : (
-      <ul class="people">
-        {following.map((p) => (
-          <li>
-            <Person person={p} />
-          </li>
-        ))}
-      </ul>
-    )}
+    <PeopleSection
+      title="Following"
+      href={`/u/${profile.handle}/following`}
+      people={following}
+      total={counts.following}
+      emptyText="Not following anyone yet."
+    />
   </Layout>
 );
+
+/**
+ * One of the two people lists on a profile, as a preview.
+ *
+ * The heading links to the full page whether or not the preview is truncated, so
+ * the URL is discoverable rather than something you have to know exists. The "see
+ * all" line only appears when there is genuinely more, and names the real total --
+ * the number that has now twice been the half of this page that lied.
+ */
+const PeopleSection = ({ title, href, people, total, emptyText }) => (
+  <>
+    <h2>
+      <a href={href}>{title}</a>
+    </h2>
+    {people.length === 0 ? (
+      <p class="empty">{emptyText}</p>
+    ) : (
+      <>
+        <ul class="people">
+          {people.map((p) => (
+            <li>
+              <Person person={p} />
+            </li>
+          ))}
+        </ul>
+        {total > people.length ? (
+          <p class="muted small">
+            <a href={href}>See all {total.toLocaleString('en-US')}</a>
+          </p>
+        ) : null}
+      </>
+    )}
+  </>
+);
+
+/**
+ * The whole of one list, on its own page.
+ *
+ * Paged rather than capped. The profile's preview stops at 24 and says so; this
+ * page is where "and the other 900" has to actually be answerable, so a cap here
+ * would just move the same lie one click deeper.
+ *
+ * Offset paging, not a cursor: the ordering is newest-follow-first with the id as
+ * a tiebreak, which is stable enough for a list that changes when somebody presses
+ * a button, and the alternative is a cursor scheme for a page almost nobody will
+ * reach the second screen of.
+ */
+export const PeopleListPage = ({ user, profile, kind, people, total, page, pageSize }) => {
+  const title = kind === 'followers' ? 'Followers' : 'Following';
+  const start = page * pageSize;
+  const hasPrev = page > 0;
+  const hasNext = start + people.length < total;
+  const href = (p) => `/u/${profile.handle}/${kind}${p > 0 ? `?page=${p + 1}` : ''}`;
+
+  return (
+    <Layout
+      title={`${title} · ${nameOf(profile)}`}
+      user={user}
+      canonical={`/u/${profile.handle}/${kind}`}
+    >
+      <div class="page-head">
+        <h1>{title}</h1>
+        <a class="ghost small-btn" href={`/u/${profile.handle}`}>
+          Back to {nameOf(profile)}
+        </a>
+      </div>
+
+      <p class="muted">
+        {total === 0
+          ? kind === 'followers'
+            ? `Nobody follows ${nameOf(profile)} yet.`
+            : `${nameOf(profile)} is not following anyone yet.`
+          : `${total.toLocaleString('en-US')} ${total === 1 ? 'person' : 'people'}.`}
+      </p>
+
+      {people.length === 0 ? null : (
+        <ul class="people">
+          {people.map((p) => (
+            <li>
+              <Person person={p} />
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {hasPrev || hasNext ? (
+        <nav class="pager" aria-label="Pages">
+          {hasPrev ? (
+            <a class="ghost small-btn" href={href(page - 1)}>
+              Newer
+            </a>
+          ) : null}
+          {hasNext ? (
+            <a class="ghost small-btn" href={href(page + 1)}>
+              Older
+            </a>
+          ) : null}
+        </nav>
+      ) : null}
+    </Layout>
+  );
+};
 
 /** Every conversation, newest first, with the last thing said in each. */
 export const Inbox = ({ user, threads }) => (

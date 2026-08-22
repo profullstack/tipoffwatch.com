@@ -350,7 +350,7 @@ export async function profileCounts(userId, { viewerId = null } = {}) {
  * A blocked account must not be able to see itself listed on the blocker's profile
  * and must not appear on it either, so the filter runs in both directions.
  */
-export async function followersOf({ userId, viewerId = null, limit = 100 }) {
+export async function followersOf({ userId, viewerId = null, limit = 100, offset = 0 }) {
   return sql`
     select u.id, u.handle, u.display_name, u.profile_public
     from user_follows f
@@ -361,19 +361,21 @@ export async function followersOf({ userId, viewerId = null, limit = 100 }) {
         where (b.blocker_id = u.id and b.blocked_id = ${viewerId}::uuid)
            or (b.blocker_id = ${viewerId}::uuid and b.blocked_id = u.id)
       )
-    order by f.created_at desc
+    order by f.created_at desc, u.id
     limit ${Math.min(Math.max(Number(limit) || 100, 1), 200)}
+    offset ${Math.max(Number(offset) || 0, 0)}
   `;
 }
 
-export async function followingBy({ userId, limit = 100 }) {
+export async function followingBy({ userId, limit = 100, offset = 0 }) {
   return sql`
     select u.id, u.handle, u.display_name, u.profile_public
     from user_follows f
     join users u on u.id = f.followee_id
     where f.follower_id = ${userId}
-    order by f.created_at desc
+    order by f.created_at desc, u.id
     limit ${Math.min(Math.max(Number(limit) || 100, 1), 200)}
+    offset ${Math.max(Number(offset) || 0, 0)}
   `;
 }
 

@@ -33,7 +33,7 @@ import {
   TeamPage,
   WatchPage,
 } from './views/pages.jsx';
-import { Inbox, ProfilePage, Thread } from './views/people.jsx';
+import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 
 export const app = new Hono();
 
@@ -349,21 +349,34 @@ const MESSAGE_RATE_PER_HOUR = 60;
  * shows only what its owner chose to put there. `profile_public` is the opt-out,
  * and the owner still sees their own page so it never looks broken to them.
  */
-app.get('/u/:handle', async (c) => {
-  const viewer = c.get('user');
+/**
+ * Resolve a /u/:handle page, or say why there is no page.
+ *
+ * Three routes hang off one handle now, and every one of them has to apply the
+ * same two gates. Written out three times, the risk is not that one is wrong today
+ * but that the fourth page forgets the block check -- which fails open, silently,
+ * and only for the person it matters to. Returns `{ profile, isSelf }`, or `null`
+ * when the caller should render NotFound.
+ */
+async function resolveProfile(c, viewer) {
   const profile = await q.getUserByHandle(c.req.param('handle'));
-  if (!profile) return c.html(await render(<NotFound user={viewer} />), 404);
+  if (!profile) return null;
 
   const isSelf = viewer?.id === profile.id;
-  if (!profile.profile_public && !isSelf) {
-    return c.html(await render(<NotFound user={viewer} />), 404);
-  }
+  if (!profile.profile_public && !isSelf) return null;
 
   // A blocked viewer gets the same answer as a stranger looking for a name that
   // does not exist. Anything more specific confirms the block.
-  if (viewer && !isSelf && (await q.blockExists({ a: viewer.id, b: profile.id }))) {
-    return c.html(await render(<NotFound user={viewer} />), 404);
-  }
+  if (viewer && !isSelf && (await q.blockExists({ a: viewer.id, b: profile.id }))) return null;
+
+  return { profile, isSelf };
+}
+
+app.get('/u/:handle', async (c) => {
+  const viewer = c.get('user');
+  const found = await resolveProfile(c, viewer);
+  if (!found) return c.html(await render(<NotFound user={viewer} />), 404);
+  const { profile, isSelf } = found;
 
   const [counts, followers, following, follows, upcoming, isFollowing] = await Promise.all([
     // Same viewer as the follower list below, so the number and the list agree
@@ -395,6 +408,64 @@ app.get('/u/:handle', async (c) => {
     ),
   );
 });
+
+/**
+ * The whole follower or following list, on its own page.
+ *
+ * The profile shows the newest 24 of each. That is a preview, and a preview is not
+ * somewhere you can answer "who follows this person" from -- so each list gets a
+ * page, and the profile's heading links to it.
+ *
+ * One handler for both directions rather than two near-identical ones: the gates,
+ * the paging and the markup are the same, and only which query runs differs. The
+ * difference that matters is that followers are filtered for the viewer's blocks
+ * and following is not, which is the same asymmetry profileCounts has.
+ */
+const PEOPLE_PAGE_SIZE = 50;
+
+for (const kind of ['followers', 'following']) {
+  app.get(`/u/:handle/${kind}`, async (c) => {
+    const viewer = c.get('user');
+    const found = await resolveProfile(c, viewer);
+    if (!found) return c.html(await render(<NotFound user={viewer} />), 404);
+    const { profile } = found;
+
+    // ?page= is 1-based for a reader and 0-based here. Anything unparseable is
+    // page one rather than an error: a mangled query string should not be a wall.
+    const page = Math.max((Number.parseInt(c.req.query('page'), 10) || 1) - 1, 0);
+    const viewerId = viewer?.id ?? null;
+
+    const [counts, people] = await Promise.all([
+      q.profileCounts(profile.id, { viewerId }),
+      kind === 'followers'
+        ? q.followersOf({
+            userId: profile.id,
+            viewerId,
+            limit: PEOPLE_PAGE_SIZE,
+            offset: page * PEOPLE_PAGE_SIZE,
+          })
+        : q.followingBy({
+            userId: profile.id,
+            limit: PEOPLE_PAGE_SIZE,
+            offset: page * PEOPLE_PAGE_SIZE,
+          }),
+    ]);
+
+    return c.html(
+      await render(
+        <PeopleListPage
+          user={viewer}
+          profile={profile}
+          kind={kind}
+          people={people}
+          total={kind === 'followers' ? counts.followers : counts.following}
+          page={page}
+          pageSize={PEOPLE_PAGE_SIZE}
+        />,
+      ),
+    );
+  });
+}
 
 for (const [path, fn] of [
   ['/api/users/follow', q.followUser],

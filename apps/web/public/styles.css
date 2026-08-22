@@ -1854,7 +1854,12 @@ ul.people {
   flex-wrap: wrap;
   gap: 0.4rem;
 }
-ul.people li a {
+/* Both the linked and the unlinked entry, because not everyone in these lists has
+   a page. Styling only the anchor left somebody with no handle sitting as bare
+   text in a row of pills, reading as a rendering fault rather than as a person who
+   has not named themselves. Only the link takes the hover. */
+ul.people li a,
+ul.people li span {
   display: inline-block;
   padding: 0.3rem 0.65rem;
   border: 1px solid var(--line);
@@ -1864,8 +1869,18 @@ ul.people li a {
   text-decoration: none;
   font-size: 0.85rem;
 }
+ul.people li span {
+  color: var(--muted);
+}
 ul.people li a:hover {
   border-color: var(--accent);
+}
+
+/* Newer/older on a list that runs past one screen. */
+.pager {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.25rem 0;
 }
 
 /* An unread count beside a nav item. Sized in em so it tracks the link. */
