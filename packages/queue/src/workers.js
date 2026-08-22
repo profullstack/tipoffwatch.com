@@ -1,8 +1,15 @@
-import { config } from '@tipoff/config';
+import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendEmail, sendPush } from '@tipoff/notify';
 import { refreshDuePlaylists } from '@tipoff/playlists';
-import { syncAll, syncCatalogue, syncLiveScores, syncNear, syncPlays } from '@tipoff/sports';
+import {
+  syncAll,
+  syncBrandCatalog,
+  syncCatalogue,
+  syncLiveScores,
+  syncNear,
+  syncPlays,
+} from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues } from './index.js';
 
@@ -18,29 +25,47 @@ const log = (...a) => console.log('[worker]', ...a);
  * than a second fan-out.
  */
 async function runScan() {
-  const offsets = await q.distinctReminderOffsets(config.reminders.defaultOffsets);
   let matched = 0;
 
-  for (const offsetMinutes of offsets) {
-    // The lookback must exceed the scan interval or a tick that runs late leaves a
-    // gap no later tick will ever revisit.
-    const events = await q.eventsDueForReminder({
-      offsetMinutes,
-      lookbackSeconds: Math.max(config.reminders.maxLatenessSeconds, 120),
-    });
+  /*
+   * One pass per reminder class.
+   *
+   * A fixture with a kickoff is measured against offsets_minutes (60, 1); an event
+   * that only has a date is measured against date_offsets_minutes (1440, 0).
+   * Scanning both with one list is how you tell someone their release "starts in
+   * one minute" at 11:59, against a noon anchor nobody chose.
+   */
+  for (const timed of [true, false]) {
+    const defaults = timed ? config.reminders.defaultOffsets : config.reminders.dateOffsets;
+    const offsets = await q.distinctReminderOffsets(defaults, { timed });
 
-    for (const e of events) {
-      // The deterministic job id is doing the deduplication here. An event stays
-      // inside the lookback window for several minutes, so it matches on ten
-      // consecutive ticks; BullMQ returns the existing job for a known id rather
-      // than creating a second fan-out, and completed jobs are retained long
-      // enough (removeOnComplete.age) to outlive the window.
-      await queues.fanout.add(
-        'fanout',
-        { eventId: e.id, offsetMinutes, startsAt: e.startsAt },
-        { jobId: `fo-${e.id}-${offsetMinutes}` },
-      );
-      matched++;
+    for (const offsetMinutes of offsets) {
+      // The lookback must exceed the scan interval or a tick that runs late leaves
+      // a gap no later tick will ever revisit.
+      const events = await q.eventsDueForReminder({
+        offsetMinutes,
+        lookbackSeconds: Math.max(config.reminders.maxLatenessSeconds, 120),
+        timed,
+      });
+
+      for (const e of events) {
+        // The deterministic job id is doing the deduplication here. An event stays
+        // inside the lookback window for several minutes, so it matches on ten
+        // consecutive ticks; BullMQ returns the existing job for a known id rather
+        // than creating a second fan-out, and completed jobs are retained long
+        // enough (removeOnComplete.age) to outlive the window.
+        await queues.fanout.add(
+          'fanout',
+          // starts_at, NOT startsAt. The driver returns columns as written and
+          // there is no camelCase transform, so this was undefined -- which made
+          // dueAt NaN in the fan-out, and `NaN > maxLateness` is false, so the
+          // guard that drops a reminder rather than sending it forty minutes late
+          // could never fire at all.
+          { eventId: e.id, offsetMinutes, startsAt: e.starts_at, timed },
+          { jobId: `fo-${e.id}-${offsetMinutes}` },
+        );
+        matched++;
+      }
     }
   }
   // Says "matched", not "queued": most of these are the same events re-matching on
@@ -67,7 +92,7 @@ async function runScan() {
  * when someone follows the team mid-fan-out.
  */
 async function runFanout(job) {
-  const { eventId, offsetMinutes, startsAt } = job.data;
+  const { eventId, offsetMinutes, startsAt, timed = true } = job.data;
 
   const dueAt = new Date(startsAt).getTime() - offsetMinutes * 60_000;
   const lateBy = (Date.now() - dueAt) / 1000;
@@ -93,7 +118,7 @@ async function runFanout(job) {
     const userIds = rows.map((r) => r.user_id);
     await queues.batch.add(
       'batch',
-      { eventId, offsetMinutes, userIds },
+      { eventId, offsetMinutes, userIds, timed },
       { jobId: `bt-${eventId}-${offsetMinutes}-${after}` },
     );
 
@@ -118,7 +143,7 @@ async function runFanout(job) {
  * one -- the right way round for something that buzzes a phone.
  */
 async function runBatch(job) {
-  const { eventId, offsetMinutes, userIds } = job.data;
+  const { eventId, offsetMinutes, userIds, timed = true } = job.data;
   const event = await q.getEvent(eventId);
   if (!event) return { skipped: 'event-gone' };
 
@@ -126,9 +151,16 @@ async function runBatch(job) {
   const claims = [];
 
   for (const t of targets) {
-    // A user only wants the offsets they asked for. The scan is global, so this is
-    // where a 60-minute reminder is withheld from someone who only wants 1 minute.
-    if (!t.offsets_minutes.includes(offsetMinutes)) continue;
+    /*
+     * A user only wants the offsets they asked for, from the RIGHT list.
+     *
+     * The scan is global, so this is where a 60-minute reminder is withheld from
+     * someone who only wants 1 minute -- and reading the wrong list here would
+     * silently deliver nothing at all, because 1440 is never in offsets_minutes
+     * and 60 is never in date_offsets_minutes.
+     */
+    const wanted = timed ? t.offsets_minutes : t.date_offsets_minutes;
+    if (!wanted.includes(offsetMinutes)) continue;
 
     for (const channel of t.channels) {
       if (channel === 'webpush' && t.push_subscriptions.length === 0) continue;
@@ -189,9 +221,23 @@ export function startWorkers({ concurrency = {} } = {}) {
         // Explicit rather than a ternary chain: three kinds share this queue so
         // that concurrency 1 serialises them, and an unknown kind must not
         // silently fall through to the most expensive one.
-        if (job.data.kind === 'catalogue') return syncCatalogue();
-        if (job.data.kind === 'near') return syncNear();
-        return syncAll();
+        /*
+         * A brand runs only the providers it declares.
+         *
+         * The sports paths below are ESPN's, and a brand that does not list espn
+         * must not walk 354 leagues it has no interest in -- that is 700 upstream
+         * requests spent populating a section the site does not even route to.
+         */
+        const sports = brand.providers.includes('espn');
+
+        if (job.data.kind === 'catalogue') return sports ? syncCatalogue() : { skipped: 'no espn' };
+        if (job.data.kind === 'near') return sports ? syncNear() : { skipped: 'no espn' };
+
+        const out = {};
+        if (sports) out.sports = await syncAll();
+        // Everything that is not ESPN: tv, film, anime, music, spaceflight.
+        out.catalog = await syncBrandCatalog({ force: Boolean(job.data?.force) });
+        return out;
       },
       {
         connection,

@@ -1,3 +1,4 @@
+import { Word } from '@tipoff/config';
 import { EventList, LocalTime } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
@@ -110,7 +111,7 @@ export const ProfilePage = ({
       </li>
       <li>
         <strong class="num">{counts.teams.toLocaleString('en-US')}</strong>
-        <span>Teams followed</span>
+        <span>{Word.participants} followed</span>
       </li>
     </ul>
 

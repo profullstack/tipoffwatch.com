@@ -1,3 +1,4 @@
+import { brand, Word } from '@tipoff/config';
 import { Layout } from './Layout.jsx';
 
 /**
@@ -22,24 +23,28 @@ export const Feeds = ({ user, sports, leagues }) => (
     <h2>Everything</h2>
     <ul class="leagues">
       <li>
-        <a href="/feeds/all.xml">All sports</a>
-        <span class="muted small">every league, next 150 fixtures</span>
+        <a href="/feeds/all.xml">Everything</a>
+        <span class="muted small">
+          every {brand.words.collection}, next 150 {brand.words.events}
+        </span>
       </li>
     </ul>
 
-    <h2>By sport</h2>
+    <h2>By {brand.words.category}</h2>
     <ul class="sports">
       {sports.map((s) => (
         <li>
           <a href={`/feeds/sport/${s.sport}.xml`}>
             <strong>{s.sport.replace(/-/g, ' ')}</strong>
-            <span class="muted">{s.leagues} leagues</span>
+            <span class="muted">
+              {s.leagues} {brand.words.collections}
+            </span>
           </a>
         </li>
       ))}
     </ul>
 
-    <h2>By league</h2>
+    <h2>By {brand.words.collection}</h2>
     <p class="muted small">
       Busiest first. Every league has a feed at <code>/feeds/league/&lt;slug&gt;.xml</code>
       and a calendar at <code>/calendar/league/&lt;slug&gt;.ics</code>, whether or not it is listed
@@ -56,7 +61,7 @@ export const Feeds = ({ user, sports, leagues }) => (
       ))}
     </ul>
 
-    <h2>Teams</h2>
+    <h2>{Word.participants}</h2>
     <p class="muted">
       Any team page has a feed at <code>/feeds/team/&lt;slug&gt;.xml</code> — the slug is the one in
       its URL.

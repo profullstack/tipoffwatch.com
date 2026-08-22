@@ -32,7 +32,14 @@ const bool = (name, fallback) => {
   return raw === '1' || raw.toLowerCase() === 'true';
 };
 
+export { brand, brands, href, Word } from './brands.js';
+
+import { brand } from './brands.js';
+
 export const config = {
+  /** Which site this process is serving. See packages/config/src/brands.js. */
+  brand,
+
   env: opt('NODE_ENV', 'development'),
   isProd: opt('NODE_ENV', 'development') === 'production',
 
@@ -241,6 +248,20 @@ export const config = {
       .split(',')
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n) && n > 0),
+    /*
+     * Minutes before an event that only has a DATE.
+     *
+     * Rare in sport and normal everywhere else: a playoff game scheduled before
+     * its slot is sold, a rained-off fixture listed as "Saturday, TBD". Measured
+     * against the noon anchor those are stored at, so 1440 is the day before and
+     * 0 is on the day. Zero is allowed here and rejected above, because "at the
+     * moment it happens" is a real choice for a date and meaningless for a time
+     * that already has a one-minute offset.
+     */
+    dateOffsets: opt('REMINDER_DATE_OFFSETS', '1440,0')
+      .split(',')
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n >= 0),
     /** Subscribers pulled per fan-out page. Queue depth stays proportional to
      *  batches, not to followers -- see packages/queue. */
     batchSize: num('REMINDER_BATCH_SIZE', 500),

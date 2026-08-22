@@ -1,4 +1,4 @@
-import { config } from '@tipoff/config';
+import { brand, config, href, Word } from '@tipoff/config';
 import { html } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 
@@ -13,14 +13,9 @@ export const Layout = (props) => (
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
       <title>
-        {props.title ? `${props.title} · TipoffWatch` : 'TipoffWatch — never miss a game'}
+        {props.title ? `${props.title} · ${brand.name}` : `${brand.name} — ${brand.tagline}`}
       </title>
-      <meta
-        name="description"
-        content={
-          props.description ?? 'Follow any team in the world and get told before they play. Free.'
-        }
-      />
+      <meta name="description" content={props.description ?? brand.description} />
       {/* Matches the stylesheet's ground so browser chrome and the PWA splash do
           not flash white before a dark page paints. */}
       <meta name="theme-color" content="#12161f" />
@@ -50,7 +45,7 @@ export const Layout = (props) => (
       <link
         rel="alternate"
         type="application/rss+xml"
-        title="TipoffWatch — every sport"
+        title={`${brand.name} — everything`}
         href="/feeds/all.xml"
       />
       {props.feedUrl ? (
@@ -119,8 +114,8 @@ export const Layout = (props) => (
           />
         </a>
         <nav>
-          <a href="/sports">Sports</a>
-          {props.user ? <a href="/following">My games</a> : null}
+          <a href={href.category()}>{Word.categories}</a>
+          {props.user ? <a href="/following">{brand.copy.mine}</a> : null}
           {/* The count rides on the user, set once in middleware, so a view stays
               a view and no render call has to remember to pass it. */}
           {props.user ? (
@@ -160,7 +155,7 @@ export const Layout = (props) => (
           's public API. Not affiliated with ESPN.
         </p>
         <p class="muted">
-          <a href="/sports">Browse sports</a> · <a href="/about">About</a> ·{' '}
+          <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
           <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
         </p>
       </footer>

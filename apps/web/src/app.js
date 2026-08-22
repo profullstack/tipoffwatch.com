@@ -1,5 +1,5 @@
 import * as auth from '@tipoff/auth';
-import { config } from '@tipoff/config';
+import { brand, config, href } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
@@ -131,6 +131,19 @@ async function cached(c, key, ttl, produce) {
 
 app.get('/healthz', (c) => c.text('ok'));
 
+/*
+ * Categories this brand does not carry, and where to send people instead.
+ *
+ * Declared per brand rather than coded here, so the sports site has none and the
+ * genre site points at the sports one. 302 and not 301 on purpose: a permanent
+ * redirect is cached by browsers more or less forever, so choosing to serve the
+ * category here later would still bounce every existing reader away.
+ */
+for (const [name, target] of Object.entries(brand.elsewhere)) {
+  app.get(`/${name}`, (c) => c.redirect(target, 302));
+  app.get(`/${brand.paths.category}/${name}`, (c) => c.redirect(target, 302));
+}
+
 app.get('/', async (c) => {
   const today = new Date().toISOString().slice(0, 10);
   const viewer = c.get('user');
@@ -140,7 +153,7 @@ app.get('/', async (c) => {
   });
 });
 
-app.get('/sports', async (c) => {
+app.get(`/${brand.paths.category}`, async (c) => {
   const user = c.get('user');
   // Signed out this is byte-identical and cached; signed in it carries their own
   // follow counts, and cached() already declines to store a signed-in render.
@@ -166,13 +179,13 @@ app.get('/sports', async (c) => {
 app.post('/api/follow-all', async (c) => {
   const user = requireUser(c);
   const added = await q.followAllLeagues(user.id);
-  return respond(c, { json: { added }, redirectTo: `/sports?followed=${added}` });
+  return respond(c, { json: { added }, redirectTo: `${href.category()}?followed=${added}` });
 });
 
 app.post('/api/unfollow-all', async (c) => {
   const user = requireUser(c);
   const removed = await q.unfollowAllLeagues(user.id);
-  return respond(c, { json: { removed }, redirectTo: `/sports?unfollowed=${removed}` });
+  return respond(c, { json: { removed }, redirectTo: `${href.category()}?unfollowed=${removed}` });
 });
 
 /**
@@ -194,7 +207,7 @@ app.post('/api/unfollow-everything', async (c) => {
   });
 });
 
-app.get('/sports/:sport', async (c) => {
+app.get(`/${brand.paths.category}/:sport`, async (c) => {
   const user = c.get('user');
   const sport = c.req.param('sport');
   const leagues = await q.leaguesForSport(sport, user?.id ?? null);
@@ -202,7 +215,7 @@ app.get('/sports/:sport', async (c) => {
   return c.html(await render(<SportPage user={user} sport={sport} leagues={leagues} />));
 });
 
-app.get('/leagues/:slug', async (c) => {
+app.get(`/${brand.paths.collection}/:slug`, async (c) => {
   const user = c.get('user');
   const slug = c.req.param('slug');
   const league = await q.getLeagueBySlug(slug);
@@ -226,7 +239,7 @@ app.get('/leagues/:slug', async (c) => {
   });
 });
 
-app.get('/teams/:slug', async (c) => {
+app.get(`/${brand.paths.participant}/:slug`, async (c) => {
   const user = c.get('user');
   const team = await q.getTeamBySlug(c.req.param('slug'));
   if (!team) return c.html(await render(<NotFound user={user} />), 404);
@@ -1292,7 +1305,7 @@ app.get('/feeds/:scope/:file', async (c) => {
       description: `Upcoming fixtures for ${label}.`,
       feedUrl: `${config.siteUrl}/feeds/${scope}/${key}.xml`,
       siteUrl: config.siteUrl,
-      link: scope === 'league' ? `${config.siteUrl}/leagues/${key}` : config.siteUrl,
+      link: scope === 'league' ? `${config.siteUrl}${href.collection(key)}` : config.siteUrl,
     }),
   );
 });
@@ -1338,7 +1351,7 @@ app.get('/sitemap.xml', async (c) => {
 });
 
 app.get('/sitemaps/static.xml', (c) => {
-  const paths = ['/', '/sports', '/about', '/login', '/signup'];
+  const paths = ['/', href.category(), '/about', '/login', '/signup'];
   c.header('content-type', 'application/xml');
   return c.body(
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths
@@ -1377,7 +1390,7 @@ app.get('/sitemaps/leagues.xml', async (c) => {
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${leagues
       .map(
         (l) =>
-          `<url><loc>${config.siteUrl}/leagues/${l.slug}</loc><changefreq>daily</changefreq></url>`,
+          `<url><loc>${config.siteUrl}${href.collection(l.slug)}</loc><changefreq>daily</changefreq></url>`,
       )
       .join('')}</urlset>`,
   );

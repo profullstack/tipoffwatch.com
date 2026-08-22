@@ -1,3 +1,4 @@
+import { brand, href, Word } from '@tipoff/config';
 import { assetUrl } from '../lib/asset-version.js';
 import { EventList, FollowButton, KickoffTime, LocalTime, TeamRow } from './components.jsx';
 import { Layout } from './Layout.jsx';
@@ -102,17 +103,14 @@ const BroadcastMarkets = ({ event }) => {
 export const Landing = ({ user, today, vapidKey }) => (
   <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
     <section class="hero">
-      <h1>Never miss a game.</h1>
-      <p>
-        Follow any team in the world — 354 leagues across 17 sports — and get a web notification and
-        an email an hour before kickoff, and again one minute out.
-      </p>
+      <h1>{brand.copy.heroTitle}</h1>
+      <p>{brand.copy.heroBody}</p>
       <p class="hero-actions">
-        <a class="cta" href="/sports">
+        <a class="cta" href={href.category()}>
           {user ? 'Find your teams' : "Start following — it's free"}
         </a>
-        <a class="ghost" href="/sports">
-          Browse by sport
+        <a class="ghost" href={href.category()}>
+          {brand.copy.browse}
         </a>
       </p>
       <p class="muted small">Free forever. No app to install — add it to your home screen.</p>
@@ -127,8 +125,8 @@ export const Landing = ({ user, today, vapidKey }) => (
 
 /** Step 1 of the picker: sport. */
 export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
-  <Layout title="Sports" user={user} canonical="/sports">
-    <h1>Browse by sport</h1>
+  <Layout title="Sports" user={user} canonical={href.category()}>
+    <h1>{brand.copy.browse}</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
 
     {/* Follow everything, with the size of "everything" stated before it is
@@ -164,7 +162,7 @@ export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
           {leagueCounts.following > 0 ? (
             <form method="post" action="/api/unfollow-all" class="inline">
               <button class="ghost" type="submit">
-                Unfollow all leagues
+                Unfollow all {brand.words.collections}
               </button>
             </form>
           ) : null}
@@ -172,14 +170,14 @@ export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
       </section>
     ) : null}
     <ol class="crumbs" aria-label="Breadcrumb">
-      <li aria-current="page">Sport</li>
-      <li>League</li>
-      <li>Team</li>
+      <li aria-current="page">{Word.category}</li>
+      <li>{Word.collection}</li>
+      <li>{Word.participant}</li>
     </ol>
     <ul class="sports">
       {sports.map((s) => (
         <li>
-          <a href={`/sports/${s.sport}`}>
+          <a href={href.category(s.sport)}>
             <strong>{s.sport.replace(/-/g, ' ')}</strong>
             <span class="muted">{s.leagues} leagues</span>
           </a>
@@ -191,10 +189,10 @@ export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
 
 /** Step 2: league. Following a whole league is offered here too. */
 export const SportPage = ({ user, sport, leagues }) => (
-  <Layout title={sport} user={user} canonical={`/sports/${sport}`}>
+  <Layout title={sport} user={user} canonical={href.category(sport)}>
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
-        <a href="/sports">Sports</a>
+        <a href={href.category()}>{Word.collections}</a>
       </li>
       <li aria-current="page">{sport.replace(/-/g, ' ')}</li>
     </ol>
@@ -203,13 +201,13 @@ export const SportPage = ({ user, sport, leagues }) => (
     <ul class="leagues">
       {leagues.map((l) => (
         <li>
-          <a href={`/leagues/${l.slug}`}>{l.name}</a>
+          <a href={href.collection(l.slug)}>{l.name}</a>
           <FollowButton
             user={user}
             subjectType="league"
             subjectId={l.id}
             following={l.following}
-            next={`/sports/${sport}`}
+            next={href.category(sport)}
             label="league"
           />
         </li>
@@ -223,16 +221,16 @@ export const LeaguePage = ({ user, league, teams, events, following }) => (
   <Layout
     title={league.name}
     user={user}
-    canonical={`/leagues/${league.slug}`}
+    canonical={href.collection(league.slug)}
     feedUrl={`/feeds/league/${league.slug}.xml`}
     feedTitle={`${league.name} fixtures`}
   >
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
-        <a href="/sports">Sports</a>
+        <a href={href.category()}>{Word.collections}</a>
       </li>
       <li>
-        <a href={`/sports/${league.sport}`}>{league.sport.replace(/-/g, ' ')}</a>
+        <a href={href.category(league.sport)}>{league.sport.replace(/-/g, ' ')}</a>
       </li>
       <li aria-current="page">{league.name}</li>
     </ol>
@@ -244,24 +242,21 @@ export const LeaguePage = ({ user, league, teams, events, following }) => (
         subjectType="league"
         subjectId={league.id}
         following={following}
-        next={`/leagues/${league.slug}`}
+        next={href.collection(league.slug)}
         label="every game"
       />
     </div>
-    <p class="muted small">
-      Following the league notifies you about every fixture in it. Follow individual teams below to
-      hear only about them.
-    </p>
+    <p class="muted small">{brand.copy.followCollectionBlurb}</p>
 
-    <h2>Teams ({teams.length})</h2>
+    <h2>
+      {Word.participants} ({teams.length})
+    </h2>
     {teams.length === 0 ? (
-      <p class="empty">
-        No teams recorded yet — they appear once this league's fixtures are synced.
-      </p>
+      <p class="empty">{brand.copy.emptyParticipants}</p>
     ) : (
       <ul class="teams">
         {teams.map((t) => (
-          <TeamRow team={t} user={user} next={`/leagues/${league.slug}`} />
+          <TeamRow team={t} user={user} next={href.collection(league.slug)} />
         ))}
       </ul>
     )}
@@ -284,22 +279,22 @@ export const TeamPage = ({ user, team, events, following }) => (
   <Layout
     title={team.display_name}
     user={user}
-    canonical={`/teams/${team.slug}`}
+    canonical={href.participant(team.slug)}
     feedUrl={`/feeds/team/${team.slug}.xml`}
     feedTitle={`${team.display_name} fixtures`}
   >
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
-        <a href="/sports">Sports</a>
+        <a href={href.category()}>{Word.collections}</a>
       </li>
       {team.sport ? (
         <li>
-          <a href={`/sports/${team.sport}`}>{team.sport.replace(/-/g, ' ')}</a>
+          <a href={href.category(team.sport)}>{team.sport.replace(/-/g, ' ')}</a>
         </li>
       ) : null}
       {team.league_slug ? (
         <li>
-          <a href={`/leagues/${team.league_slug}`}>{team.league_name}</a>
+          <a href={href.collection(team.league_slug)}>{team.league_name}</a>
         </li>
       ) : null}
       <li aria-current="page">{team.display_name}</li>
@@ -315,7 +310,7 @@ export const TeamPage = ({ user, team, events, following }) => (
         subjectType="team"
         subjectId={team.id}
         following={following}
-        next={`/teams/${team.slug}`}
+        next={href.participant(team.slug)}
       />
     </div>
     <p class="muted small">
@@ -351,7 +346,7 @@ const countPhrase = (follows, counts) => {
 
 export const Following = ({ user, events, follows, cleared, vapidKey, calendarUrl }) => (
   <Layout title="My games" user={user} vapidKey={vapidKey}>
-    <h1>My games</h1>
+    <h1>{brand.copy.mine}</h1>
 
     {/* Rendered always and revealed by script once it knows the real state, so the
         control can report on / off / blocked rather than only offering to turn on. */}
@@ -359,7 +354,7 @@ export const Following = ({ user, events, follows, cleared, vapidKey, calendarUr
       <div class="card-head">
         <h2 class="card-title">Notifications</h2>
         <p class="card-desc" id="push-state">
-          Get a notification an hour before kickoff, and one minute out.
+          {brand.copy.pushBlurb}
         </p>
       </div>
       <div class="card-actions">
@@ -379,10 +374,7 @@ export const Following = ({ user, events, follows, cleared, vapidKey, calendarUr
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Add to your calendar</h2>
-          <p class="card-desc">
-            Every game you follow, kept up to date automatically, with an alert an hour before
-            kickoff.
-          </p>
+          <p class="card-desc">{brand.copy.calendarBlurb}</p>
         </div>
 
         {/* The feed as a plain URL, first. The buttons below only reach the clients we
@@ -436,7 +428,7 @@ export const Following = ({ user, events, follows, cleared, vapidKey, calendarUr
         </div>
 
         <div class="card-foot">
-          <p class="muted small">Anyone with this link can see the games you follow.</p>
+          <p class="muted small">{brand.copy.calendarPrivacy}</p>
           <form method="post" action="/api/calendar/rotate" class="inline">
             <button type="submit" class="ghost small-btn">
               Reset the link
@@ -456,7 +448,7 @@ export const Following = ({ user, events, follows, cleared, vapidKey, calendarUr
 
     {follows.length === 0 ? (
       <p class="empty">
-        You're not following anything yet. <a href="/sports">Browse by sport</a> to find your teams.
+        {brand.copy.emptyFollows} <a href={href.category()}>{brand.copy.browse}</a>.
       </p>
     ) : (
       <>
@@ -521,7 +513,7 @@ const Side = ({ name, slug, logo, score, record, showScore, role }) => (
     {logo ? <img src={logo} alt="" width="56" height="56" /> : <span class="team-blank big" />}
     <div class="side-name">
       {role ? <span class={`role-tag ${role}`}>{role === 'home' ? 'Home' : 'Away'}</span> : null}
-      {slug ? <a href={`/teams/${slug}`}>{name}</a> : <span>{name}</span>}
+      {slug ? <a href={href.participant(slug)}>{name}</a> : <span>{name}</span>}
       {record ? <span class="meta">{record}</span> : null}
     </div>
     {showScore ? <span class="side-score num">{score ?? '—'}</span> : null}
@@ -564,16 +556,16 @@ export const EventPage = ({
     <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>
-          <a href="/sports">Sports</a>
+          <a href={href.category()}>{Word.collections}</a>
         </li>
         {event.sport ? (
           <li>
-            <a href={`/sports/${event.sport}`}>{event.sport.replace(/-/g, ' ')}</a>
+            <a href={href.category(event.sport)}>{event.sport.replace(/-/g, ' ')}</a>
           </li>
         ) : null}
         {event.league_slug ? (
           <li>
-            <a href={`/leagues/${event.league_slug}`}>{event.league_name}</a>
+            <a href={href.collection(event.league_slug)}>{event.league_name}</a>
           </li>
         ) : null}
         <li aria-current="page">{event.short_name ?? event.name}</li>
@@ -1545,7 +1537,7 @@ export const NotFound = ({ user }) => (
   <Layout title="Not found" user={user}>
     <h1>Not found</h1>
     <p>
-      <a href="/">Back to today's games</a>
+      <a href="/">{brand.copy.notFound}</a>
     </p>
   </Layout>
 );

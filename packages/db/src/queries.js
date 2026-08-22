@@ -731,6 +731,11 @@ export async function upsertEvents(events) {
     insert into events ${sql(events)}
     on conflict (provider, provider_key) do update set
       starts_at = excluded.starts_at,
+      -- Carried on update, not just insert: a provider that pins down a TBD
+      -- kickoff must be able to turn this back on, and one that postpones a
+      -- fixture to "date TBA" must be able to turn it off.
+      time_known = excluded.time_known,
+      precision = excluded.precision,
       state = excluded.state,
       status_detail = excluded.status_detail,
       name = excluded.name,
@@ -1164,11 +1169,18 @@ export async function getEvent(eventId) {
  * firing "starts in 1 hour" for games that kicked off twenty minutes ago after the
  * worker has been down -- late reminders are worse than absent ones.
  */
-export async function eventsDueForReminder({ offsetMinutes, lookbackSeconds }) {
+export async function eventsDueForReminder({ offsetMinutes, lookbackSeconds, timed = true }) {
   return sql`
-    select e.id, e.starts_at, e.name, e.short_name, e.league_id
+    select e.id, e.starts_at, e.name, e.short_name, e.league_id, e.time_known
     from events e
     where e.state = 'pre'
+      -- Matched to the offset's class. Querying both with one offset would fire
+      -- the 1-minute reminder for every date-only event at 11:59, against a noon
+      -- anchor nobody chose.
+      and e.time_known = ${timed}
+      -- A month- or year-precision date is not a promise, so it never triggers a
+      -- reminder. It stays browsable; it just cannot be alarmed on.
+      and e.precision in ('second', 'minute', 'hour', 'day')
       and e.starts_at - (${offsetMinutes} * interval '1 minute') <= now()
       and e.starts_at - (${offsetMinutes} * interval '1 minute') > now() - (${lookbackSeconds} * interval '1 second')
     order by e.starts_at
@@ -1207,6 +1219,7 @@ export async function deliveryTargets(userIds) {
     select u.id as user_id, u.email, u.timezone,
            coalesce(p.channels, '{webpush,email}') as channels,
            coalesce(p.offsets_minutes, '{60,1}') as offsets_minutes,
+           coalesce(p.date_offsets_minutes, '{1440,0}') as date_offsets_minutes,
            coalesce(
              json_agg(json_build_object('endpoint', ps.endpoint, 'p256dh', ps.p256dh, 'auth', ps.auth))
                filter (where ps.id is not null and ps.disabled_at is null),
@@ -1216,7 +1229,7 @@ export async function deliveryTargets(userIds) {
     left join reminder_prefs p on p.user_id = u.id
     left join push_subscriptions ps on ps.user_id = u.id and ps.disabled_at is null
     where u.id = any(${pgArray(userIds)}::uuid[])
-    group by u.id, p.channels, p.offsets_minutes
+    group by u.id, p.channels, p.offsets_minutes, p.date_offsets_minutes
   `;
 }
 
@@ -1274,12 +1287,27 @@ export async function getPrefs(userId) {
   return row ?? null;
 }
 
-export async function savePrefs({ userId, offsetsMinutes, channels }) {
+export async function savePrefs({ userId, offsetsMinutes, dateOffsetsMinutes, channels }) {
+  /*
+   * dateOffsetsMinutes is optional so an existing caller keeps working.
+   *
+   * Passing undefined must leave the stored list alone rather than blanking it --
+   * `coalesce(excluded, existing)` rather than a plain assignment -- or a reader
+   * who saves their kickoff preferences silently loses their release ones.
+   */
+  const dates = dateOffsetsMinutes === undefined ? null : pgArray(dateOffsetsMinutes);
   await sql`
-    insert into reminder_prefs (user_id, offsets_minutes, channels)
-    values (${userId}, ${pgArray(offsetsMinutes)}::int[], ${pgArray(channels)}::text[])
+    insert into reminder_prefs (user_id, offsets_minutes, date_offsets_minutes, channels)
+    values (
+      ${userId},
+      ${pgArray(offsetsMinutes)}::int[],
+      coalesce(${dates}::int[], '{1440,0}'),
+      ${pgArray(channels)}::text[]
+    )
     on conflict (user_id) do update set
       offsets_minutes = excluded.offsets_minutes,
+      date_offsets_minutes =
+        coalesce(${dates}::int[], reminder_prefs.date_offsets_minutes),
       channels = excluded.channels,
       updated_at = now()
   `;
@@ -1292,12 +1320,20 @@ export async function savePrefs({ userId, offsetsMinutes, channels }) {
  * would silently never fire a custom offset; scanning a fixed wide range would burn
  * a query per minute-value nobody uses.
  */
-export async function distinctReminderOffsets(defaults) {
-  const rows = await sql`
-    select distinct unnest(offsets_minutes) as m from reminder_prefs
-  `;
+/**
+ * Which offsets any reader has asked for, per reminder class.
+ *
+ * `timed` picks the column. An event with a real kickoff uses offsets_minutes
+ * (60, 1); one that only has a date uses date_offsets_minutes (1440, 0). Zero is
+ * meaningful for a date ("on the day") and meaningless for a time, which is why
+ * the filter differs between them.
+ */
+export async function distinctReminderOffsets(defaults, { timed = true } = {}) {
+  const rows = timed
+    ? await sql`select distinct unnest(offsets_minutes) as m from reminder_prefs`
+    : await sql`select distinct unnest(date_offsets_minutes) as m from reminder_prefs`;
   return [...new Set([...defaults, ...rows.map((r) => r.m)])]
-    .filter((m) => m > 0)
+    .filter((m) => (timed ? m > 0 : m >= 0))
     .sort((a, b) => b - a);
 }
 
@@ -1487,6 +1523,20 @@ export async function leaguesForSport(sport, userId = null) {
 }
 
 /** Stamp a league as roster-checked, whether or not it had one. */
+/**
+ * When this category last COMPLETED a pass.
+ *
+ * rosters_synced_at, not events.updated_at -- every sync touches updated_at, so
+ * that column always looks a minute old and nothing is ever judged overdue. Only a
+ * finished pass writes this one, which is the whole reason it exists.
+ */
+export async function lastSyncedAtForCategory(category) {
+  const [row] = await sql`
+    select max(rosters_synced_at) as at from leagues where sport = ${category} and active
+  `;
+  return row?.at ?? null;
+}
+
 export async function markRostersSynced(leagueId) {
   await sql`update leagues set rosters_synced_at = now() where id = ${leagueId}`;
 }
