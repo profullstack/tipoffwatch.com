@@ -611,6 +611,7 @@ function initNavigation() {
       window.scrollTo(0, 0);
       localiseTimes();
       initMarketTabs();
+      initOwnChannelActions();
       initPush();
       initPasskeys();
     } catch {
@@ -646,6 +647,7 @@ function initNavigation() {
 localiseTimes();
 reportTimezone();
 initMarketTabs();
+initOwnChannelActions();
 initPush();
 initPasskeys();
 initFollowForms();
@@ -746,5 +748,52 @@ function initMarketTabs(root = document) {
     section.classList.add('is-tabbed');
     section.dataset.tabbed = '1';
     select(active);
+  }
+}
+
+/* --------------------------------------------------- your own channels -- */
+
+/**
+ * On a phone, stop offering the download that cannot work.
+ *
+ * The .m3u hand-off is right on a desktop, where the file opens in whatever
+ * player is registered. On iOS it is a trap with two endings, and both were hit
+ * before this existed: Safari either offers to download the playlist, or follows
+ * it to the stream and offers to download a .ts instead. Neither plays. These
+ * providers serve MPEG-2 Transport Stream and Safari has no demuxer for it, which
+ * is a missing codec rather than a missing hint -- no header changes it.
+ *
+ * So the file link is dropped on touch devices and the player deep links stay,
+ * because those open an app that CAN demux TS. Done here rather than by sniffing
+ * the User-Agent server-side: the markup stays the same for everyone, and a
+ * laptop with a touchscreen keeps the download it can actually use.
+ */
+function initOwnChannelActions(root = document) {
+  // Pointer, not screen width. A touchscreen laptop still has a filesystem and a
+  // registered handler; a phone has neither.
+  const phone = window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+  if (!phone) return;
+
+  for (const actions of root.querySelectorAll('.own-channel-actions')) {
+    if (actions.dataset.mobile) continue;
+    actions.dataset.mobile = '1';
+
+    for (const a of actions.querySelectorAll('a[href*="playlist.m3u"]')) a.remove();
+
+    // A deep link to an app that is not installed does nothing at all: iOS
+    // ignores an unregistered scheme silently, which reads exactly like a broken
+    // button. Say where to get one, once per list.
+    const section = actions.closest('.own-line');
+    if (section && !section.querySelector('.player-hint')) {
+      const hint = document.createElement('p');
+      hint.className = 'muted small player-hint';
+      hint.textContent = 'These open in a player that can handle these streams. ';
+      const link = document.createElement('a');
+      link.href = 'https://www.videolan.org/vlc/download-ios.html';
+      link.rel = 'noopener';
+      link.textContent = 'Get VLC';
+      hint.append(link, ' if nothing happens when you tap.');
+      section.append(hint);
+    }
   }
 }
