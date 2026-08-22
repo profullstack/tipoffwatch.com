@@ -15,6 +15,22 @@ import { Layout } from './Layout.jsx';
 const nameOf = (p) => p.display_name ?? `@${p.handle}`;
 
 /**
+ * One person in a follower or following list.
+ *
+ * Linked only when there is a page at the other end. /u/:handle answers 404 for a
+ * profile its owner has hidden, so linking every name put dead links on a public
+ * page -- and made hiding your profile look like being deleted. The name still
+ * appears: the follow is a fact about the profile being read, and the hidden thing
+ * is the page, not the person.
+ */
+const Person = ({ person }) =>
+  person.profile_public ? (
+    <a href={`/u/${person.handle}`}>{nameOf(person)}</a>
+  ) : (
+    <span>{nameOf(person)}</span>
+  );
+
+/**
  * Someone's public page.
  *
  * Public by default, because the rest of the site reads without an account and a
@@ -136,7 +152,7 @@ export const ProfilePage = ({
       <ul class="people">
         {followers.map((p) => (
           <li>
-            <a href={`/u/${p.handle}`}>{nameOf(p)}</a>
+            <Person person={p} />
           </li>
         ))}
       </ul>
@@ -149,7 +165,7 @@ export const ProfilePage = ({
       <ul class="people">
         {following.map((p) => (
           <li>
-            <a href={`/u/${p.handle}`}>{nameOf(p)}</a>
+            <Person person={p} />
           </li>
         ))}
       </ul>

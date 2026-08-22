@@ -366,7 +366,9 @@ app.get('/u/:handle', async (c) => {
   }
 
   const [counts, followers, following, follows, upcoming, isFollowing] = await Promise.all([
-    q.profileCounts(profile.id),
+    // Same viewer as the follower list below, so the number and the list agree
+    // about who is visible to this particular reader.
+    q.profileCounts(profile.id, { viewerId: viewer?.id ?? null }),
     q.followersOf({ userId: profile.id, viewerId: viewer?.id ?? null, limit: 24 }),
     q.followingBy({ userId: profile.id, limit: 24 }),
     // Which teams, and when they play. The stat row has counted both since the page
