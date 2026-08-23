@@ -78,6 +78,47 @@ const PlayButton = ({ eventId, index, series = false }) => (
   </button>
 );
 
+/**
+ * One channel on the reader's own line, with room for a verdict.
+ *
+ * `data-check` is the route that asks the provider whether this slot is actually
+ * streaming; app.js walks the rows in order and clears them one at a time. The
+ * URL is the check, never the stream: the credential belongs in the VLC href,
+ * where an external app that holds no session with us needs it, and nowhere else.
+ *
+ * `data-verified` is set when the server already knows -- a yes from the last ten
+ * minutes -- so reopening a page does not re-probe a line that caps connections.
+ *
+ * The status span ships empty. Everything it ever says is a fact the page did not
+ * have when it was rendered.
+ */
+export const ChannelRow = ({ event, ch, index, series = false }) => (
+  <li
+    data-check={`/events/${event.id}/channel-check?${series ? 'series' : 'n'}=${index}`}
+    data-verified={ch.verified ? '1' : null}
+  >
+    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
+    <span class="own-channel-state" />
+    <span class="own-channel-actions">
+      <PlayButton eventId={event.id} index={index} series={series} />
+      <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+        VLC
+      </a>
+      {series ? null : (
+        <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
+          Infuse
+        </a>
+      )}
+      <a
+        class="ghost small-btn"
+        href={`/events/${event.id}/playlist.m3u?${series ? 'series' : 'n'}=${index}`}
+      >
+        .m3u
+      </a>
+    </span>
+  </li>
+);
+
 function marketsOf(event) {
   const raw = event?.broadcast_markets;
   if (!raw) return [];
@@ -959,28 +1000,15 @@ export const EventPage = ({
             <>
               <p class="muted small">
                 {ownChannels.matches.length === 1
-                  ? 'One of your channels looks like it is carrying this game.'
-                  : `${ownChannels.matches.length} of your channels look like they are carrying this game.`}{' '}
-                Play it here, or open it in VLC or Infuse. These are your provider's streams, not
-                ours — we only pass them through to your own browser.
+                  ? 'One of your channels names this game.'
+                  : `${ownChannels.matches.length} of your channels name this game.`}{' '}
+                Each one is checked against your provider before it is offered — a slot can be
+                listed and still be empty. These are your provider's streams, not ours — we only
+                pass them through to your own browser.
               </p>
               <ul class="own-channels">
                 {ownChannels.matches.map((ch, i) => (
-                  <li>
-                    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
-                    <span class="own-channel-actions">
-                      <PlayButton eventId={event.id} index={i} />
-                      <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
-                        VLC
-                      </a>
-                      <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
-                        Infuse
-                      </a>
-                      <a class="ghost small-btn" href={`/events/${event.id}/playlist.m3u?n=${i}`}>
-                        .m3u
-                      </a>
-                    </span>
-                  </li>
+                  <ChannelRow event={event} ch={ch} index={i} />
                 ))}
               </ul>
             </>
@@ -1002,21 +1030,7 @@ export const EventPage = ({
               </p>
               <ul class="own-channels">
                 {ownChannels.competition.map((ch, i) => (
-                  <li>
-                    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
-                    <span class="own-channel-actions">
-                      <PlayButton eventId={event.id} index={i} series />
-                      <a class="ghost small-btn" href={playerLinks(ch.url).vlc}>
-                        VLC
-                      </a>
-                      <a
-                        class="ghost small-btn"
-                        href={`/events/${event.id}/playlist.m3u?series=${i}`}
-                      >
-                        .m3u
-                      </a>
-                    </span>
-                  </li>
+                  <ChannelRow event={event} ch={ch} index={i} series />
                 ))}
               </ul>
             </>

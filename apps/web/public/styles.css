@@ -2119,3 +2119,31 @@ ul.messages time {
   font-size: 0.7rem;
   white-space: nowrap;
 }
+
+/* --------------------------------------------------- channel verification -- */
+
+/* What a row says about itself while the provider is being asked. Empty in the
+   markup: everything it ever holds is a fact the page did not have when it was
+   rendered. */
+.own-channel-state {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A row nothing has vouched for yet cannot be used, and that has to include the
+   links -- VLC and .m3u are handed the same channel, and a dead slot is just as
+   dead in VLC as it is here. The Play button is separately disabled; this is what
+   stops an anchor being clicked, which no attribute does. */
+.own-channels li.checking .own-channel-actions {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.own-channels li.checking {
+  /* Legible as pending rather than as broken: the row is doing something. */
+  border-style: dashed;
+}
+.channels-dropped {
+  margin-top: 0.6rem;
+}

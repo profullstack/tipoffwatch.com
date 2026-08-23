@@ -240,17 +240,13 @@ describe('what the page offers, and to whom', () => {
   );
 
   test('Play here is offered for both a fixture channel and a competition one', () => {
-    expect(view).toContain('stream.ts?${series');
-    expect(view).toContain('<PlayButton eventId={event.id} index={i} />');
-    expect(view).toContain('<PlayButton eventId={event.id} index={i} series />');
-  });
-
-  test('the app hand-offs survive alongside it', () => {
-    // The whole point of the button being an addition: iPhone Safari cannot use
-    // it, and VLC there is not a fallback but the primary route.
-    expect(view).toContain('vlc-x-callback://x-callback-url/stream?url=');
-    expect(view).toContain('infuse://x-callback-url/play?url=');
-    expect(view).toContain('playlist.m3u?n=');
+    // The two lists render one component now, so what matters is that both reach
+    // it and that the series flag travels. The rendered markup for each is
+    // asserted in channel-check.test.js, which does not care how it is written.
+    expect(view).toContain('<ChannelRow event={event} ch={ch} index={i} />');
+    expect(view).toContain('<ChannelRow event={event} ch={ch} index={i} series />');
+    expect(view).toContain('<PlayButton eventId={event.id} index={index} series={series} />');
+    expect(view).toMatch(/stream\.ts\?\$\{series/);
   });
 
   test('the button ships disabled, so a browser that cannot play never shows a live one', () => {
@@ -286,7 +282,9 @@ describe('what the page offers, and to whom', () => {
   test('a browser with no Media Source Extensions loses the button entirely', () => {
     // iPhone Safari. A "Play here" that silently fails would pull people away
     // from VLC, which is the button that actually works there.
-    expect(client).toContain('if (!canTransmux()) {');
+    // The condition grew a second arm -- a section with no buttons at all -- but
+    // the guarantee is the same one: no Media Source Extensions, no Play button.
+    expect(client).toContain('if (!canTransmux()');
     expect(client).toContain('for (const b of buttons) b.remove();');
   });
 

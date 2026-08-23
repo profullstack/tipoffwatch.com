@@ -9,7 +9,9 @@ import {
   importPlaylist,
   openStream,
   ownChannelsForEvent,
+  probeStream,
   refreshPlaylist,
+  streamSlotsOpen,
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import { oneChannelM3u } from '@tipoff/sports';
@@ -773,6 +775,63 @@ app.get('/events/:id/playlist.m3u', async (c) => {
  * `.ts` in the path rather than a query flag, because what comes back really is a
  * transport stream and some clients decide how to treat a URL by looking at it.
  */
+/**
+ * Is this one channel actually streaming, right now?
+ *
+ * The page used to list every channel whose title matched the fixture and let the
+ * reader find out by pressing Play. A provider list is mostly aspirational --
+ * the slot exists, the title is right, and a large share answer with an HTML
+ * error page rather than video -- so "Your provider did not send a stream for
+ * that channel" was a routine outcome of using the feature as intended. The .m3u
+ * route has probed since it was written; the page had no way to.
+ *
+ * One channel per request, and the client walks the list in order. Not a single
+ * endpoint that checks them all: these are one subscriber's own connections on a
+ * line that caps them, the answers arrive one at a time anyway, and a row that
+ * has been cleared should become usable then rather than when the slowest of
+ * five has timed out.
+ *
+ * The verdict is written back, so the next reader of this page -- and the .m3u
+ * route, and the 30-minute filter in playlistChannels -- all inherit what this
+ * one learned.
+ */
+app.get('/events/:id/channel-check', async (c) => {
+  const user = requireUser(c);
+
+  const event = await q.getEvent(Number(c.req.param('id')));
+  if (!event) return c.notFound();
+
+  /*
+   * Never while something is playing.
+   *
+   * A probe is a second connection, and on a line that permits one it is the
+   * connection that gets the subscription suspended -- or, now that a new claim
+   * evicts the old, it would be the reader's own match being taken off them by a
+   * background check. The page skips the sweep when it is playing something; this
+   * is the half that does not depend on the page behaving.
+   */
+  if (streamSlotsOpen(user.id) > 0) return c.json({ skipped: 'watching' });
+
+  const { list, asked } = await pickOwnChannel(c, user, event);
+  const pick = list[asked];
+  if (!pick) return c.json({ error: 'no channel' }, 404);
+
+  const result = await probeStream(pick.url, { signal: c.req.raw.signal });
+
+  if (pick.id) {
+    await q
+      .markChannelChecked({
+        userId: user.id,
+        channelId: pick.id,
+        live: result.live,
+        note: result.note,
+      })
+      .catch(() => {});
+  }
+
+  return c.json(result);
+});
+
 app.get('/events/:id/stream.ts', async (c) => {
   const user = requireUser(c);
   if (!config.playlists.proxy.enabled) return c.json({ error: 'player is off' }, 404);

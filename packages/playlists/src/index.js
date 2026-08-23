@@ -173,6 +173,18 @@ export async function refreshDuePlaylists({ log = console.log, limit = 25 } = {}
  * mentions one club is rejected. Returns unsealed URLs, so the caller must already
  * have established that the requester owns them.
  */
+/**
+ * How long a "yes, this is streaming" verdict is worth trusting.
+ *
+ * Ten minutes, which is short. A provider slot that works at kick-off can be an
+ * error page by half time -- that is the normal behaviour of these lines, not an
+ * edge case -- so a stale yes is exactly the thing being fixed here. Long enough
+ * that opening the page twice does not probe twice.
+ */
+const VERDICT_TTL_MS = 10 * 60 * 1000;
+
+const freshEnough = (at) => Boolean(at) && Date.now() - new Date(at).getTime() < VERDICT_TTL_MS;
+
 export async function ownChannelsForEvent({ userId, event }) {
   const none = { hasList: false, channelCount: 0, matches: [], competition: [] };
   if (!config.playlists.enabled || !userId) return none;
@@ -204,7 +216,19 @@ export async function ownChannelsForEvent({ userId, event }) {
   const byUrl = new Map(rows.map((r) => [r.stream_url, r]));
   const unseal = (list) =>
     list
-      .map((m) => ({ id: byUrl.get(m.url)?.id ?? null, title: m.title, url: open(m.url) }))
+      .map((m) => {
+        const row = byUrl.get(m.url);
+        return {
+          id: row?.id ?? null,
+          title: m.title,
+          url: open(m.url),
+          // What we last learned about this slot, so the page does not re-probe
+          // something confirmed a moment ago. A verdict older than this is worth
+          // nothing: these slots come and go during the day, which is the entire
+          // reason the list needs checking rather than trusting.
+          verified: row?.is_live === true && freshEnough(row.checked_at),
+        };
+      })
       .filter((m) => m.url)
       .slice(0, 10);
 
