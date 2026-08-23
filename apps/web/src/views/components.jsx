@@ -148,6 +148,44 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
   );
 };
 
+/**
+ * Which competition this is, as a tag rather than as more grey text.
+ *
+ * The league name was already on the row, third in a run of muted metadata after
+ * the venue -- which is where the eye stops reading. On a page that mixes 354
+ * competitions, "is this MLB or is this college baseball" is the first question a
+ * row has to answer, and a chip answers it at a glance where a sentence does not.
+ *
+ * The abbreviation where the provider gave us one, because that is what people
+ * call these -- MLB, NCAAM, EPL -- and the full name otherwise. ESPN supplies the
+ * abbreviation for the leagues anybody has heard of and leaves it null for the
+ * long tail, which is exactly the split where a full name is worth the width.
+ *
+ * `title` carries the unabbreviated name, so a chip reading "NCAAB" is still
+ * identifiable by anybody who does not already know it.
+ */
+export const LeagueTag = ({ event }) => {
+  const short = event.league_abbr?.trim();
+  const full = event.league_name?.trim();
+  if (!short && !full) return null;
+  const label = short || full;
+  const tag = (
+    <span class="league-tag" title={full && full !== label ? full : undefined}>
+      {label}
+    </span>
+  );
+  // Linked where we know where it goes. Not every list query carries the slug,
+  // and a chip that navigates on some rows and not others is worse than one that
+  // never does -- so this is decided per row rather than per list.
+  return event.league_slug ? (
+    <a class="league-tag-link" href={href.collection(event.league_slug)}>
+      {tag}
+    </a>
+  ) : (
+    tag
+  );
+};
+
 export const EventRow = ({ event, showBroadcast = false }) => (
   <li class={`event ${event.state}${event.following ? ' followed' : ''}`}>
     <RowTime event={event} />
@@ -193,8 +231,8 @@ export const EventRow = ({ event, showBroadcast = false }) => (
         )}
       </a>
       <span class="meta">
-        {event.league_name}
-        {event.venue ? ` · ${event.venue}` : ''}
+        <LeagueTag event={event} />
+        {event.venue ? ` ${event.venue}` : ''}
         {/* The arena name alone only means something to people who already know the
             city, which is nobody browsing 354 leagues. */}
         {event.venue_city ? `, ${event.venue_city}` : ''}

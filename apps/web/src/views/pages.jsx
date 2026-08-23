@@ -97,7 +97,19 @@ export const ChannelRow = ({ event, ch, index, series = false }) => (
     data-check={`/events/${event.id}/channel-check?${series ? 'series' : 'n'}=${index}`}
     data-verified={ch.verified ? '1' : null}
   >
-    <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
+    <span class="own-channel-name">
+      {ch.title || 'Untitled channel'}
+      {/* What the provider files this entry under, and whether it is a channel or
+          a file. Both come straight from the playlist rather than from us: a
+          reader looking at ten near-identical rows needs the same words their own
+          player shows them, not our guess at what they mean. */}
+      {ch.group ? <span class="league-tag channel-tag">{ch.group}</span> : null}
+      {ch.kind && ch.kind !== 'live' ? (
+        <span class="league-tag channel-tag kind" title="A file, not a live channel">
+          {ch.kind === 'series' ? 'Series' : 'On demand'}
+        </span>
+      ) : null}
+    </span>
     <span class="own-channel-state" />
     <span class="own-channel-actions">
       <PlayButton eventId={event.id} index={index} series={series} />
@@ -190,7 +202,17 @@ export const Landing = ({ user, today, vapidKey }) => (
 );
 
 /** Step 1 of the picker: sport. */
-export const SportsIndex = ({ user, sports, leagueCounts, upcoming, live, liveTotal }) => (
+export const SportsIndex = ({
+  user,
+  sports,
+  leagueCounts,
+  upcoming,
+  live,
+  liveTotal,
+  soon,
+  soonTotal,
+  soonHours,
+}) => (
   <Layout title="Sports" user={user} canonical={href.category()}>
     <h1>{brand.copy.browse}</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
@@ -278,6 +300,216 @@ export const SportsIndex = ({ user, sports, leagueCounts, upcoming, live, liveTo
       ) : null}
       <EventList events={live ?? []} emptyText={brand.copy.liveEmpty} showBroadcast />
     </section>
+
+    {/* And the state either side of "on now", which had no home on this page.
+
+        Between a fixture in progress and a whole day's schedule there was nothing,
+        and "about to start" is the most actionable state there is -- still time to
+        find a stream, still time to sit down. Below the live list rather than above
+        it: something already under way beats something that has not started.
+
+        Rendered even when empty, for the same reason the live block is. A section
+        that appears only sometimes cannot be told apart from one that is broken. */}
+    <section class="live-now starting-soon">
+      <div class="live-head">
+        <h2>{brand.copy.soonTitle}</h2>
+        {soonTotal > 0 ? (
+          <span class="live-count num" title={`${soonTotal} in the next ${soonHours} hours`}>
+            {soonTotal.toLocaleString('en-US')}
+          </span>
+        ) : null}
+      </div>
+      {soon?.length ? (
+        <p class="muted small">
+          {brand.copy.soonBlurb}
+          {soonTotal > soon.length ? ` Showing the first ${soon.length}.` : ''}
+        </p>
+      ) : null}
+      <EventList events={soon ?? []} emptyText={brand.copy.soonEmpty} showBroadcast />
+    </section>
+  </Layout>
+);
+
+/**
+ * One page for every kind of row the site holds.
+ *
+ * Grouped rather than interleaved. A team, a league, a fixture with a name of its
+ * own, a channel on your own line and a person are five different KINDS of answer,
+ * and a single ranked list has to pretend they are comparable -- there is no
+ * honest way to say whether the Premier League outranks a team called what you
+ * typed. Sections say what each thing is and let the reader pick the row they
+ * meant.
+ *
+ * Participants go first because that is what the box is mostly used for. Your own
+ * channels go second when there are any: somebody with a subscription asking "do
+ * you have this" is asking about their line, not about our catalogue.
+ */
+export const SearchPage = ({ user, term, sport, results }) => (
+  <Layout title={term ? `${term} — search` : 'Search'} user={user} q={term}>
+    <h1>Search</h1>
+
+    <form method="get" action="/search" class="searchbar">
+      <label class="field">
+        <span class="sr-only">Search</span>
+        <input
+          type="search"
+          name="q"
+          value={term ?? ''}
+          placeholder={`A ${brand.words.participant}, a ${brand.words.collection}, a ${brand.words.event}`}
+          autocomplete="off"
+          autofocus
+        />
+      </label>
+      {/* Carried through rather than dropped: somebody who arrived from a sport
+          page with the filter applied is refining that search, and silently
+          widening it back to everything on the first edit is worse than either
+          keeping it or never offering it. */}
+      {sport ? <input type="hidden" name="sport" value={sport} /> : null}
+      <button class="cta" type="submit">
+        Search
+      </button>
+    </form>
+
+    {sport ? (
+      <p class="muted">
+        Narrowed to {sport.replace(/-/g, ' ')}.{' '}
+        <a class="link-quiet" href={`/search?q=${encodeURIComponent(term ?? '')}`}>
+          Search everything instead
+        </a>
+      </p>
+    ) : null}
+
+    {!term ? (
+      <p class="muted">
+        Everything the site holds — {brand.words.participants}, {brand.words.collections},{' '}
+        {brand.words.events} with a name of their own, and the people here. If you have added a
+        channel list, your own line is searched too.
+      </p>
+    ) : results.total === 0 ? (
+      <p class="empty">Nothing matched “{term}”.</p>
+    ) : (
+      <>
+        {results.teams.length > 0 ? (
+          <section class="results-group">
+            <h2>{Word.participants}</h2>
+            <ul class="results">
+              {results.teams.map((t) => (
+                <li class="result">
+                  {t.logo_url ? (
+                    <img src={t.logo_url} alt="" loading="lazy" width="40" height="40" />
+                  ) : (
+                    <span class="result-blank" />
+                  )}
+                  <div class="result-main">
+                    <a href={href.participant(t.slug)}>{t.display_name}</a>
+                    <span class="meta">
+                      {/* The competition is not decoration: ids are unique only
+                          within a league and several sports have two clubs of the
+                          same name, so this is what tells the rows apart. */}
+                      {t.league_name ?? 'No league recorded'}
+                      {t.sport ? ` · ${t.sport.replace(/-/g, ' ')}` : ''}
+                    </span>
+                  </div>
+                  {t.next_event_id ? (
+                    <a class="link-quiet" href={`/events/${t.next_event_id}`}>
+                      <LocalTime at={t.next_starts_at} />
+                    </a>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {/* Only for the account that owns them, and only titles -- never a URL.
+            A stream URL carries the reader's provider credentials in its path, so
+            it belongs to the download and proxy routes and to nothing else. */}
+        {results.channels.length > 0 ? (
+          <section class="results-group">
+            <h2>On your line</h2>
+            <p class="muted">From the channel list on your account. Nobody else can see these.</p>
+            <ul class="results">
+              {results.channels.map((ch) => (
+                <li class="result">
+                  <span class="result-blank" />
+                  <div class="result-main">
+                    <span class="result-name">{ch.title}</span>
+                    <span class="meta">
+                      {ch.group_title ? (
+                        <span class="league-tag channel-tag">{ch.group_title}</span>
+                      ) : null}
+                      {ch.is_live === false ? ' Did not answer when we last asked' : ''}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {results.leagues.length > 0 ? (
+          <section class="results-group">
+            <h2>{Word.collections}</h2>
+            <ul class="results">
+              {results.leagues.map((l) => (
+                <li class="result">
+                  {l.logo_url ? (
+                    <img src={l.logo_url} alt="" loading="lazy" width="40" height="40" />
+                  ) : (
+                    <span class="result-blank" />
+                  )}
+                  <div class="result-main">
+                    <a href={href.collection(l.slug)}>{l.name}</a>
+                    <span class="meta">
+                      {l.sport.replace(/-/g, ' ')}
+                      {l.upcoming > 0 ? ` · ${l.upcoming} coming up` : ''}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {results.events.length > 0 ? (
+          <section class="results-group">
+            <h2>{Word.events}</h2>
+            <ul class="results">
+              {results.events.map((e) => (
+                <li class="result">
+                  <span class="result-blank" />
+                  <div class="result-main">
+                    <a href={`/events/${e.id}`}>{e.name}</a>
+                    <span class="meta">
+                      {e.league_name}
+                      {' · '}
+                      <LocalTime at={e.starts_at} />
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {results.people.length > 0 ? (
+          <section class="results-group">
+            <h2>People</h2>
+            <ul class="results">
+              {results.people.map((p) => (
+                <li class="result">
+                  <span class="result-blank" />
+                  <div class="result-main">
+                    <a href={`/u/${p.handle}`}>{p.display_name || `@${p.handle}`}</a>
+                    {p.display_name ? <span class="meta">@{p.handle}</span> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </>
+    )}
   </Layout>
 );
 

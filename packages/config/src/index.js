@@ -108,6 +108,17 @@ export const config = {
      * sweep. Widening it costs roughly linearly in leagues, not in days.
      */
     nearWindowHours: num('SPORTS_NEAR_WINDOW_HOURS', 48),
+    /**
+     * How far ahead the category page's "starting soon" list reaches, in hours.
+     *
+     * Nothing to do with syncing: this is purely how much of the front of the
+     * calendar that page shows. Four hours is roughly "the rest of an evening" --
+     * long enough to be worth checking before you settle down, short enough that
+     * the list is still a list rather than a schedule. A knob rather than a
+     * constant because the right answer differs by brand: a release calendar's
+     * useful window is not a fixture list's.
+     */
+    soonWindowHours: num('SPORTS_SOON_WINDOW_HOURS', 4),
     syncConcurrency: num('SPORTS_SYNC_CONCURRENCY', 6),
     /**
      * How far back a finished game is still owed its one closing read.

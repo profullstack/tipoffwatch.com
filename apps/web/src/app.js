@@ -14,7 +14,7 @@ import {
   streamSlotsOpen,
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
-import { oneChannelM3u } from '@tipoff/sports';
+import { oneChannelM3u, searchEverything } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
@@ -30,6 +30,7 @@ import {
   LeaguePage,
   NotFound,
   PushCheck,
+  SearchPage,
   Settings,
   SignIn,
   SportPage,
@@ -176,10 +177,21 @@ app.get(`/${brand.paths.category}`, async (c) => {
    * a choice with no upside.
    */
   return cached(c, 'page:sports', 60, async () => {
-    const [sports, live, liveTotal] = await Promise.all([
+    const [sports, live, liveTotal, soon, soonTotal] = await Promise.all([
       q.listSports(),
       q.liveNow({ viewerId: user?.id ?? null }),
       q.liveNowCount(),
+      /*
+       * The same 60 seconds serves both lists, and the window is the reason it can.
+       *
+       * A four-hour window moves by a minute in a minute, so a cached copy is at
+       * worst 60 seconds' worth of the tail wrong -- it can show a fixture that has
+       * just kicked off, which the live list above then also shows, and it can be a
+       * minute late adding one at the far end. Neither is a page lying to somebody
+       * about a game that finished, which is what set this TTL in the first place.
+       */
+      q.startingSoon({ hours: config.sports.soonWindowHours, viewerId: user?.id ?? null }),
+      q.startingSoonCount({ hours: config.sports.soonWindowHours }),
     ]);
     return render(
       <SportsIndex
@@ -189,6 +201,9 @@ app.get(`/${brand.paths.category}`, async (c) => {
         upcoming={upcoming}
         live={live}
         liveTotal={liveTotal}
+        soon={soon}
+        soonTotal={soonTotal}
+        soonHours={config.sports.soonWindowHours}
       />,
     );
   });
@@ -1152,6 +1167,77 @@ app.get('/api/teams/search', async (c) => {
   const term = (c.req.query('q') ?? '').trim();
   if (term.length < 2) return c.json({ results: [] });
   return c.json({ results: await q.searchTeams(term) });
+});
+
+/**
+ * The box in the header.
+ *
+ * Not cached, and it cannot be: for a signed-in reader the answer carries their
+ * own channel list and their own blocks, and those must never be served to
+ * anybody else. It is also per-query, so a shared cache would be mostly misses
+ * paying for the risk.
+ */
+app.get('/search', async (c) => {
+  const user = c.get('user');
+  const term = (c.req.query('q') ?? '').trim();
+  const sport = (c.req.query('sport') ?? '').trim() || null;
+
+  const results = await searchEverything(term, { userId: user?.id ?? null, sport });
+  return c.html(
+    await render(<SearchPage user={user} term={term} sport={sport} results={results} />),
+  );
+});
+
+/**
+ * The same search, as JSON.
+ *
+ * Public, cached and unauthenticated, so it covers the three sources that are the
+ * same for everybody and leaves out the two that are not. Widening it to match the
+ * page would either serve one reader's private channel list from a shared cache or
+ * quietly return nothing for the sources that need a session -- both worse than an
+ * endpoint that says what it covers.
+ */
+app.get('/api/v1/search', async (c) => {
+  const term = (c.req.query('q') ?? '').trim();
+  if (term.length < 2) return c.json({ error: 'q must be at least 2 characters' }, 400);
+  const sport = (c.req.query('sport') ?? '').trim() || null;
+  const limit = Math.min(Number(c.req.query('limit') ?? 20) || 20, 50);
+
+  const [teams, leagues, events] = await Promise.all([
+    q.searchTeamsFull(term, { limit, sport }),
+    q.searchLeagues(term, { sport }),
+    q.searchFixtures(term, { sport }),
+  ]);
+
+  c.header('cache-control', 'public, max-age=60');
+  return c.json({
+    query: term,
+    [brand.words.participants]: teams.map((t) => ({
+      slug: t.slug,
+      name: t.display_name,
+      league: t.league_name,
+      sport: t.sport,
+      logo: t.logo_url,
+      next: t.next_starts_at ?? null,
+      url: `${config.siteUrl}${href.participant(t.slug)}`,
+    })),
+    [brand.words.collections]: leagues.map((l) => ({
+      slug: l.slug,
+      name: l.name,
+      abbreviation: l.abbreviation,
+      sport: l.sport,
+      upcoming: l.upcoming,
+      url: `${config.siteUrl}${href.collection(l.slug)}`,
+    })),
+    [brand.words.events]: events.map((e) => ({
+      id: e.id,
+      name: e.name,
+      starts_at: e.starts_at,
+      state: e.state,
+      league: e.league_name,
+      url: `${config.siteUrl}/events/${e.id}`,
+    })),
+  });
 });
 
 /* ------------------------------------------------------------------- prefs -- */

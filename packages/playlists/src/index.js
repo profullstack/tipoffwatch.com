@@ -78,6 +78,14 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
 
   const channels = parseM3u(text).map((c) => ({
     title: c.title,
+    // The provider's own group-title, verbatim. Not mapped onto our leagues: every
+    // provider names these differently and a wrong mapping is worse than the raw
+    // string, which at least matches what the reader sees in their own player.
+    groupTitle: c.group ?? null,
+    // Worked out once here rather than per read, because the URL it is derived
+    // from is sealed at rest -- recomputing it on a page would mean decrypting
+    // several thousand rows to look at their paths.
+    kind: c.kind ?? null,
     // Sealed individually: each one is the same credential with a channel id on
     // the end, so a leak of any single row is a leak of the line.
     streamUrl: seal(c.url),
@@ -221,6 +229,11 @@ export async function ownChannelsForEvent({ userId, event }) {
         return {
           id: row?.id ?? null,
           title: m.title,
+          // The provider's own shelf for this entry, so a row can say what it is
+          // rather than being a bare name among several thousand. Never mapped
+          // onto our own leagues -- see 0023.
+          group: row?.group_title ?? null,
+          kind: row?.kind ?? null,
           url: open(m.url),
           // What we last learned about this slot, so the page does not re-probe
           // something confirmed a moment ago. A verdict older than this is worth

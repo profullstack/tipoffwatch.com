@@ -2,6 +2,7 @@ import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { CATALOG_ADAPTERS, ingest } from './catalog.js';
 import * as espn from './espn.js';
+import { normaliseTitle } from './slug.js';
 import * as sportsdb from './sportsdb.js';
 
 /**
@@ -12,12 +13,70 @@ import * as sportsdb from './sportsdb.js';
 export {
   channelMatchesFixture,
   channelsForFixture,
+  entryKind,
+  groupsOf,
+  isPlaceholder,
   MAX_CHANNELS,
   oneChannelM3u,
   parseM3u,
   rankChannelsForFixture,
 } from './m3u.js';
+export { normaliseTitle, slugify } from './slug.js';
 export { normaliseTeam } from './sportsdb.js';
+
+/**
+ * One box, every kind of row.
+ *
+ * The site had a search that looked in exactly one table -- teams -- and it was
+ * reachable only as the follow picker's autocomplete. That is the right answer for
+ * a picker and the wrong one for a box in the header, where whatever somebody
+ * types is whatever they were just looking at: a competition they saw on a chip,
+ * a cup final with a name of its own, a channel in their own list, a person.
+ *
+ * Five sources, run together and each allowed to fail on its own. A search box
+ * must not go blank because one query was slow or one table was locked, so a
+ * rejected source contributes nothing and the rest of the page still renders.
+ *
+ * Nothing here reaches a provider. Every other search-shaped thing on the sibling
+ * brand falls through to TMDB when the local answer is thin; there is no
+ * equivalent for fixtures, because ESPN has no search endpoint and the catalogue
+ * is already complete rather than a popular subset.
+ *
+ * @param {string} term
+ * @param {{userId?: string|null, sport?: string|null, limit?: number}} [opts]
+ */
+export async function searchEverything(term, { userId = null, sport = null, limit = 20 } = {}) {
+  const clean = String(term ?? '').trim();
+  const empty = { term: clean, teams: [], leagues: [], events: [], channels: [], people: [] };
+  if (clean.length < 2) return { ...empty, total: 0 };
+
+  const settled = await Promise.allSettled([
+    q.searchTeamsFull(clean, { limit, sport }),
+    q.searchLeagues(clean, { sport }),
+    q.searchFixtures(clean, { sport }),
+    // The needle goes through the same normaliser that wrote norm_title at import.
+    // Passing the raw term instead silently matches nothing the moment a channel
+    // name has a colon or a bracketed quality tag in it, which is most of them.
+    q.searchOwnChannels(userId, { normTerm: normaliseTitle(clean) }),
+    // People are not a category of fixture, so narrowing to a sport must not hide
+    // them: that filter narrows the catalogue, not the site.
+    sport ? Promise.resolve([]) : q.searchPeople(clean, { viewerId: userId }),
+  ]);
+
+  const [teams, leagues, events, channels, people] = settled.map((s) =>
+    s.status === 'fulfilled' ? (s.value ?? []) : [],
+  );
+
+  return {
+    term: clean,
+    teams,
+    leagues,
+    events,
+    channels,
+    people,
+    total: teams.length + leagues.length + events.length + channels.length + people.length,
+  };
+}
 
 const ADAPTERS = { espn };
 

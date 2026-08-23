@@ -238,11 +238,17 @@ describe('how the page says it', () => {
     }
   });
 
-  test('where to watch shows on this list and nowhere else', () => {
+  test('where to watch shows on the watch lists and nowhere else', () => {
     expect(components).toContain('showBroadcast && event.broadcast');
-    // Every other EventList on the site is about when something starts, and a
-    // channel name beside a kick-off time there is noise.
-    expect(page.match(/showBroadcast/g).length).toBe(1);
+    /*
+     * Two, and only two: Live now and Starting soon.
+     *
+     * Both lists exist to answer "what can I watch", which is the question a
+     * channel name answers. Every OTHER EventList on the site is about when
+     * something starts, and a broadcaster beside a kick-off time there is noise --
+     * that is the regression this counts rather than the exact number.
+     */
+    expect(page.match(/showBroadcast/g).length).toBe(2);
   });
 
   test('the page cache is short enough for a live score to be true', () => {

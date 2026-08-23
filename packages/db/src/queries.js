@@ -632,6 +632,8 @@ export async function replacePlaylistChannels({ userId, channels }) {
         playlist_id: pl.id,
         position: i + n,
         title: c.title,
+        group_title: c.groupTitle ?? null,
+        kind: c.kind ?? null,
         stream_url: c.streamUrl,
         norm_title: c.normTitle,
       }));
@@ -655,7 +657,8 @@ export async function replacePlaylistChannels({ userId, channels }) {
  */
 export async function playlistChannels(userId, { limit = 20000 } = {}) {
   return sql`
-    select c.id, c.title, c.stream_url, c.norm_title, c.is_live, c.checked_at
+    select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,
+           c.is_live, c.checked_at
     from user_playlist_channels c
     join user_playlists p on p.id = c.playlist_id
     where p.user_id = ${userId}
@@ -889,12 +892,240 @@ export async function listSports() {
 /** Trigram search over team names, for the follow picker. */
 export async function searchTeams(term, limit = 25) {
   return sql`
-    select t.id, t.slug, t.display_name, t.logo_url, l.name as league_name, l.sport
+    select t.id, t.slug, t.display_name, t.logo_url, l.name as league_name, l.abbreviation as league_abbr, l.sport
     from teams t left join leagues l on l.id = t.league_id
     where t.display_name ilike ${`%${term}%`}
     order by similarity(t.display_name, ${term}) desc
     limit ${limit}
   `;
+}
+
+/* ------------------------------------------------------------------ search -- */
+
+/**
+ * Collections whose name looks like what was typed.
+ *
+ * Matched on the name AND the abbreviation, because half of what people type is
+ * the abbreviation -- "EPL", "NCAAM", "MLS" -- and a trigram over the full name
+ * scores those close to zero.
+ *
+ * A few hundred rows, so no index and none wanted.
+ */
+export async function searchLeagues(term, { limit = 8, sport = null } = {}) {
+  const q = String(term ?? '')
+    .trim()
+    .toLowerCase();
+  if (q.length < 2) return [];
+
+  return sql`
+    select l.id, l.slug, l.name, l.abbreviation, l.sport, l.logo_url,
+           (select count(*) from events e
+             where e.league_id = l.id and e.starts_at > now())::int as upcoming
+    from leagues l
+    where l.active
+      and (${sport}::text is null or l.sport = ${sport})
+      and (lower(l.name) % ${q}
+           or lower(l.name) like ${`%${q}%`}
+           or lower(coalesce(l.abbreviation, '')) = ${q})
+    order by
+      -- An exact abbreviation is what somebody typing four capital letters meant,
+      -- and it must not be outranked by a long name that happens to share trigrams.
+      (lower(coalesce(l.abbreviation, '')) = ${q}) desc,
+      similarity(lower(l.name), ${q}) desc,
+      l.priority,
+      l.name
+    limit ${limit}
+  `;
+}
+
+/**
+ * Participants, with enough context to tell two of them apart.
+ *
+ * searchTeams above is the follow picker's query and stays as it is: it is called
+ * on every keystroke and returns the least it can. This one is for the results
+ * page, so it carries the collection, the sport and the next fixture -- which is
+ * the difference between "Denver Broncos" and "Denver Broncos, NFL, Sunday".
+ *
+ * Team ids are unique only within a league, and several sports have two clubs of
+ * the same name in different competitions, so the league is not decoration here.
+ */
+export async function searchTeamsFull(term, { limit = 20, sport = null } = {}) {
+  const q = String(term ?? '').trim();
+  if (q.length < 2) return [];
+
+  return sql`
+    select t.id, t.slug, t.display_name, t.abbreviation, t.logo_url,
+           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           (select e.id from events e
+             where (e.home_team_id = t.id or e.away_team_id = t.id) and e.starts_at > now()
+             order by e.starts_at limit 1) as next_event_id,
+           (select e.starts_at from events e
+             where (e.home_team_id = t.id or e.away_team_id = t.id) and e.starts_at > now()
+             order by e.starts_at limit 1) as next_starts_at
+    from teams t
+    left join leagues l on l.id = t.league_id
+    where t.display_name ilike ${`%${q}%`}
+      and (${sport}::text is null or l.sport = ${sport})
+    order by similarity(t.display_name, ${q}) desc, length(t.display_name), t.display_name
+    limit ${limit}
+  `;
+}
+
+/**
+ * Fixtures by their own name.
+ *
+ * Most fixtures are called "X at Y" and are already reachable through either
+ * side, so this exists for the ones that are not: a cup final, a title fight, a
+ * race meeting, anything with a name of its own.
+ *
+ * Ordered by distance from now in either direction, not by date. For a club with
+ * a decade of history the interesting rows are the next one and the last one, and
+ * a plain date sort gives you one end or the other but never both.
+ */
+export async function searchFixtures(term, { limit = 10, sport = null } = {}) {
+  const q = String(term ?? '')
+    .trim()
+    .toLowerCase();
+  if (q.length < 2) return [];
+
+  return sql`
+    select e.id, e.name, e.short_name, e.starts_at, e.state, e.venue,
+           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           ht.display_name as home_name, at.display_name as away_name
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where (${sport}::text is null or l.sport = ${sport})
+      and (lower(e.name) like ${`%${q}%`} or lower(coalesce(e.short_name, '')) like ${`%${q}%`})
+      -- Both sides are already their own section on the results page. Without
+      -- this, searching a club name returns the club and then its whole season,
+      -- which pushes every other kind of answer off the screen.
+      and coalesce(lower(ht.display_name), '') not like ${`%${q}%`}
+      and coalesce(lower(at.display_name), '') not like ${`%${q}%`}
+    order by abs(extract(epoch from (e.starts_at - now()))), e.starts_at desc
+    limit ${limit}
+  `;
+}
+
+/**
+ * A reader's own channel list.
+ *
+ * The one search that is not about our catalogue at all: somebody with a
+ * subscription is asking whether THEY have it, and until now the only way to find
+ * out was to open a fixture we happened to hold and read the panel on its page.
+ *
+ * `normTerm` is pre-normalised by the caller. norm_title is written by the m3u
+ * parser's normaliseTitle at import, and the needle has to go through the same
+ * function or the two disagree about punctuation -- but this module cannot import
+ * that package, because that package imports this one.
+ *
+ * Scoped through the playlist join like every other read of this table, and the
+ * stream URL is deliberately not selected: it is a credential, and it belongs to
+ * the download and proxy routes rather than to a search result.
+ */
+export async function searchOwnChannels(userId, { normTerm, limit = 12 } = {}) {
+  const needle = String(normTerm ?? '').trim();
+  if (!userId || needle.length < 2) return [];
+
+  return sql`
+    select c.id, c.title, c.group_title, c.is_live, c.checked_at
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId}
+      and c.norm_title like ${`%${needle}%`}
+    -- A slot known to be dead sinks; unchecked stays put, because unchecked is not
+    -- the same as dead. Then the plainest title, which is the primary rather than
+    -- a regional alternate or a replay with a date baked into its name.
+    order by (c.is_live is false), length(c.title), c.position
+    limit ${limit}
+  `;
+}
+
+/**
+ * People, by handle or by the name they chose.
+ *
+ * Only public profiles, and only accounts that picked a handle: an account
+ * without one has no page to link to, and profile_public is an explicit opt-out
+ * that has to be honoured everywhere something is listed.
+ *
+ * A blocked account is filtered out for the viewer who blocked it -- appearing in
+ * their search results is exactly the thing blocking is for.
+ */
+export async function searchPeople(term, { limit = 6, viewerId = null } = {}) {
+  const q = String(term ?? '').trim();
+  if (q.length < 2) return [];
+  const like = `%${q}%`;
+
+  return sql`
+    select u.handle::text as handle, u.display_name
+    from users u
+    where u.handle is not null
+      and u.profile_public
+      and (u.handle::text ilike ${like} or u.display_name ilike ${like})
+      and not exists (
+        select 1 from user_blocks b
+        where b.blocker_id = ${viewerId} and b.blocked_id = u.id
+      )
+    order by (u.handle::text ilike ${q}) desc, u.handle::text
+    limit ${limit}
+  `;
+}
+
+/**
+ * What starts in the next few hours.
+ *
+ * The category page had "live now" and nothing between that and a whole day's
+ * schedule, so the most useful state of all -- about to start, still time to find
+ * a stream or sit down -- had no home. `state = 'pre'` and a window, ordered by
+ * time rather than by league: at this range the clock is what matters, and a
+ * kickoff in ten minutes in a small competition beats one in three hours in a big
+ * one.
+ *
+ * Deliberately excludes anything already under way. That list is directly above
+ * this one, and a fixture appearing in both reads as a duplicate rather than as
+ * two facts.
+ */
+export async function startingSoon({ hours = 4, limit = 30, viewerId = null } = {}) {
+  return sql`
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
+           ht.display_name as home_name, ht.logo_url as home_logo,
+           at.display_name as away_name, at.logo_url as away_logo
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.state = 'pre'
+      -- A date we padded to noon UTC is not a thing that "starts in two hours".
+      -- Every brand running this code stores those (a release with only a month,
+      -- a launch window with only a day), and counting down to an hour nobody
+      -- chose is the one mistake this column exists to prevent.
+      and e.time_known
+      and e.starts_at > now()
+      and e.starts_at <= now() + (${hours} * interval '1 hour')
+    order by e.starts_at, l.priority
+    limit ${limit}
+  `;
+}
+
+/** How many start inside the window, whether or not they all fit in the list. */
+export async function startingSoonCount({ hours = 4 } = {}) {
+  const [row] = await sql`
+    select count(*)::int as n from events
+    where state = 'pre'
+      and time_known
+      and starts_at > now()
+      and starts_at <= now() + (${hours} * interval '1 hour')
+  `;
+  return row?.n ?? 0;
 }
 
 /* ----------------------------------------------------------------- follows -- */
@@ -1049,7 +1280,7 @@ export async function publicFollows(userId, { limit = 60 } = {}) {
 /** The signed-in calendar: every upcoming game involving anything the user follows. */
 export async function upcomingForUser(userId, { limit = 100 } = {}) {
   return sql`
-    select distinct e.*, l.name as league_name, l.sport, true as following,
+    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport, true as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -1082,7 +1313,7 @@ export async function upcomingForUser(userId, { limit = 100 } = {}) {
  */
 export async function upcomingForProfile(userId, { limit = 10 } = {}) {
   return sql`
-    select distinct e.*, l.name as league_name, l.sport, false as following,
+    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport, false as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -1104,7 +1335,7 @@ export async function upcomingForProfile(userId, { limit = 10 } = {}) {
 export async function scheduleForDay({ day, sport = null, limit = 300, viewerId = null }) {
   if (sport) {
     return sql`
-      select e.*, l.name as league_name, l.sport,
+      select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
              exists (
                select 1 from follows vf
                where vf.user_id = ${viewerId}
@@ -1125,7 +1356,7 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
     `;
   }
   return sql`
-    select e.*, l.name as league_name, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1166,7 +1397,7 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
  */
 export async function liveNow({ limit = 30, viewerId = null } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.slug as league_slug, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1409,7 +1640,7 @@ export async function getLeagueBySlug(slug) {
  */
 export async function upcomingForLeague(leagueId, { limit = 200, viewerId = null } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1450,7 +1681,7 @@ export async function publicEvents({ leagueSlug = null, sport = null, from = nul
     select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name, e.venue,
            e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score,
-           l.slug as league, l.name as league_name, l.sport,
+           l.slug as league, l.name as league_name, l.abbreviation as league_abbr, l.sport,
            ht.display_name as home, at.display_name as away
     from events e
     join leagues l on l.id = e.league_id
@@ -1513,7 +1744,7 @@ export async function teamsForLeague(leagueId, userId = null) {
 
 export async function getTeamBySlug(slug) {
   const [row] = await sql`
-    select t.*, l.name as league_name, l.slug as league_slug, l.sport
+    select t.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport
     from teams t left join leagues l on l.id = t.league_id
     where t.slug = ${slug}
   `;
@@ -1532,7 +1763,7 @@ export async function isFollowing({ userId, subjectType, subjectId }) {
 /** A single team's upcoming fixtures, home or away. */
 export async function upcomingForTeam(teamId, { limit = 60, viewerId = null } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1733,7 +1964,7 @@ export async function feedEvents({
            e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score, e.status_detail, e.broadcast, e.broadcast_country,
            e.updated_at,
-           l.name as league_name, l.slug as league_slug, l.sport,
+           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
            ht.display_name as home_name, at.display_name as away_name
     from events e
     join leagues l on l.id = e.league_id

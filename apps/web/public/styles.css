@@ -2147,3 +2147,217 @@ ul.messages time {
 .channels-dropped {
   margin-top: 0.6rem;
 }
+
+/* ==================================================================== search ==
+   The box in the header, and the grouped results page behind it.
+
+   The bar is a three-part flex row (brand, search, nav) rather than the two it was.
+   The search takes the slack -- `flex: 1 1 12rem` with a max -- so it stretches on
+   a desktop and gives way to the nav on a phone rather than pushing the links onto
+   a second row. Below the phone breakpoint it drops to its own full-width line,
+   which is the only arrangement where the input is still wide enough to read what
+   you typed. */
+.topsearch {
+  display: flex;
+  flex: 1 1 12rem;
+  max-width: 26rem;
+  margin: 0 0.5rem;
+}
+/* The form carries the layout, the <search> element carries the meaning. Splitting
+   them is what lets the landmark exist without a wrapper that also has to be a flex
+   container in two different breakpoints. */
+.topsearch-form {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  width: 100%;
+}
+.topsearch input[type="search"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  /* 44px, the same floor the nav links were given. A header search that is 30px
+     tall is the control people miss on a phone. */
+  min-height: 44px;
+  padding: 0.35rem 0.7rem;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  /* iOS draws its own rounded, inset search field otherwise, which ignores every
+     colour above and renders black-on-black in this palette. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.topsearch input[type="search"]::placeholder {
+  color: var(--muted);
+}
+.topsearch input[type="search"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.topsearch .ghost {
+  flex: none;
+  min-height: 44px;
+}
+
+@media (max-width: 48rem) {
+  /* The button is redundant once the phone keyboard shows a Go key, and it is the
+     first thing worth spending on the input instead. enterkeyhint on the input is
+     what makes that key say "search". */
+  .topsearch .ghost {
+    display: none;
+  }
+}
+
+@media (max-width: 34rem) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .topsearch {
+    /* Its own row, after the brand and the nav, at full width. Ordered last so the
+       nav keeps its place beside the logo. */
+    order: 3;
+    flex-basis: 100%;
+    max-width: none;
+    margin: 0 0 0.35rem;
+  }
+}
+
+/* The search page's own bar: bigger, focused on load, and with room for the
+   filter that rides along with it. */
+.searchbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin: 1rem 0 1.5rem;
+}
+.searchbar .field {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+/* Results, in sections by kind. The heading is the whole reason the page reads:
+   without it a team, a league, a fixture, a channel on your own line and a person
+   are five rows that look identical and mean different things. */
+.results-group {
+  margin: 1.5rem 0;
+}
+.results-group h2 {
+  font-size: 1.05rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+}
+.results-group > .muted {
+  margin: -0.25rem 0 0.6rem;
+  font-size: 0.875rem;
+}
+ul.results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+li.result {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line);
+}
+li.result img {
+  border-radius: 6px;
+  flex: none;
+  object-fit: contain;
+  background: var(--panel);
+}
+/* Keeps the text column aligned across rows where only some have a crest. The
+   same 40px the logos are drawn at. */
+.result-blank {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: var(--panel);
+}
+.result-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.result-main a {
+  font-family: var(--disp);
+  font-size: 1.15rem;
+}
+/* A channel row has no page to link to, so its name is a span. Matched to the
+   links beside it so the sections do not look like different pages. */
+.result-name {
+  font-family: var(--disp);
+  font-size: 1.15rem;
+}
+.result-main .meta {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* "Starting soon" reuses the live block's layout and must not reuse its signal.
+   The live count is a red dot because something is happening now; a countdown to
+   something that has not started is not that, and borrowing the badge would put a
+   live marker on every fixture in the next four hours. */
+.starting-soon .live-count {
+  color: var(--muted);
+  border-color: var(--line);
+}
+.starting-soon .live-count::before {
+  content: "○";
+}
+
+/* A row's competition, as a tag.
+
+   The league name used to be third in a run of muted metadata, after the venue,
+   which is where the eye stops reading -- and on a page mixing 354 competitions
+   "is this MLB or college baseball" is the first question a row has to answer.
+   Small caps and a border rather than a filled pill: it sits inside a meta line
+   next to other text and must not outshout the fixture itself. */
+.league-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  line-height: 1.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  margin-right: 0.4rem;
+  /* Long names are the exception -- most are abbreviations -- so a very long one
+     is truncated rather than allowed to wrap the row. The title attribute carries
+     the full text for anyone who needs it. */
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.league-tag-link {
+  text-decoration: none;
+}
+.league-tag-link:hover .league-tag {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* On a channel row the tag is the provider's own words, not ours. Muted, so it
+   reads as a label the reader brought with them rather than as our metadata. */
+.channel-tag {
+  color: var(--muted);
+  margin-left: 0.45rem;
+  margin-right: 0;
+}
+.channel-tag.kind {
+  border-color: var(--accent);
+  color: var(--accent);
+}

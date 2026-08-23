@@ -19,27 +19,89 @@ import { normaliseTeam } from './sportsdb.js';
 export const MAX_CHANNELS = 20000;
 
 /**
- * Split an M3U into { title, url } pairs.
+ * Pull `key="value"` pairs out of the attribute block of an #EXTINF line.
+ *
+ * Only the block BEFORE the last comma is scanned. Attribute values routinely
+ * contain commas ("Sports, US"), which is what made the old first-comma split
+ * wrong: it truncated the title of every channel whose group had one in it.
+ */
+function parseAttrs(head) {
+  /** @type {Record<string,string>} */
+  const out = {};
+  for (const m of head.matchAll(/([a-zA-Z0-9_-]+)="([^"]*)"/g)) {
+    out[m[1].toLowerCase()] = m[2];
+  }
+  return out;
+}
+
+/**
+ * What kind of entry this is: a live channel, a film, or an episode of a series.
+ *
+ * Read off the URL first, because a provider panel encodes it there and is
+ * consistent about it -- /live/, /movie/, /series/, or a file extension. The group
+ * is the fallback for the lists that do not.
+ *
+ * The distinction is not cosmetic: a file is available whenever you want it and a
+ * channel is a claim about right now, so conflating the two puts a maybe above a
+ * certainty in every ranked list.
+ */
+export function entryKind({ url, group } = {}) {
+  const u = String(url ?? '').toLowerCase();
+  if (/\/series\//.test(u)) return 'series';
+  if (/\/(movie|movies|vod)\//.test(u)) return 'vod';
+  if (/\.(mkv|mp4|avi|m4v)(\?|$)/.test(u)) return 'vod';
+  if (/\/live\//.test(u) || /\.(ts|m3u8)(\?|$)/.test(u)) return 'live';
+
+  // Nothing in the URL says. Fall back to the group, which usually does.
+  const g = String(group ?? '').toLowerCase();
+  if (/\b(vod|on ?demand|movies?|films?)\b/.test(g)) return 'vod';
+  if (/\b(series|shows?|tv ?shows?)\b/.test(g)) return 'series';
+  return 'live';
+}
+
+/**
+ * Split an M3U into { title, group, url, kind } entries.
  *
  * Only `#EXTINF` followed by a URL counts. Everything else -- `#EXTM3U`,
  * `#EXT-X-SESSION-DATA`, comments, blank lines -- is skipped rather than guessed
  * at, because a playlist that half-parses is worse than one that does not.
+ *
+ * Ported from the sibling brand, which had already fixed two things here: the
+ * title is taken from the LAST comma rather than the first, and `group-title` is
+ * kept. The group is what a provider calls the shelf a channel sits on -- "Sports
+ * | US", "PPV", "UK Documentary" -- and it is the most useful single string in the
+ * file for telling a reader what one of their own entries actually is.
  *
  * @param {string} text
  */
 export function parseM3u(text) {
   const lines = String(text ?? '').split(/\r?\n/);
   const out = [];
+  /** `#EXTGRP:` is the other way providers state a group; it applies until changed. */
+  let currentGroup = null;
 
   for (let i = 0; i < lines.length && out.length < MAX_CHANNELS; i++) {
     const line = lines[i].trim();
+
+    if (line.startsWith('#EXTGRP:')) {
+      currentGroup = line.slice('#EXTGRP:'.length).trim() || null;
+      continue;
+    }
     if (!line.startsWith('#EXTINF')) continue;
 
-    // The title is everything after the LAST comma on the line, because the
-    // attribute block before it may itself contain commas inside quotes.
-    const comma = line.indexOf(',');
+    /*
+     * The title is everything after the LAST comma, not the first.
+     *
+     * The attribute block before it may itself contain commas inside quotes, and
+     * on a real provider list it usually does -- group-title="Sports, US" is
+     * ordinary. Splitting on the first comma turns every such title into a
+     * fragment of its own metadata, which is what this used to do.
+     */
+    const comma = line.lastIndexOf(',');
     if (comma < 0) continue;
+    const head = line.slice(0, comma);
     const title = line.slice(comma + 1).trim();
+    const attrs = parseAttrs(head);
 
     // The URL is the next line that is not another directive. Providers sometimes
     // interleave #EXTVLCOPT or #EXTGRP between the two.
@@ -47,21 +109,48 @@ export function parseM3u(text) {
     for (let j = i + 1; j < lines.length; j++) {
       const cand = lines[j].trim();
       if (!cand) continue;
+      if (cand.startsWith('#EXTGRP:')) {
+        currentGroup = cand.slice('#EXTGRP:'.length).trim() || currentGroup;
+        continue;
+      }
       if (cand.startsWith('#')) continue;
       url = cand;
       i = j;
       break;
     }
     if (!url) continue;
+    if (!/^https?:\/\//i.test(url)) continue;
 
     // A title is optional in the wild -- a numbered slot with nothing on it yet
-    // ("NFL 03:") is normal -- but a channel with neither title nor a usable URL
-    // is not worth a row.
-    if (!/^https?:\/\//i.test(url)) continue;
-    out.push({ title, url });
+    // ("NFL 03:") is normal -- so fall back to tvg-name before giving up.
+    const name = title || attrs['tvg-name'] || '';
+    if (!name) continue;
+
+    const group = attrs['group-title'] || currentGroup || null;
+    out.push({ title: name, group, url, kind: entryKind({ url, group }) });
   }
 
   return out;
+}
+
+/**
+ * The distinct groups in a list, largest first.
+ *
+ * Counts come along because a provider list has a long tail of one-channel groups
+ * that are not worth a row on a page.
+ *
+ * @param {Array<{group: string|null}>} channels
+ */
+export function groupsOf(channels) {
+  const counts = new Map();
+  for (const c of channels ?? []) {
+    const g = c.group?.trim();
+    if (!g) continue;
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
 /**

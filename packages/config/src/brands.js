@@ -114,6 +114,11 @@ const BRANDS = {
         'Games in progress across every league, biggest competitions first. No account and ' +
         'nothing to follow -- open one and watch.',
       liveEmpty: 'Nothing is in progress right now. This fills up around kickoff.',
+      soonTitle: 'Starting soon',
+      soonBlurb:
+        'Kicking off in the next four hours, soonest first. Enough warning to find it, ' +
+        'close enough that you do not have to remember.',
+      soonEmpty: 'Nothing kicks off in the next four hours.',
     },
     providers: ['espn'],
     elsewhere: {},
@@ -154,6 +159,11 @@ const BRANDS = {
         'Under way right now -- a launch, a premiere, anything with a start and an end rather ' +
         'than just a date.',
       liveEmpty: 'Nothing is under way right now.',
+      soonTitle: 'Out in the next few hours',
+      soonBlurb:
+        'Anything with a real start time landing in the next four hours, soonest first. ' +
+        'Releases carrying only a date are not here -- they have no hour to count down to.',
+      soonEmpty: 'Nothing with a start time lands in the next four hours.',
       notFound: 'Back to what is coming up',
     },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],
