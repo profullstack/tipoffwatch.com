@@ -18,6 +18,7 @@
  */
 
 import mpegts from 'mpegts.js';
+import { unplayableReason } from './codecs.js';
 
 /**
  * Can this browser play at all?
@@ -88,7 +89,22 @@ function attach(video, url, onError) {
    * So the code is mapped here, and each of these corresponds to a branch of the
    * route.
    */
-  player.on(mpegts.Events.ERROR, (type, _detail, info) => {
+  /*
+   * The codec check, which has to happen here and not before pressing Play.
+   *
+   * Nothing about the channel says what is inside it until the demuxer has read
+   * the stream: the playlist gives a name and a URL, the response gives
+   * video/mp2t, and a transport stream carries whatever the broadcaster put in
+   * it. So the first honest moment is media info -- and it arrives before the
+   * source buffer MSE is about to refuse, which means the reader gets the reason
+   * instead of a black rectangle that stops.
+   */
+  player.on(mpegts.Events.MEDIA_INFO, (info) => {
+    const reason = unplayableReason(info, (t) => window.MediaSource?.isTypeSupported?.(t) ?? false);
+    if (reason) onError(reason);
+  });
+
+  player.on(mpegts.Events.ERROR, (type, detail, info) => {
     const code = info?.code;
     // 429 is no longer a thing this route says -- starting a second channel now
     // takes the line over rather than being refused. Kept because something in
@@ -100,9 +116,18 @@ function attach(video, url, onError) {
     if (code === 502 || code === 504) {
       return onError('Your provider did not send a stream for that channel.');
     }
+    if (type === mpegts.ErrorTypes.NETWORK_ERROR) {
+      return onError(
+        'The stream stopped. Your provider may have dropped it, or you started another channel somewhere else.',
+      );
+    }
+    // Everything else is a demux or MSE failure, and the detail is the only thing
+    // that distinguishes "this browser will not decode Dolby" from "the stream is
+    // malformed". It was being dropped on the floor, which is how a channel that
+    // fails for a nameable reason came to read as the player being broken.
     onError(
-      type === mpegts.ErrorTypes.NETWORK_ERROR
-        ? 'The stream stopped. Your provider may have dropped it, or you started another channel somewhere else.'
+      detail
+        ? `That stream could not be played here (${detail}). Try VLC.`
         : 'That stream could not be played here. Try VLC.',
     );
   });
