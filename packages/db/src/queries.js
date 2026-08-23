@@ -1145,6 +1145,54 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
   `;
 }
 
+/**
+ * Every game in progress right now, across the whole catalogue.
+ *
+ * For finding something to watch rather than for keeping up with what you already
+ * follow -- so it is deliberately not filtered by follows, and the ordering is by
+ * league priority rather than by kick-off: a reader scanning this wants the big
+ * competitions first, not whichever obscure fixture started most recently.
+ *
+ * `state = 'in'` only, and not the "kicked off in the last half hour" widening
+ * that leaguesWithLiveGames uses. That widening exists so the tick refreshes a
+ * league whose scores have not landed yet; borrowing it here would put postponed
+ * fixtures -- which keep `pre` and a start time in the past -- in a list headed
+ * "live now". The tick flips a real kick-off to `in` within a minute, which is
+ * the same minute this page is cached for.
+ *
+ * The limit is a ceiling, not a page: on a Saturday afternoon there are more games
+ * in progress than anybody scrolls, and the tail of that list is where the
+ * catalogue's least-followed leagues live.
+ */
+export async function liveNow({ limit = 30, viewerId = null } = {}) {
+  return sql`
+    select e.*, l.name as league_name, l.slug as league_slug, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
+           ht.display_name as home_name, ht.logo_url as home_logo,
+           at.display_name as away_name, at.logo_url as away_logo
+    from events e
+    join leagues l on l.id = e.league_id
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.state = 'in'
+    order by l.priority, e.starts_at
+    limit ${limit}
+  `;
+}
+
+/** How many games are in progress, whether or not they all fit in the list. */
+export async function liveNowCount() {
+  const [row] = await sql`select count(*)::int as n from events where state = 'in'`;
+  return row?.n ?? 0;
+}
+
 export async function getEvent(eventId) {
   const [row] = await sql`
     select e.*, l.name as league_name, l.slug as league_slug, l.sport,

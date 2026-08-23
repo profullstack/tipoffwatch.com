@@ -149,7 +149,7 @@ export const Landing = ({ user, today, vapidKey }) => (
 );
 
 /** Step 1 of the picker: sport. */
-export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
+export const SportsIndex = ({ user, sports, leagueCounts, upcoming, live, liveTotal }) => (
   <Layout title="Sports" user={user} canonical={href.category()}>
     <h1>{brand.copy.browse}</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
@@ -209,6 +209,34 @@ export const SportsIndex = ({ user, sports, leagueCounts, upcoming }) => (
         </li>
       ))}
     </ul>
+
+    {/* Underneath the categories, which is where it was asked for and also where
+        it belongs: this page's job is to get somebody to a league, and this is the
+        shortcut for the reader who does not want to pick one -- or to follow
+        anything, which every other route into a fixture here assumes you have.
+
+        Rendered even when nothing is on. A section that appears only sometimes is
+        indistinguishable from one that is broken, and "nothing is in progress" is
+        an answer where silence is not. */}
+    <section class="live-now">
+      <div class="live-head">
+        <h2>{brand.copy.liveTitle}</h2>
+        {liveTotal > 0 ? (
+          <span class="live-count num" title={`${liveTotal} in progress`}>
+            {liveTotal.toLocaleString('en-US')}
+          </span>
+        ) : null}
+      </div>
+      {live?.length ? (
+        <p class="muted small">
+          {brand.copy.liveBlurb}
+          {/* Said outright rather than left as a mystery: the list is capped, and a
+              reader on a Saturday afternoon is looking at a fraction of what is on. */}
+          {liveTotal > live.length ? ` Showing the first ${live.length}.` : ''}
+        </p>
+      ) : null}
+      <EventList events={live ?? []} emptyText={brand.copy.liveEmpty} showBroadcast />
+    </section>
   </Layout>
 );
 

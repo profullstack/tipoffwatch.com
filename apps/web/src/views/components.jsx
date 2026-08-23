@@ -148,7 +148,7 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
   );
 };
 
-export const EventRow = ({ event }) => (
+export const EventRow = ({ event, showBroadcast = false }) => (
   <li class={`event ${event.state}${event.following ? ' followed' : ''}`}>
     <RowTime event={event} />
 
@@ -199,6 +199,16 @@ export const EventRow = ({ event }) => (
             city, which is nobody browsing 354 leagues. */}
         {event.venue_city ? `, ${event.venue_city}` : ''}
         <StateBadge state={event.state} detail={event.status_detail} />
+        {/* Only where the list exists to answer "what can I watch" -- the Live now
+            section. Everywhere else this row is about when something starts, and a
+            channel name in the same breath as a kick-off time reads as noise. It is
+            US-only and mostly near-term for most of the catalogue, so it is an
+            addition to a row rather than a column that would sit empty. */}
+        {showBroadcast && event.broadcast ? (
+          <span class="on-tv" title="Where this is being shown">
+            {event.broadcast}
+          </span>
+        ) : null}
       </span>
     </div>
 
@@ -212,13 +222,13 @@ export const EventRow = ({ event }) => (
   </li>
 );
 
-export const EventList = ({ events, emptyText }) =>
+export const EventList = ({ events, emptyText, showBroadcast = false }) =>
   events.length === 0 ? (
     <p class="empty">{emptyText ?? 'Nothing scheduled.'}</p>
   ) : (
     <ul class="events">
       {events.map((e) => (
-        <EventRow event={e} />
+        <EventRow event={e} showBroadcast={showBroadcast} />
       ))}
     </ul>
   );

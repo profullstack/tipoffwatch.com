@@ -163,10 +163,31 @@ app.get(`/${brand.paths.category}`, async (c) => {
     ? await Promise.all([q.leagueFollowCounts(user.id), q.upcomingEventCount()])
     : [null, null];
 
-  return cached(c, 'page:sports', 300, async () => {
-    const sports = await q.listSports();
+  /*
+   * Sixty seconds, down from five minutes, and the live list is the reason.
+   *
+   * The sports themselves change about once a season, so five minutes was free.
+   * A game in progress is not: the live tick writes scores every 60s, and a
+   * five-minute-old scoreboard is not stale in the harmless way a league count is
+   * -- it is a page telling somebody a match is on that finished four minutes
+   * ago. 60 is the freshest thing there is to serve, so serving anything older is
+   * a choice with no upside.
+   */
+  return cached(c, 'page:sports', 60, async () => {
+    const [sports, live, liveTotal] = await Promise.all([
+      q.listSports(),
+      q.liveNow({ viewerId: user?.id ?? null }),
+      q.liveNowCount(),
+    ]);
     return render(
-      <SportsIndex user={user} sports={sports} leagueCounts={counts} upcoming={upcoming} />,
+      <SportsIndex
+        user={user}
+        sports={sports}
+        leagueCounts={counts}
+        upcoming={upcoming}
+        live={live}
+        liveTotal={liveTotal}
+      />,
     );
   });
 });

@@ -3,7 +3,6 @@ import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { MAX_CHANNELS, normaliseTeam, parseM3u, rankChannelsForFixture } from '@tipoff/sports';
-import { firstLiveChannel } from './probe.js';
 
 export { firstLiveChannel, probeStream } from './probe.js';
 export { claimStreamSlot, openStream, streamSlotsOpen } from './proxy.js';

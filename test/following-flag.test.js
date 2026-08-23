@@ -33,8 +33,11 @@ beforeAll(async () => {
   const matches = [
     ...source.matchAll(/exists \(\s*select 1 from follows vf[\s\S]*?\) as following/g),
   ];
-  // Four list queries carry the flag; if one loses it, that is the regression.
-  expect(matches.length).toBe(4);
+  // Five list queries carry the flag; if one loses it, that is the regression.
+  // The fifth is liveNow, which is not about what you follow at all -- but it
+  // renders the same EventRow, and a star that appears on four lists and not the
+  // fifth is the inconsistency this test exists to catch.
+  expect(matches.length).toBe(5);
   // Every copy must be identical, so testing one tests them all.
   const texts = new Set(matches.map((m) => m[0].replace(/\s+/g, ' ')));
   expect(texts.size).toBe(1);

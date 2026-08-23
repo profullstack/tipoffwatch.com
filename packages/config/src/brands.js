@@ -109,6 +109,11 @@ const BRANDS = {
         "No teams recorded yet -- they appear once this league's fixtures are synced.",
       emptyFollows: "You're not following anything yet.",
       notFound: "Back to today's games",
+      liveTitle: 'Live now',
+      liveBlurb:
+        'Games in progress across every league, biggest competitions first. No account and ' +
+        'nothing to follow -- open one and watch.',
+      liveEmpty: 'Nothing is in progress right now. This fills up around kickoff.',
     },
     providers: ['espn'],
     elsewhere: {},
@@ -144,6 +149,11 @@ const BRANDS = {
         'below to hear only about them.',
       emptyParticipants: 'Nothing filed here yet -- it appears once this genre is synced.',
       emptyFollows: "You're not following anything yet.",
+      liveTitle: 'Happening now',
+      liveBlurb:
+        'Under way right now -- a launch, a premiere, anything with a start and an end rather ' +
+        'than just a date.',
+      liveEmpty: 'Nothing is under way right now.',
       notFound: 'Back to what is coming up',
     },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],

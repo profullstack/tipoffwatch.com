@@ -2066,3 +2066,56 @@ ul.messages time {
   object-fit: contain;
   background: #000;
 }
+
+/* ------------------------------------------------------------- live now -- */
+
+/* The "what is on right now" list under the categories. Separated from the grid
+   above it by a rule rather than by space alone: it is a different question
+   (what can I watch) from the one the rest of the page answers (what do I
+   follow), and on a long index the two run together without one. */
+.live-now {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+.live-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.live-now h2 {
+  margin: 0;
+}
+/* The count, which is the part that makes the heading worth reading twice. Styled
+   as a live badge rather than as a number in the heading, so it reads as a state
+   of the site rather than as part of the title. */
+.live-count {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--live);
+  border: 1px solid var(--live);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  line-height: 1.5;
+}
+.live-count::before {
+  content: "●";
+  margin-right: 0.35rem;
+  font-size: 0.7em;
+  vertical-align: 0.1em;
+}
+.live-now .empty {
+  color: var(--muted);
+}
+
+/* Where a fixture is being shown, on the rows that carry it. A chip rather than
+   more grey meta text: it is the answer to the question the list exists for, and
+   it has to survive being the fourth thing on a crowded line. */
+.on-tv {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
