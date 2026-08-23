@@ -135,39 +135,107 @@ export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEO
 }
 
 /**
- * How many of these one account may have open at once.
+ * How many streams one account may have open at once, and what happens at the
+ * ceiling: the OLDEST one is dropped, not the newest.
  *
- * Not a rate limit, and not about our capacity. A provider line permits a small
- * number of simultaneous connections -- often exactly one -- and exceeding it is
- * what gets a subscription suspended. The reader owns that line, so this ceiling
- * protects THEM: better to be told "you are already watching something" than to
- * have the account cut off.
+ * The ceiling itself is not a rate limit and not about our capacity. A provider
+ * line permits a small number of simultaneous connections -- often exactly one --
+ * and exceeding it is what gets a subscription suspended. The reader owns that
+ * line, so the ceiling protects THEM.
+ *
+ * Refusing the new stream also respected the ceiling, and was wrong anyway.
+ * Pressing Play on a second channel is not an accident to be corrected: it says
+ * which channel is wanted now. "You are already watching a channel" told the
+ * reader to go and stop something they had usually already stopped -- because the
+ * page tears the old player down before it asks for the new one, and the server
+ * only learns that when the abort of a socket it is no longer reading reaches it.
+ * That is a race the reader cannot see and cannot win by trying again quickly:
+ * pressing Play twice in a second was the reliable way to be told no.
+ *
+ * So the newest claim evicts the oldest, and eviction is not just bookkeeping --
+ * `evict` aborts the upstream fetch, so the provider connection is really gone
+ * before the replacement is opened. One line, one connection, and the reader
+ * never has to think about it.
  *
  * In process, not in Redis, because there is one web container. Splitting the web
  * role across instances makes this per-instance and therefore too generous; that
- * is the moment to move the counter, and the reason it is a small module of its
+ * is the moment to move the registry, and the reason it is a small module of its
  * own rather than a variable inside the route.
  */
 const open = new Map();
 
-export function claimStreamSlot(userId, { max = 1 } = {}) {
-  const n = open.get(userId) ?? 0;
-  if (n >= max) return null;
-  open.set(userId, n + 1);
-  let released = false;
-  return () => {
+/**
+ * Take a slot, dropping this account's oldest stream if the line is full.
+ *
+ * @param {string} userId
+ * @param {object} [opts]
+ * @param {number} [opts.max] simultaneous streams this line permits.
+ * @param {() => void} [opts.evict] how to end THIS stream if a later claim takes
+ *   the slot. Aborts the upstream fetch in the route; a claim with no evict is
+ *   still counted, so a caller that forgets one loses the takeover rather than
+ *   the ceiling.
+ * @returns {(() => void) | null} release, or null if the line permits nothing at
+ *   all. Callers must treat null as "not now" rather than assuming a slot.
+ */
+export function claimStreamSlot(userId, { max = 1, evict } = {}) {
+  if (!(max >= 1)) return null;
+
+  let slots = open.get(userId);
+  if (!slots) {
+    slots = new Set();
+    open.set(userId, slots);
+  }
+
+  /*
+   * Oldest first, which is what a Set's insertion order gives. Evicting in a
+   * loop rather than once: `max` can be lowered by a deploy while streams from
+   * the old ceiling are still running, and then a single eviction would leave
+   * the account permanently over its line's limit.
+   */
+  for (const old of slots) {
+    if (slots.size < max) break;
+    old.release();
+    try {
+      old.evict?.();
+    } catch {
+      // An upstream that is already gone throws on abort. The slot is what
+      // mattered and it has been given back.
+    }
+  }
+
+  /*
+   * Re-attach before claiming. Releasing the last entry drops the account's whole
+   * Set from the map -- which is right, and means that after evicting everything
+   * the local `slots` is a detached object nothing can see. Adding the new claim
+   * to that would count the stream nowhere: the ceiling would stop applying and
+   * the reader would quietly accumulate connections on a line that permits one.
+   */
+  open.set(userId, slots);
+
+  const entry = { evict, released: false };
+  entry.release = () => {
     // Idempotent: this is called from a stream teardown, which can fire on both
-    // cancel and error for the same viewer. Counting that twice would walk the
-    // slot count downward until the cap stopped applying at all.
-    if (released) return;
-    released = true;
-    const left = (open.get(userId) ?? 1) - 1;
-    if (left <= 0) open.delete(userId);
-    else open.set(userId, left);
+    // cancel and error for the same viewer, and again from an eviction that the
+    // teardown then follows. Counting any of those twice would walk the slot
+    // count down until the ceiling stopped applying at all.
+    if (entry.released) return;
+    entry.released = true;
+    const live = open.get(userId);
+    if (!live) return;
+    live.delete(entry);
+    if (live.size === 0) open.delete(userId);
   };
+
+  slots.add(entry);
+  return entry.release;
 }
 
-/** Only for tests: the counter is process-wide and outlives a test file. */
+/** How many streams this account has open. Only for tests and diagnostics. */
+export function streamSlotsOpen(userId) {
+  return open.get(userId)?.size ?? 0;
+}
+
+/** Only for tests: the registry is process-wide and outlives a test file. */
 export function _resetStreamSlots() {
   open.clear();
 }

@@ -225,8 +225,12 @@ export const config = {
        *
        * One, matching what a typical line permits. This exists to protect the
        * READER's subscription, not our capacity -- a provider that sees two
-       * simultaneous connections from one credential suspends the account, and
-       * that is a worse outcome than a second tab being told to wait.
+       * simultaneous connections from one credential suspends the account.
+       *
+       * At the ceiling the OLDEST stream is dropped, not the newest: pressing
+       * Play on another channel says which channel is wanted now, so it takes the
+       * line over. Raising this above 1 only makes sense for a line that really
+       * permits more; it does not make the player better behaved.
        */
       maxPerUser: num('STREAM_PROXY_MAX_PER_USER', 1),
     },

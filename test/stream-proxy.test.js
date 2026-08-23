@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { _resetStreamSlots, claimStreamSlot, openStream } from '../packages/playlists/src/proxy.js';
+import {
+  _resetStreamSlots,
+  claimStreamSlot,
+  openStream,
+  streamSlotsOpen,
+} from '../packages/playlists/src/proxy.js';
 
 /**
  * Playing a channel in the page, for a device with no app to hand it to.
@@ -106,53 +111,121 @@ describe('opening a channel for the browser', () => {
   });
 });
 
-describe('one connection per account', () => {
+describe('one connection per account, newest wins', () => {
   /*
-   * Not our capacity: the reader's. A provider line permits a small number of
-   * simultaneous connections, often exactly one, and exceeding it is what gets a
-   * subscription suspended. Being told "you are already watching" is a better
-   * outcome for the account holder than losing the account.
+   * The ceiling is not our capacity: it is the reader's. A provider line permits
+   * a small number of simultaneous connections, often exactly one, and exceeding
+   * it is what gets a subscription suspended.
+   *
+   * Which stream gives way is a separate decision from whether one has to, and
+   * refusing the new one was the wrong answer. The page tears the old player down
+   * before it asks for the next channel, so by the time "you are already watching
+   * a channel" appeared, the reader usually was not -- the server had simply not
+   * yet noticed a socket it had stopped reading. Pressing Play twice quickly was
+   * the reliable way to be told no.
    */
 
-  test('a second stream is refused while the first is open', () => {
+  test('a second stream takes the line over instead of being refused', () => {
     _resetStreamSlots();
     expect(claimStreamSlot('u1')).toBeTruthy();
-    expect(claimStreamSlot('u1')).toBeNull();
+    expect(claimStreamSlot('u1')).toBeTruthy();
+  });
+
+  test('taking over ends the stream that was there, rather than adding to it', () => {
+    _resetStreamSlots();
+    let evicted = 0;
+    claimStreamSlot('u1', { evict: () => (evicted += 1) });
+    expect(evicted).toBe(0);
+    claimStreamSlot('u1', { evict: () => {} });
+    // The eviction is what aborts the upstream fetch. Counting the slot back
+    // without it would leave the provider connection open with nobody reading it,
+    // which is the exact state the ceiling exists to prevent.
+    expect(evicted).toBe(1);
+    expect(streamSlotsOpen('u1')).toBe(1);
+  });
+
+  test('an evicted stream releasing later does not drop the one that replaced it', () => {
+    /*
+     * The order is always this: the new claim evicts, the abort travels, and the
+     * old request's own teardown fires afterwards. If that late release were
+     * counted against the account rather than against the entry it belongs to,
+     * the replacement's slot would be handed back while it was still playing.
+     */
+    _resetStreamSlots();
+    const first = claimStreamSlot('u1', { evict: () => {} });
+    claimStreamSlot('u1', { evict: () => {} });
+    first();
+    expect(streamSlotsOpen('u1')).toBe(1);
   });
 
   test('another account is unaffected', () => {
     _resetStreamSlots();
     claimStreamSlot('u1');
-    expect(claimStreamSlot('u2')).toBeTruthy();
+    claimStreamSlot('u2');
+    expect(streamSlotsOpen('u1')).toBe(1);
+    expect(streamSlotsOpen('u2')).toBe(1);
   });
 
-  test('releasing lets the next one through', () => {
+  test('an evict that throws does not keep the slot', () => {
+    // A fetch aborted twice throws, and it arrives here as the eviction of a
+    // stream that has already gone. Losing the slot to that would be permanent.
+    _resetStreamSlots();
+    claimStreamSlot('u1', {
+      evict: () => {
+        throw new Error('already gone');
+      },
+    });
+    expect(() => claimStreamSlot('u1', { evict: () => {} })).not.toThrow();
+    expect(streamSlotsOpen('u1')).toBe(1);
+  });
+
+  test('releasing frees the line', () => {
     _resetStreamSlots();
     const release = claimStreamSlot('u1');
     release();
-    expect(claimStreamSlot('u1')).toBeTruthy();
+    expect(streamSlotsOpen('u1')).toBe(0);
   });
 
-  test('releasing twice does not hand out a slot that was never given back', () => {
+  test('releasing twice does not walk the count below what is open', () => {
     /*
      * Teardown fires on both cancel and error for the same viewer, so a double
      * release is the normal case rather than a rare one. Counting it twice walks
-     * the number below zero and the cap silently stops applying -- which is the
-     * shape of bug that only shows up as a suspended subscription.
+     * the number below zero and the ceiling silently stops applying -- which is
+     * the shape of bug that only shows up as a suspended subscription.
      */
     _resetStreamSlots();
     const release = claimStreamSlot('u1');
     release();
     release();
-    expect(claimStreamSlot('u1')).toBeTruthy();
-    expect(claimStreamSlot('u1')).toBeNull();
+    claimStreamSlot('u1');
+    claimStreamSlot('u1');
+    expect(streamSlotsOpen('u1')).toBe(1);
   });
 
   test('the ceiling is configurable, for a line that permits more', () => {
     _resetStreamSlots();
-    expect(claimStreamSlot('u1', { max: 2 })).toBeTruthy();
-    expect(claimStreamSlot('u1', { max: 2 })).toBeTruthy();
-    expect(claimStreamSlot('u1', { max: 2 })).toBeNull();
+    claimStreamSlot('u1', { max: 2 });
+    claimStreamSlot('u1', { max: 2 });
+    expect(streamSlotsOpen('u1')).toBe(2);
+    claimStreamSlot('u1', { max: 2 });
+    expect(streamSlotsOpen('u1')).toBe(2);
+  });
+
+  test('a lowered ceiling sheds every stream above it, not one', () => {
+    // max can fall under a running account when a deploy changes the knob. One
+    // eviction per claim would leave it permanently over the line's limit.
+    _resetStreamSlots();
+    claimStreamSlot('u1', { max: 3 });
+    claimStreamSlot('u1', { max: 3 });
+    claimStreamSlot('u1', { max: 3 });
+    claimStreamSlot('u1', { max: 1 });
+    expect(streamSlotsOpen('u1')).toBe(1);
+  });
+
+  test('a line that permits nothing hands out no slot at all', () => {
+    _resetStreamSlots();
+    expect(claimStreamSlot('u1', { max: 0 })).toBeNull();
+    expect(streamSlotsOpen('u1')).toBe(0);
   });
 });
 
@@ -190,6 +263,24 @@ describe('what the page offers, and to whom', () => {
     // data-attribute would additionally sit in the DOM for any extension to read.
     expect(view).toMatch(/data-play=\{`\/events\/\$\{eventId\}\/stream\.ts/);
     expect(view).not.toMatch(/data-play=\{playerLinks/);
+  });
+
+  test('a press that is no longer the newest abandons itself', () => {
+    /*
+     * Starting a player is not instant -- the bundle arrives on the first press --
+     * and a second press during that wait ran the whole handler again. Both
+     * reached `stop = player.attach(...)`, the later overwrote the earlier handle,
+     * and the earlier player kept running with nothing left able to destroy it:
+     * two <video> elements and two connections on a line that permits one.
+     */
+    expect(client).toContain('const mine = generation;');
+    expect(client).toContain('if (mine !== generation) {');
+  });
+
+  test('starting a channel takes the old one out of the page first', () => {
+    // The teardown is what removes the <video> and drops the connection. Leaving
+    // it to the server's eviction would strand a dead player on the page.
+    expect(client).toMatch(/teardown\(\);\n\s*for \(const b of buttons\)/);
   });
 
   test('a browser with no Media Source Extensions loses the button entirely', () => {

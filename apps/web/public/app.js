@@ -942,6 +942,20 @@ function initInlinePlayer(root = document) {
   let stop = null;
   let stage = null;
 
+  /*
+   * Which press is the live one.
+   *
+   * Starting a player is not instant -- the bundle has to arrive on the first
+   * press -- and a second press during that wait used to run the whole handler a
+   * second time. Both then reached `stop = player.attach(...)`, the later one
+   * overwrote the earlier handle, and the earlier player kept running with
+   * nothing left that could destroy it: two <video> elements, two connections on
+   * a line that permits one, and a stray one that only a reload could stop.
+   *
+   * A press that is no longer the newest abandons itself rather than racing.
+   */
+  let generation = 0;
+
   /** One at a time, because the reader's line allows one. */
   const teardown = () => {
     if (stop) stop();
@@ -971,15 +985,21 @@ function initInlinePlayer(root = document) {
       section.querySelector('.player-error')?.remove();
 
       // Pressing the channel that is already playing stops it. Without this the
-      // only way to release the connection is to leave the page -- and the server
-      // refuses the second stream, which reads as the button being broken.
+      // only way to release the connection is to leave the page.
       if (button.dataset.playing) {
+        generation += 1;
         button.dataset.playing = '';
         button.textContent = 'Play here';
         teardown();
         return;
       }
 
+      generation += 1;
+      const mine = generation;
+
+      // The old channel goes before the new one is asked for: its <video> comes
+      // out of the page and its connection is dropped here rather than being left
+      // for the server to evict, which it now would.
       teardown();
       for (const b of buttons) {
         b.dataset.playing = '';
@@ -996,6 +1016,14 @@ function initInlinePlayer(root = document) {
         button.disabled = false;
         button.textContent = 'Play here';
         fail('The player could not be loaded. Try VLC, or reload the page.');
+        return;
+      }
+
+      // Somebody pressed a different channel while the bundle was arriving. That
+      // press owns the player now; this one puts its own button back and leaves.
+      if (mine !== generation) {
+        button.disabled = false;
+        button.textContent = 'Play here';
         return;
       }
 

@@ -764,23 +764,43 @@ app.get('/events/:id/stream.ts', async (c) => {
   if (!pick) return c.json({ error: 'no channel' }, 404);
 
   /*
+   * Two ways this stream can be told to stop, and it has to obey both.
+   *
+   * The reader leaving is `c.req.raw.signal`. The other is this account starting
+   * a different channel -- pressing Play elsewhere means they want the other one
+   * now, so the older stream is evicted rather than the new one being refused.
+   * Both end up on one controller, because everything downstream takes a single
+   * signal and neither reason to stop is more real than the other.
+   */
+  const stop = new AbortController();
+  const signal = stop.signal;
+  const abortOnLeave = () => stop.abort();
+  if (c.req.raw.signal?.aborted) stop.abort();
+  else c.req.raw.signal?.addEventListener('abort', abortOnLeave, { once: true });
+
+  /*
    * Claimed before the upstream is touched, not after.
    *
-   * A reader with two tabs open is two connections on a line that usually allows
-   * one, and the provider's answer to that is to suspend the account rather than
-   * to refuse the second stream. Reserving the slot first means the second tab
-   * never opens the connection at all.
+   * A reader with two connections open on a line that allows one is how a
+   * subscription gets suspended, so the slot is taken first and the previous
+   * stream is aborted here -- before the replacement connects, not alongside it.
    */
-  const release = claimStreamSlot(user.id, { max: config.playlists.proxy.maxPerUser });
-  if (!release) {
-    return c.json(
-      { error: 'You are already watching a channel. Stop that one and try again.' },
-      429,
-    );
-  }
+  const release = claimStreamSlot(user.id, {
+    max: config.playlists.proxy.maxPerUser,
+    evict: () => stop.abort(),
+  });
+  if (!release) return c.json({ error: 'player is off' }, 404);
 
-  const signal = c.req.raw.signal;
-  const result = await openStream(pick.url, { signal });
+  let result;
+  try {
+    result = await openStream(pick.url, { signal });
+  } catch (err) {
+    // openStream answers rather than throws for everything it anticipates, so
+    // this is the unanticipated one -- and a slot that leaks here is the reader's
+    // only connection, held by nothing, until the container restarts.
+    release();
+    throw err;
+  }
 
   if (!result.ok) {
     release();
@@ -811,7 +831,7 @@ app.get('/events/:id/stream.ts', async (c) => {
    * harmless by construction; releasing never is a feature that works once per
    * deploy.
    */
-  signal?.addEventListener('abort', release, { once: true });
+  signal.addEventListener('abort', release, { once: true });
   const body = result.body.pipeThrough(
     new TransformStream({
       flush: release,

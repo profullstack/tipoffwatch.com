@@ -81,16 +81,20 @@ function attach(video, url, onError) {
   /*
    * Turn a loader failure back into the sentence the route meant.
    *
-   * The proxy answers a refusal with a status and a JSON reason, and the reader
+   * The proxy answers a failure with a status and a JSON reason, and the reader
    * sees neither: the request belongs to the library, which reports a category
    * and a status code. Reading the body instead would mean issuing the request
-   * twice, and the second one is a second connection on a line that counts them
-   * -- the exact thing the status is refusing. So the code is mapped here, and
-   * each of these corresponds to a branch of the route.
+   * twice, and the second one is a second connection on a line that counts them.
+   * So the code is mapped here, and each of these corresponds to a branch of the
+   * route.
    */
   player.on(mpegts.Events.ERROR, (type, _detail, info) => {
     const code = info?.code;
-    if (code === 429) return onError('You are already watching a channel. Stop that one first.');
+    // 429 is no longer a thing this route says -- starting a second channel now
+    // takes the line over rather than being refused. Kept because something in
+    // front of the app (a proxy, a WAF) can still say it, and "try again" is the
+    // right advice for that, where "stop the other one" never was.
+    if (code === 429) return onError('The line was busy. Try that again.');
     if (code === 404) return onError('That channel is no longer on your list.');
     if (code === 415) return onError('That channel needs a different player. Try VLC.');
     if (code === 502 || code === 504) {
@@ -98,7 +102,7 @@ function attach(video, url, onError) {
     }
     onError(
       type === mpegts.ErrorTypes.NETWORK_ERROR
-        ? 'The stream stopped. Your provider may have dropped the connection.'
+        ? 'The stream stopped. Your provider may have dropped it, or you started another channel somewhere else.'
         : 'That stream could not be played here. Try VLC.',
     );
   });
