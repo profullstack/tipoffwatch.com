@@ -14,7 +14,7 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
  */
 
 let db;
-let ids = {};
+const ids = {};
 
 beforeAll(async () => {
   db = await new PGlite({ extensions: { citext, pg_trgm } });

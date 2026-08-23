@@ -12,11 +12,13 @@ import * as sportsdb from './sportsdb.js';
  */
 export {
   channelMatchesFixture,
+  channelMatchesName,
   channelsForFixture,
   entryKind,
   groupsOf,
   isPlaceholder,
   MAX_CHANNELS,
+  marketsWithOwnChannels,
   oneChannelM3u,
   parseM3u,
   rankChannelsForFixture,

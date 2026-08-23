@@ -2361,3 +2361,25 @@ li.result img {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Broadcaster listings that are on the reader's own line.
+
+   Reuses the own-channels row so a listing that can be opened looks the same as
+   a matched channel elsewhere on the page -- it IS the same thing, reached from a
+   different direction. The unmatched rows sit in the same list rather than being
+   hidden: the listing is still true, and dropping the names would turn a complete
+   market into a partial one. */
+.market-own {
+  margin-top: 0.4rem;
+}
+.market-unmatched {
+  /* Plainly not actionable: no border, no buttons, just the fact. */
+  border: 0;
+  padding: 0.3rem 0;
+  opacity: 0.75;
+}
+.market-unmatched .meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-left: 0.5rem;
+}

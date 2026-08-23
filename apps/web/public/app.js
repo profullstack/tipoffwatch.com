@@ -1053,8 +1053,39 @@ async function checkOwnChannels(section, onLive, signal) {
   section.appendChild(note);
 }
 
+/**
+ * There can be two player sections on a page, not one.
+ *
+ * The reader's own matched channels are one; the broadcaster listings, once the
+ * ones on their line are playable, are the other. querySelector took the first
+ * and left the second inert -- which showed as a Play button under a country tab
+ * that never enabled, because nothing ever swept those rows.
+ *
+ * Each section gets its own state: its own sweep, its own generation counter, its
+ * own teardown. Stopping is global -- `__tipoffStopPlayer` chains across them,
+ * because the line permits one connection and two <video> elements pulling at
+ * once is exactly what the ceiling exists to prevent.
+ */
 function initInlinePlayer(root = document) {
-  const section = root.querySelector('.own-line[data-player-src]');
+  const sections = [...root.querySelectorAll('[data-player-src]')].filter(
+    (el) => !el.dataset.player,
+  );
+  if (sections.length === 0) return;
+
+  /*
+   * The chain starts empty for each fresh set of sections.
+   *
+   * A client-side navigation replaces <main> wholesale and calls this again, so
+   * without the reset the chain would accumulate a teardown per section per
+   * navigation, each holding a reference to a section long gone from the
+   * document. The navigation handler runs the old chain before the swap, so
+   * there is nothing live to lose.
+   */
+  window.__tipoffStopPlayer = null;
+  for (const section of sections) initPlayerSection(section);
+}
+
+function initPlayerSection(section) {
   if (!section || section.dataset.player) return;
   section.dataset.player = '1';
 
@@ -1114,7 +1145,14 @@ function initInlinePlayer(root = document) {
     stage?.remove();
     stage = null;
   };
-  window.__tipoffStopPlayer = teardown;
+  // Chained, not assigned. With two sections the second would otherwise replace
+  // the first's handle, and a navigation would tear down one player while the
+  // other kept pulling the stream.
+  const previousStop = window.__tipoffStopPlayer;
+  window.__tipoffStopPlayer = () => {
+    previousStop?.();
+    teardown();
+  };
 
   const fail = (message) => {
     teardown();

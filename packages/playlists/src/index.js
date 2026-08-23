@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
-import { MAX_CHANNELS, normaliseTeam, parseM3u, rankChannelsForFixture } from '@tipoff/sports';
+import {
+  MAX_CHANNELS,
+  marketsWithOwnChannels,
+  normaliseTeam,
+  parseM3u,
+  rankChannelsForFixture,
+} from '@tipoff/sports';
 
 export { firstLiveChannel, probeStream } from './probe.js';
 export { claimStreamSlot, openStream, streamSlotsOpen } from './proxy.js';
@@ -254,4 +260,117 @@ export async function ownChannelsForEvent({ userId, event }) {
     // than it knows.
     competition: unseal(ranked.competition),
   };
+}
+
+/**
+ * Which of the SHARED lists is carrying this event.
+ *
+ * The same matching as ownChannelsForEvent, over other people's rows, and it
+ * exists only because the owner of a line asked for one. Everything about this
+ * table was built to make it impossible -- see migration 0024 for what the owner
+ * is actually agreeing to -- so the differences from the private path are all
+ * deliberate:
+ *
+ *   - The stream URL is NOT unsealed here. A shared entry is playable through the
+ *     proxy and nowhere else, because every other route hands the reader the URL
+ *     itself, and that URL carries the owner's provider username and password. A
+ *     shared list that also handed out credentials would last exactly as long as
+ *     it took one person to paste one.
+ *   - Each row carries its owner, because the connection ceiling belongs to the
+ *     owner's line rather than to whoever is watching.
+ *   - Rows are keyed by channel id, so the routes can look one up without a
+ *     viewer to scope by.
+ *
+ * @param {{viewerId: string|null, event: object}} args
+ */
+export async function sharedChannelsForEvent({ viewerId, event }) {
+  const none = { channels: [], owners: 0 };
+  if (!config.playlists.enabled || !viewerId) return none;
+
+  const rows = await q.sharedPlaylistChannels({ viewerId });
+  if (rows.length === 0) return none;
+
+  const ranked = rankChannelsForFixture(
+    rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
+    {
+      home: event.home_name,
+      away: event.away_name,
+      // Carried so a race, a fight card or a tournament -- which have no two sides
+      // and so could never match on teams -- have something to match on.
+      eventName: event.name,
+      leagueName: event.league_name,
+      leagueAbbr: event.league_abbr,
+    },
+  );
+
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  // The confident ones, then the likely ones, then the competition channels --
+  // the same order the reader's own section uses, so the two read the same way.
+  const flat = [...ranked.certain, ...ranked.likely, ...ranked.competition];
+
+  const channels = flat
+    .map((m) => {
+      const row = byId.get(m.id);
+      if (!row) return null;
+      return {
+        id: row.id,
+        title: row.title,
+        group: row.group_title ?? null,
+        ownerId: row.owner_id,
+        ownerLabel: row.owner_label,
+        // No `url`. Deliberately, and the absence is the security property: a
+        // caller that wants to play this has to go through the proxy route, which
+        // looks the row up again and never renders the URL into a page.
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+
+  return { channels, owners: new Set(channels.map((c) => c.ownerId)).size };
+}
+
+/**
+ * The broadcaster listings, with the reader's own channels attached.
+ *
+ * ESPN and TheSportsDB say who carries a fixture in each country, and that was
+ * rendered as text and nothing else -- so a reader whose own list contained the
+ * exact channel being named still had to go and find it. This pairs the two.
+ *
+ * A listing with no match keeps its place and its text: it is still true that the
+ * game is on that channel, we simply cannot offer it. Filtering those out would
+ * turn a complete listing into a partial one and hide the fact that a market
+ * exists at all.
+ *
+ * URLs are unsealed here, so the caller must already have established that the
+ * requester owns them -- the same contract as ownChannelsForEvent.
+ *
+ * @param {{userId: string|null, markets: Array<{country: string, channels: string[]}>}} args
+ */
+export async function marketChannelsForEvent({ userId, markets }) {
+  if (!config.playlists.enabled || !userId || !markets?.length) return null;
+
+  const rows = await q.playlistChannels(userId);
+  if (rows.length === 0) return null;
+
+  const paired = marketsWithOwnChannels(
+    markets,
+    rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
+  );
+
+  // Unsealed on the way out, and only for rows that actually matched -- there is
+  // no reason to decrypt several thousand URLs to render a handful of buttons.
+  const out = paired.map((m) => ({
+    country: m.country,
+    channels: m.channels.map((ch) => ({
+      name: ch.name,
+      own: ch.own.map((c) => ({ id: c.id, title: c.title, url: open(c.url) })).filter((c) => c.url),
+    })),
+  }));
+
+  const matched = out.reduce(
+    (n, m) => n + m.channels.reduce((k, ch) => k + (ch.own.length ? 1 : 0), 0),
+    0,
+  );
+  // Nothing matched anywhere: the caller renders the plain listing it always did.
+  return matched === 0 ? null : { markets: out, matched };
 }

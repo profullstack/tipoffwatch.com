@@ -131,7 +131,7 @@ export const ChannelRow = ({ event, ch, index, series = false }) => (
   </li>
 );
 
-function marketsOf(event) {
+export function marketsOf(event) {
   const raw = event?.broadcast_markets;
   if (!raw) return [];
   let parsed = raw;
@@ -156,21 +156,96 @@ function marketsOf(event) {
  * default tab depends on who is reading, and the page is cached in Redis and
  * served byte-identical to everyone, exactly like the kickoff time above it.
  */
-const BroadcastMarkets = ({ event }) => {
+const BroadcastMarkets = ({ event, marketChannels }) => {
   const markets = marketsOf(event);
   if (markets.length < 2) return null;
+
+  /*
+   * The reader's own entries, keyed by country and then by broadcaster name.
+   *
+   * Built here rather than replacing `markets` outright, because the listing has
+   * to render identically for a reader with no list -- and it is the SAME list,
+   * in the same order, with buttons added where we can add them. A listing we
+   * cannot offer keeps its name: it is still true that the game is on that
+   * channel.
+   */
+  const own = new Map(
+    (marketChannels?.markets ?? []).map((m) => [
+      m.country,
+      new Map(m.channels.map((ch) => [ch.name, ch.own])),
+    ]),
+  );
+
   return (
-    <section class="markets" data-markets>
+    <section
+      class="markets"
+      data-markets
+      data-player-src={marketChannels ? assetUrl('vendor-mpegts.js') : null}
+    >
       <h2>Where to watch</h2>
       <p class="muted small">
         This game is carried in {markets.length} countries. Pick yours — we open on it automatically
         where we can tell.
+        {marketChannels
+          ? ` ${marketChannels.matched} of these ${marketChannels.matched === 1 ? 'is' : 'are'} on your own line, and can be opened from here.`
+          : ''}
       </p>
       <ul class="market-list">
         {markets.map((m) => (
           <li class="market" data-country={m.country}>
             <h3 class="market-name">{m.country}</h3>
-            <p class="market-channels">{m.channels.join(' · ')}</p>
+            {/* A plain sentence where nothing matched, which is what this always
+                was. The list only becomes rows when there is something to put on
+                one -- a page of buttons that mostly do nothing is worse than the
+                text it replaced. */}
+            {own.get(m.country) &&
+            m.channels.some((name) => own.get(m.country)?.get(name)?.length) ? (
+              <ul class="own-channels market-own">
+                {m.channels.map((name) => {
+                  const mine = own.get(m.country)?.get(name) ?? [];
+                  return mine.length === 0 ? (
+                    <li class="market-unmatched">
+                      <span class="own-channel-name">{name}</span>
+                      <span class="meta">not on your list</span>
+                    </li>
+                  ) : (
+                    mine.map((ch) => (
+                      <li data-check={`/my/channels/${ch.id}/check`}>
+                        <span class="own-channel-name">
+                          {name}
+                          {/* What it is actually called on their line, when that
+                              differs -- "Sky Sports Main Event HD" for a listing
+                              that says "Sky Sports Main Event". Without it the row
+                              claims to be the listing rather than their copy. */}
+                          {ch.title !== name ? (
+                            <span class="league-tag channel-tag">{ch.title}</span>
+                          ) : null}
+                        </span>
+                        <span class="own-channel-state" />
+                        <span class="own-channel-actions">
+                          <button
+                            type="button"
+                            class="ghost small-btn play-btn"
+                            disabled
+                            data-play={`/my/channels/${ch.id}/stream.ts`}
+                          >
+                            Play here
+                          </button>
+                          <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+                            VLC
+                          </a>
+                          <a class="ghost small-btn" href={`/my/channels/${ch.id}/playlist.m3u`}>
+                            .m3u
+                          </a>
+                        </span>
+                      </li>
+                    ))
+                  );
+                })}
+              </ul>
+            ) : (
+              <p class="market-channels">{m.channels.join(' · ')}</p>
+            )}
           </li>
         ))}
       </ul>
@@ -846,6 +921,91 @@ const Side = ({ name, slug, logo, score, record, showScore, role }) => (
   </div>
 );
 
+/**
+ * A shared entry, playable and nothing else.
+ *
+ * Deliberately not ChannelRow. That component offers VLC, Infuse and a .m3u
+ * download, and every one of those works by handing over the stream URL — which
+ * on somebody else's line is their provider username and password. This row has
+ * one control, and the absence of the other three is the security property rather
+ * than an omission.
+ *
+ * `data-check` and `data-play` are keyed by channel id rather than by an index
+ * into a ranked list: there is no per-viewer ranking to index into when the list
+ * is not the viewer's own.
+ */
+export const SharedChannelRow = ({ ch }) => (
+  <li data-check={`/shared/${ch.id}/check`}>
+    <span class="own-channel-name">
+      {ch.title || 'Untitled channel'}
+      {ch.group ? <span class="league-tag channel-tag">{ch.group}</span> : null}
+      <span class="league-tag channel-tag owner" title="Whose list this is on">
+        {ch.ownerLabel}
+      </span>
+    </span>
+    <span class="own-channel-state" />
+    <span class="own-channel-actions">
+      <button
+        type="button"
+        class="ghost small-btn play-btn"
+        disabled
+        data-play={`/shared/${ch.id}/stream.ts`}
+      >
+        Play here
+      </button>
+    </span>
+  </li>
+);
+
+/**
+ * Who has opened their list, and how big it is.
+ *
+ * What this page does not have is the point: no titles, no groups, no addresses,
+ * nothing that could be scraped into a directory of somebody else's subscription.
+ * It says who is sharing and roughly how much, and everything else is answered on
+ * a page for a specific thing.
+ */
+export const SharedLists = ({ user, owners }) => (
+  <Layout title="Shared lists" user={user}>
+    <h1>Shared lists</h1>
+    <p class="muted">
+      Lists other people have opened to everyone signed in. You can play from them on the page for
+      something they carry — you never get the address, and only one person can watch a given line
+      at a time, because that is what a provider subscription allows.
+    </p>
+
+    {owners.length === 0 ? (
+      <p class="empty">
+        Nobody has shared a list yet. You can open yours in <a href="/settings">settings</a>.
+      </p>
+    ) : (
+      <ul class="results">
+        {owners.map((o) => (
+          <li class="result">
+            <span class="result-blank" />
+            <div class="result-main">
+              {o.handle ? (
+                <a href={`/u/${o.handle}`}>{o.label}</a>
+              ) : (
+                <span class="result-name">{o.label}</span>
+              )}
+              <span class="meta">
+                {(o.channel_count ?? 0).toLocaleString('en-US')} channels
+                {o.last_synced_at ? (
+                  <>
+                    {' · updated '}
+                    <LocalTime at={o.last_synced_at} />
+                  </>
+                ) : null}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    )}
+  </Layout>
+);
+
 export const EventPage = ({
   user,
   event,
@@ -857,6 +1017,12 @@ export const EventPage = ({
   followingAway,
   followingLeague,
   ownChannels = { hasList: false, channelCount: 0, matches: [] },
+  // The broadcaster listings paired with the reader's own entries, or null when
+  // they have no list or nothing in it matched. Null is what makes the section
+  // render exactly as it always did.
+  marketChannels = null,
+  // Channels from lists other accounts have opened. Never carries a URL.
+  sharedChannels = null,
   streamDead = null,
 }) => {
   const live = event.state === 'in';
@@ -998,7 +1164,7 @@ export const EventPage = ({
         ) : null}
       </ul>
 
-      <BroadcastMarkets event={event} />
+      <BroadcastMarkets event={event} marketChannels={marketChannels} />
 
       <h2>Follow</h2>
       <p class="muted small">
@@ -1267,6 +1433,35 @@ export const EventPage = ({
               </ul>
             </>
           ) : null}
+        </section>
+      ) : null}
+
+      {/*
+        Other people's lists, for the same fixture.
+
+        A separate section rather than more rows in the one above, because it is a
+        different claim and carries a different set of controls. What is missing
+        here is the point: no VLC link, no Infuse link, no .m3u. Each of those
+        works by handing over the stream URL, and on somebody else's line that URL
+        is their provider username and password.
+
+        Rendered independently of ownChannels.hasList: a reader with no list of
+        their own still gets a player, which that guard would otherwise deny them.
+      */}
+      {sharedChannels?.channels?.length > 0 ? (
+        <section class="own-line shared-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+          <h2>Shared with you</h2>
+          <p class="muted small">
+            From {sharedChannels.owners === 1 ? 'a list' : `${sharedChannels.owners} lists`} other
+            people have opened to everyone signed in. These play here and nowhere else — you never
+            get the address — and one person at a time, because that is what a provider line allows.
+            See <a href="/shared">whose lists are open</a>.
+          </p>
+          <ul class="own-channels">
+            {sharedChannels.channels.map((ch) => (
+              <SharedChannelRow ch={ch} />
+            ))}
+          </ul>
         </section>
       ) : null}
 
@@ -1550,9 +1745,10 @@ export const Settings = ({
       <h2>Your channel list</h2>
       <p class="muted small">
         If you subscribe to a service that gives you an M3U playlist, add it here and we will tell
-        you which of your own channels is carrying a game. It stays private to your account, and
-        nothing is streamed through TipoffWatch — opening a channel hands a playlist file to the
-        player you already use.
+        you which of your own channels is carrying a game. It stays private to your account unless
+        you choose otherwise below. VLC, Infuse and .m3u hand the channel straight to the player you
+        already use and never touch our servers; “Play here” passes through us, to your session
+        only.
       </p>
 
       {playlistError ? <p class="feedback error">{playlistError}</p> : null}
@@ -1585,6 +1781,74 @@ export const Settings = ({
               </button>
             </form>
           </div>
+        </div>
+      ) : null}
+
+      {/*
+        Opening the list to everybody signed in.
+
+        Rendered only when there IS a list, and worded so the two consequences are
+        read before the button is pressed rather than discovered afterwards. Both
+        are real and neither is obvious:
+
+          - a provider line permits a small number of simultaneous connections and
+            suspends the account for exceeding it, so other people watching it are
+            using the owner's allowance;
+          - the site therefore refuses a shared entry while that line is busy,
+            rather than cutting off whoever is already watching.
+
+        What it does NOT do is hand anybody the URL, and that is why this is
+        offerable at all. Shared channels play through the proxy only; VLC, Infuse
+        and .m3u stay owner-only, because each of those is the credential itself.
+      */}
+      {playlist ? (
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">
+              {playlist.shared ? 'Your list is open to everyone signed in' : 'Share your list'}
+            </h3>
+            <p class="card-desc">
+              {playlist.shared ? (
+                <>
+                  Anyone signed in can play from it on a page for something it carries. They cannot
+                  see, download or copy the address — only “Play here” works, and only one person at
+                  a time, because that is what your line allows. It is listed on{' '}
+                  <a href="/shared">shared lists</a>.
+                </>
+              ) : (
+                <>
+                  Let anyone signed in play from your list. They never get the address — it carries
+                  your provider username and password, so shared channels play through us and the
+                  VLC, Infuse and .m3u buttons stay yours alone. Your line still permits one
+                  connection at a time, so somebody else watching means you are not.
+                </>
+              )}
+            </p>
+          </div>
+          <form method="post" action="/api/playlist/share">
+            <input type="hidden" name="shared" value={playlist.shared ? '0' : '1'} />
+            {playlist.shared ? null : (
+              <label class="field">
+                <span>What to call it (optional)</span>
+                <input
+                  type="text"
+                  name="label"
+                  maxlength="80"
+                  placeholder="Anthony's line"
+                  autocomplete="off"
+                />
+                {/* The private label defaults to the provider's hostname, which is
+                    the one thing not to publish -- it names their provider to
+                    everybody on the site. */}
+                <span class="hint">
+                  Shown instead of the name above, which is usually your provider's address.
+                </span>
+              </label>
+            )}
+            <button class={playlist.shared ? 'ghost' : 'cta'} type="submit">
+              {playlist.shared ? 'Stop sharing' : 'Share my list'}
+            </button>
+          </form>
         </div>
       ) : null}
 

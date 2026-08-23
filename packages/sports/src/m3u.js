@@ -244,6 +244,98 @@ export function channelMatchesFixture(title, home, away) {
 }
 
 /**
+ * Quality and packaging tags, which are the only words a channel NAME may lose.
+ *
+ * Deliberately not the STOP list above. That one exists for team names, where
+ * "sport", "event", "main" and "network" carry no identity -- and for a
+ * broadcaster they are the identity: "Sky Sports Main Event" is four words of
+ * which STOP would discard three, leaving "sky", which then matches every Sky
+ * channel in the list. Using it here was the first version of this function and
+ * it offered Sky Sports Football for a game listed on Main Event.
+ */
+const CHANNEL_NOISE = new Set([
+  'hd',
+  'fhd',
+  'sd',
+  'uhd',
+  '4k',
+  'hevc',
+  'h265',
+  'h264',
+  'raw',
+  'vip',
+  'backup',
+  'alt',
+]);
+
+/** A channel or broadcaster name reduced to the words that identify it. */
+function nameTokens(s) {
+  return normaliseTeam(s)
+    .split(' ')
+    .filter((t) => t && !CHANNEL_NOISE.has(t));
+}
+
+/**
+ * Does this channel appear to BE a named broadcaster?
+ *
+ * A different question from channelMatchesFixture, which asks whether a channel
+ * is carrying a particular game. ESPN and TheSportsDB tell us which broadcaster
+ * carries a fixture in each country -- "Sky Sports Main Event", "TNT Sports 1",
+ * "7 Queensland" -- and until now that was rendered as text and nothing more,
+ * even for a reader whose own list has that exact channel in it.
+ *
+ * Every identifying word of the broadcaster's name has to be present. Looser than
+ * that matches far too much: a list with forty Sky channels would offer all of
+ * them for a game on one, and the reader is no better off than with plain text.
+ *
+ * A short name is required whole. "TNT" as a substring appears inside a dozen
+ * unrelated titles, so below four characters the normalised title has to equal it.
+ *
+ * @param {string} channelTitle a title from the reader's own list
+ * @param {string} broadcaster  the name a provider gave for this market
+ */
+export function channelMatchesName(channelTitle, broadcaster) {
+  const hay = normaliseTeam(channelTitle);
+  const needle = normaliseTeam(broadcaster);
+  if (!hay || !needle) return false;
+  if (isPlaceholder(channelTitle)) return false;
+  if (needle.length < 4) return hay === needle;
+
+  const words = new Set(nameTokens(channelTitle));
+  const own = nameTokens(broadcaster);
+  if (own.length === 0) return false;
+
+  return own.every((t) => words.has(t));
+}
+
+/**
+ * Match a market's broadcasters against a reader's own list.
+ *
+ * Returns the markets unchanged, each channel name paired with whichever of the
+ * reader's own entries look like it. A name with no match keeps its place and its
+ * text -- the listing is still true, we simply cannot offer it -- which is why
+ * this returns a shape rather than a filtered list.
+ *
+ * @param {Array<{country: string, channels: string[]}>} markets
+ * @param {Array<{id: number, title: string, url: string}>} channels the reader's own
+ */
+export function marketsWithOwnChannels(markets, channels) {
+  return (markets ?? []).map((m) => ({
+    country: m.country,
+    channels: (m.channels ?? []).map((name) => {
+      const found = (channels ?? [])
+        .filter((c) => channelMatchesName(c.title, name))
+        // The plainest title first: a provider carrying one thing on several slots
+        // gives the primary the shortest name, and the long ones are regional
+        // alternates and replays with a date baked in.
+        .sort((a, b) => a.title.length - b.title.length)
+        .slice(0, 3);
+      return { name, own: found };
+    }),
+  }));
+}
+
+/**
  * Words whose whole job is telling apart two clubs that share a place name.
  *
  * This is the guard on loose matching, and it is a heuristic rather than a law.
