@@ -20,7 +20,6 @@ process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
  */
 const { ChannelRow } = await import('../apps/web/src/views/pages.jsx');
 
-const event = { id: 428, league_name: 'MLS' };
 const render = (props) => ChannelRow(props).toString();
 
 describe('the row a reader is offered', () => {
@@ -28,26 +27,33 @@ describe('the row a reader is offered', () => {
     // The credential belongs in the VLC href, where an external app that holds no
     // session with us needs it -- and nowhere else. A URL in a data attribute
     // would additionally sit in the DOM for any extension to read.
-    const html = render({ event, ch: { title: 'Sky Sports', url: 'http://line/1' }, index: 2 });
-    expect(html).toContain('data-check="/events/428/channel-check?n=2"');
+    const html = render({ ch: { id: 88, title: 'Sky Sports', url: 'http://line/1' } });
+    expect(html).toContain('data-check="/my/channels/88/check"');
     expect(html).not.toContain('data-check="http://line/1"');
   });
 
-  test('a competition channel checks its own list', () => {
-    // Series channels are a different list on the server, indexed separately. A
-    // check that dropped the distinction would verify the wrong channel and
-    // remove a working one.
-    const html = render({
-      event,
-      ch: { title: 'F1 TV', url: 'http://line/9' },
-      index: 0,
-      series: true,
-    });
-    expect(html).toContain('data-check="/events/428/channel-check?series=0"');
+  /*
+   * Addressed by ROW ID, not by a position in a ranked list.
+   *
+   * Rows used to be `?n=0` and `?series=0` -- an index into one of two lists
+   * ranked for one fixture. That could not work from anywhere else, and there are
+   * three other places that need it now: the market listings arrange the same
+   * channels by country, a participant's page ranks them against a name with no
+   * fixture at all, and the sibling brand hit the same wall on subject pages. An
+   * id means the same thing everywhere and cannot drift between a check and a
+   * download.
+   */
+  test('is addressed by its row id, so any page can offer it', () => {
+    const html = render({ ch: { id: 512, title: 'F1 TV', url: 'http://line/9' } });
+    expect(html).toContain('data-check="/my/channels/512/check"');
+    expect(html).toContain('data-play="/my/channels/512/stream.ts"');
+    // Nothing left for a check and a download to disagree about.
+    expect(html).not.toContain('series=');
+    expect(html).not.toContain('?n=');
   });
 
   test('nothing has vouched for it yet, so it says so in the markup', () => {
-    const html = render({ event, ch: { title: 'X', url: 'http://line/1' }, index: 0 });
+    const html = render({ ch: { id: 1, title: 'X', url: 'http://line/1' } });
     // The empty slot the verdict lands in, and no claim of verification.
     expect(html).toContain('own-channel-state');
     expect(html).not.toContain('data-verified');
@@ -56,43 +62,38 @@ describe('the row a reader is offered', () => {
   test('a verdict the server already holds is carried, so the page does not re-probe', () => {
     // These lines cap concurrent connections. Opening a page twice must not cost
     // two probes of the same slot.
-    const html = render({
-      event,
-      ch: { title: 'X', url: 'http://line/1', verified: true },
-      index: 0,
-    });
+    const html = render({ ch: { id: 1, title: 'X', url: 'http://line/1', verified: true } });
     expect(html).toContain('data-verified="1"');
   });
 
-  test('the app hand-offs are still there, on both kinds of row', () => {
+  test('the app hand-offs are still there', () => {
     // The whole point of Play being an addition: iPhone Safari cannot use it, and
     // VLC there is not a fallback but the primary route.
-    const fixture = render({ event, ch: { title: 'X', url: 'http://line/1' }, index: 3 });
-    expect(fixture).toContain('vlc-x-callback://x-callback-url/stream?url=');
-    expect(fixture).toContain('infuse://x-callback-url/play?url=');
-    expect(fixture).toContain('/events/428/playlist.m3u?n=3');
-
-    const series = render({
-      event,
-      ch: { title: 'X', url: 'http://line/1' },
-      index: 1,
-      series: true,
-    });
-    expect(series).toContain('/events/428/playlist.m3u?series=1');
-    expect(series).toContain('vlc-x-callback://');
+    const html = render({ ch: { id: 3, title: 'X', url: 'http://line/1' } });
+    expect(html).toContain('vlc-x-callback://x-callback-url/stream?url=');
+    expect(html).toContain('infuse://x-callback-url/play?url=');
+    expect(html).toContain('/my/channels/3/playlist.m3u');
   });
 
-  test('Play ships disabled on both kinds of row', () => {
-    // Two separate reasons now: this browser may have no Media Source Extensions,
-    // and nothing has established the provider is actually sending this channel.
-    for (const series of [false, true]) {
-      const html = render({ event, ch: { title: 'X', url: 'http://line/1' }, index: 0, series });
-      expect(html).toContain('disabled');
-      expect(html).toContain('/events/428/stream.ts?');
-    }
-    expect(render({ event, ch: { title: 'X', url: 'u' }, index: 0, series: true })).toContain(
-      'stream.ts?series=0',
-    );
+  test('Play ships disabled', () => {
+    // Two separate reasons: this browser may have no Media Source Extensions, and
+    // nothing has established the provider is actually sending this channel.
+    const html = render({ ch: { id: 4, title: 'X', url: 'http://line/1' } });
+    expect(html).toContain('disabled');
+    expect(html).toContain('/my/channels/4/stream.ts');
+  });
+
+  /*
+   * A row without an id would render "/my/channels/undefined/check" -- a link that
+   * looks live and 404s. Rows come from the database and always have one, so this
+   * is a guard rather than a case: the entry is still handed to the apps that take
+   * a URL, and nothing false is offered.
+   */
+  test('a row with no id drops the controls that need one', () => {
+    const html = render({ ch: { title: 'X', url: 'http://line/1' } });
+    expect(html).not.toContain('undefined');
+    expect(html).toContain('vlc-x-callback://');
+    expect(html).not.toContain('play-btn');
   });
 });
 

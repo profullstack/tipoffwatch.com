@@ -199,7 +199,7 @@ const VERDICT_TTL_MS = 10 * 60 * 1000;
 
 const freshEnough = (at) => Boolean(at) && Date.now() - new Date(at).getTime() < VERDICT_TTL_MS;
 
-export async function ownChannelsForEvent({ userId, event }) {
+export async function ownChannelsFor({ userId, fixture }) {
   const none = { hasList: false, channelCount: 0, matches: [], competition: [] };
   if (!config.playlists.enabled || !userId) return none;
 
@@ -207,16 +207,8 @@ export async function ownChannelsForEvent({ userId, event }) {
   if (rows.length === 0) return none;
 
   const ranked = rankChannelsForFixture(
-    rows.map((r) => ({ title: r.title, url: r.stream_url })),
-    {
-      home: event.home_name,
-      away: event.away_name,
-      // Carried so a race, a fight card or a tournament -- which have no two sides
-      // and so could never match on teams -- have something to match on.
-      eventName: event.name,
-      leagueName: event.league_name,
-      leagueAbbr: event.league_abbr,
-    },
+    rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
+    fixture,
   );
   const matches = [...ranked.certain, ...ranked.likely];
 
@@ -227,11 +219,11 @@ export async function ownChannelsForEvent({ userId, event }) {
   // The id travels so a verdict from a probe can be written back to the row it
   // came from. rankChannelsForFixture only preserves the fields it is handed, so
   // it has to be carried in as well as out.
-  const byUrl = new Map(rows.map((r) => [r.stream_url, r]));
+  const byId = new Map(rows.map((r) => [r.id, r]));
   const unseal = (list) =>
     list
       .map((m) => {
-        const row = byUrl.get(m.url);
+        const row = byId.get(m.id);
         return {
           id: row?.id ?? null,
           title: m.title,
@@ -260,6 +252,49 @@ export async function ownChannelsForEvent({ userId, event }) {
     // than it knows.
     competition: unseal(ranked.competition),
   };
+}
+
+/**
+ * The same question, asked from a fixture page.
+ */
+export async function ownChannelsForEvent({ userId, event }) {
+  return ownChannelsFor({
+    userId,
+    fixture: {
+      home: event.home_name,
+      away: event.away_name,
+      // Carried so a race, a fight card or a tournament -- which have no two sides
+      // and so could never match on teams -- have something to match on.
+      eventName: event.name,
+      leagueName: event.league_name,
+      leagueAbbr: event.league_abbr,
+    },
+  });
+}
+
+/**
+ * And from a participant's own page, which never asked it.
+ *
+ * The sibling brand had the same gap and it was reported there first: a page a
+ * reader reaches by searching for something to watch listed upcoming fixtures and
+ * never once consulted their own list. Here the useful answer is usually the
+ * competition tier -- a 24/7 club or league channel carries whatever that club is
+ * doing -- so a team with no fixture today still has something to offer.
+ *
+ * One side, not two: `eventName` is the branch of the ranker built for a thing
+ * with no opponent, which is exactly what a team page is.
+ */
+export async function ownChannelsForTeam({ userId, team }) {
+  return ownChannelsFor({
+    userId,
+    fixture: {
+      home: null,
+      away: null,
+      eventName: team.display_name ?? team.name,
+      leagueName: team.league_name,
+      leagueAbbr: team.league_abbr,
+    },
+  });
 }
 
 /**

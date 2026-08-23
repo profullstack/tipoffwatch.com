@@ -10,6 +10,7 @@ import {
   marketChannelsForEvent,
   openStream,
   ownChannelsForEvent,
+  ownChannelsForTeam,
   probeStream,
   refreshPlaylist,
   sharedChannelsForEvent,
@@ -26,6 +27,7 @@ import { buildFeed } from './lib/rss.js';
 import { Feeds } from './views/feeds.jsx';
 import {
   About,
+  Channels,
   EventPage,
   Following,
   Landing,
@@ -291,8 +293,30 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
     q.upcomingForTeam(team.id, { viewerId: user?.id ?? null }),
     q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
   ]);
+
+  /*
+   * The reader's own list, matched against this name.
+   *
+   * The sibling brand had exactly this gap and it was reported there first: a page
+   * somebody reaches by searching for something to watch listed fixtures and never
+   * once consulted their own line. Here the useful answer is usually the
+   * competition tier -- a 24/7 club or league channel carries whatever that club
+   * is doing -- so a team with nothing on today still has something to offer.
+   *
+   * Per-viewer, and safe only because this page is not one of the cached() ones.
+   */
+  const ownChannels = await ownChannelsForTeam({ userId: user?.id, team });
+
   return c.html(
-    await render(<TeamPage user={user} team={team} events={events} following={following} />),
+    await render(
+      <TeamPage
+        user={user}
+        team={team}
+        events={events}
+        following={following}
+        ownChannels={ownChannels}
+      />,
+    ),
   );
 });
 
@@ -1127,6 +1151,31 @@ app.get('/events/:id/stream.ts', async (c) => {
       'x-accel-buffering': 'no',
     },
   });
+});
+
+/**
+ * A reader's own channel list, browsed by the provider's own groups.
+ *
+ * Ported from the sibling brand along with group_title itself. Per-account by
+ * construction: every query is scoped to the signed-in user's rows, nothing is
+ * pooled and nothing is relayed. What a provider calls "Sports | US" stays exactly
+ * that rather than being mapped onto our leagues -- a confident wrong mapping is
+ * worse than the raw string the reader already sees in their own player.
+ *
+ * The kind breakdown is the point of the page as much as the groups are: "does my
+ * provider actually carry films" had no answer anywhere on the site, so a line of
+ * live channels and a broken matcher looked identical from the outside.
+ */
+app.get('/my/channels', async (c) => {
+  const user = requireUser(c);
+  const [playlist, groups, kinds] = await Promise.all([
+    q.getPlaylist(user.id),
+    q.playlistGroups(user.id),
+    q.playlistKindCounts(user.id),
+  ]);
+  return c.html(
+    await render(<Channels user={user} playlist={playlist} groups={groups} kinds={kinds} />),
+  );
 });
 
 /* ------------------------------------------------- one channel, by its id -- */

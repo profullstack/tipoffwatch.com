@@ -368,10 +368,10 @@ describe('handing a stream to a player that can actually play it', () => {
   });
 
   test('the .m3u download survives for desktop', () => {
-    // Both lists build this URL from one component now. channel-check.test.js
-    // renders it and asserts the two forms come out right; here it is enough that
-    // the page still offers the link at all.
-    expect(view).toMatch(/playlist\.m3u\?\$\{series \? 'series' : 'n'\}=/);
+    // Every list builds this URL from one component, addressed by row id rather
+    // than by a position in a ranked list. channel-check.test.js renders it and
+    // asserts the form; here it is enough that the page still offers it at all.
+    expect(view).toMatch(/\/my\/channels\/\$\{mine\}\/playlist\.m3u/);
   });
 
   test('the page no longer claims opening one downloads a file', () => {

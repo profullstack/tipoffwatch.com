@@ -493,6 +493,46 @@ export async function unreadMessageCount(userId) {
 }
 
 /**
+ * The distinct provider groups on a reader's list, largest first.
+ *
+ * A provider playlist is already a catalogue -- "Sports | US", "PPV", "UK
+ * Documentary" -- and until group_title was stored (0023) there was nothing to
+ * browse. Counts come along because these lists have a long tail of one-channel
+ * groups not worth a row on a page.
+ */
+export async function playlistGroups(userId, { limit = 300 } = {}) {
+  return sql`
+    select c.group_title as name, count(*)::int as count
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId} and c.group_title is not null and c.group_title <> ''
+    group by c.group_title
+    order by count desc, name
+    limit ${limit}
+  `;
+}
+
+/**
+ * How many entries of each kind are on a reader's list.
+ *
+ * The question this answers is "does my provider actually carry films", and until
+ * the kind column existed there was no way to ask it -- the URL that says so is
+ * sealed. A reader whose line is seven thousand live channels and no VOD should be
+ * told that plainly rather than concluding the matching is broken. The two look
+ * identical from the outside and only one of them is ours.
+ */
+export async function playlistKindCounts(userId) {
+  return sql`
+    select coalesce(c.kind, 'unknown') as kind, count(*)::int as count
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId}
+    group by coalesce(c.kind, 'unknown')
+    order by count desc
+  `;
+}
+
+/**
  * One of the reader's own channels, by id.
  *
  * Scoped through the playlist join like every other read of this table, so an id

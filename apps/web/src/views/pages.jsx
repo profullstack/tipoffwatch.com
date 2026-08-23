@@ -67,12 +67,12 @@ function playerLinks(url) {
  * the VLC and Infuse hrefs because an external app cannot hold our session; the
  * page can, so nothing here needs the credential.
  */
-const PlayButton = ({ eventId, index, series = false }) => (
+const PlayButton = ({ channelId }) => (
   <button
     type="button"
     class="ghost small-btn play-btn"
     disabled
-    data-play={`/events/${eventId}/stream.ts?${series ? 'series' : 'n'}=${index}`}
+    data-play={`/my/channels/${channelId}/stream.ts`}
   >
     Play here
   </button>
@@ -92,44 +92,57 @@ const PlayButton = ({ eventId, index, series = false }) => (
  * The status span ships empty. Everything it ever says is a fact the page did not
  * have when it was rendered.
  */
-export const ChannelRow = ({ event, ch, index, series = false }) => (
-  <li
-    data-check={`/events/${event.id}/channel-check?${series ? 'series' : 'n'}=${index}`}
-    data-verified={ch.verified ? '1' : null}
-  >
-    <span class="own-channel-name">
-      {ch.title || 'Untitled channel'}
-      {/* What the provider files this entry under, and whether it is a channel or
-          a file. Both come straight from the playlist rather than from us: a
-          reader looking at ten near-identical rows needs the same words their own
-          player shows them, not our guess at what they mean. */}
-      {ch.group ? <span class="league-tag channel-tag">{ch.group}</span> : null}
-      {ch.kind && ch.kind !== 'live' ? (
-        <span class="league-tag channel-tag kind" title="A file, not a live channel">
-          {ch.kind === 'series' ? 'Series' : 'On demand'}
-        </span>
-      ) : null}
-    </span>
-    <span class="own-channel-state" />
-    <span class="own-channel-actions">
-      <PlayButton eventId={event.id} index={index} series={series} />
-      <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
-        VLC
-      </a>
-      {series ? null : (
+export const ChannelRow = ({ ch }) => {
+  /*
+   * Addressed by ROW ID, not by a position in a ranked list.
+   *
+   * The rows used to be `?n=0` / `?series=0` -- an index into one of two lists
+   * ranked for one fixture. That cannot work anywhere else, and "anywhere else"
+   * turned out to matter: a participant's own page ranks the same entries against
+   * the same name with no fixture to index against, and the market listings
+   * arrange them by country. An id means the same thing on every page and cannot
+   * drift between the check and the download.
+   *
+   * A row arriving without one drops the controls that need it rather than
+   * rendering "/my/channels/undefined/check", which looks live and 404s.
+   */
+  const mine = Number.isFinite(Number(ch.id)) ? Number(ch.id) : null;
+  return (
+    <li
+      data-check={mine ? `/my/channels/${mine}/check` : null}
+      data-verified={ch.verified ? '1' : null}
+    >
+      <span class="own-channel-name">
+        {ch.title || 'Untitled channel'}
+        {/* What the provider files this entry under, and whether it is a channel
+            or a file. Both come straight from the playlist rather than from us: a
+            reader looking at ten near-identical rows needs the same words their
+            own player shows them, not our guess at what they mean. */}
+        {ch.group ? <span class="league-tag channel-tag">{ch.group}</span> : null}
+        {ch.kind && ch.kind !== 'live' ? (
+          <span class="league-tag channel-tag kind" title="A file, not a live channel">
+            {ch.kind === 'series' ? 'Series' : 'On demand'}
+          </span>
+        ) : null}
+      </span>
+      <span class="own-channel-state" />
+      <span class="own-channel-actions">
+        {mine ? <PlayButton channelId={mine} /> : null}
+        <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+          VLC
+        </a>
         <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
           Infuse
         </a>
-      )}
-      <a
-        class="ghost small-btn"
-        href={`/events/${event.id}/playlist.m3u?${series ? 'series' : 'n'}=${index}`}
-      >
-        .m3u
-      </a>
-    </span>
-  </li>
-);
+        {mine ? (
+          <a class="ghost small-btn" href={`/my/channels/${mine}/playlist.m3u`}>
+            .m3u
+          </a>
+        ) : null}
+      </span>
+    </li>
+  );
+};
 
 export function marketsOf(event) {
   const raw = event?.broadcast_markets;
@@ -676,7 +689,7 @@ export const LeaguePage = ({ user, league, teams, events, following }) => (
   </Layout>
 );
 
-export const TeamPage = ({ user, team, events, following }) => (
+export const TeamPage = ({ user, team, events, following, ownChannels = null }) => (
   <Layout
     title={team.display_name}
     user={user}
@@ -721,6 +734,32 @@ export const TeamPage = ({ user, team, events, following }) => (
     </p>
 
     <EventList events={events} emptyText="Nothing scheduled for this team yet." />
+
+    {/*
+      What is on the reader's own line for this team.
+
+      This page never asked before, which is the same gap the sibling brand had
+      reported against it: somebody who searched for a team they wanted to watch
+      got a fixture list and nothing about their own subscription. For a team the
+      useful answer is usually a competition channel -- a 24/7 club or league feed
+      carries whatever that club is doing -- so this is worth showing even when
+      nothing is scheduled.
+    */}
+    {ownChannels?.hasList && (ownChannels.matches.length || ownChannels.competition?.length) ? (
+      <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+        <h2>On your line</h2>
+        <p class="muted small">
+          Channels on your own list that name {team.display_name}
+          {team.league_name ? ` or ${team.league_name}` : ''}. Each is checked against your provider
+          before it is offered — a slot can be listed and still be empty.
+        </p>
+        <ul class="own-channels">
+          {[...ownChannels.matches, ...(ownChannels.competition ?? [])].map((ch) => (
+            <ChannelRow ch={ch} />
+          ))}
+        </ul>
+      </section>
+    ) : null}
   </Layout>
 );
 
@@ -1405,8 +1444,8 @@ export const EventPage = ({
                 pass them through to your own browser.
               </p>
               <ul class="own-channels">
-                {ownChannels.matches.map((ch, i) => (
-                  <ChannelRow event={event} ch={ch} index={i} />
+                {ownChannels.matches.map((ch) => (
+                  <ChannelRow ch={ch} />
                 ))}
               </ul>
             </>
@@ -1427,8 +1466,8 @@ export const EventPage = ({
                 on right now.
               </p>
               <ul class="own-channels">
-                {ownChannels.competition.map((ch, i) => (
-                  <ChannelRow event={event} ch={ch} index={i} series />
+                {ownChannels.competition.map((ch) => (
+                  <ChannelRow ch={ch} />
                 ))}
               </ul>
             </>
@@ -1665,6 +1704,91 @@ const COMMON_ZONES = [
   'Australia/Sydney',
   'UTC',
 ];
+
+/**
+ * What each entry kind is called on a page.
+ *
+ * `unknown` is a real state, not a gap: rows imported before the kind was stored
+ * have none, and they repair themselves on the next refresh. Calling them "live"
+ * would assert the thing that was wrong in the first place.
+ */
+const KIND_WORD = {
+  live: 'live channels',
+  vod: 'films on demand',
+  series: 'episode files',
+  unknown: 'not yet classified',
+};
+
+export const Channels = ({ user, playlist, groups, kinds = [] }) => (
+  <Layout title="Your channels" user={user}>
+    <h1>Your channels</h1>
+
+    {!playlist ? (
+      <p class="empty">
+        You have not added a channel list. <a href="/settings">Add one in settings</a> and its
+        groups appear here.
+      </p>
+    ) : (
+      <>
+        <p class="muted">
+          {playlist.channel_count.toLocaleString('en-US')} channels in{' '}
+          {groups.length.toLocaleString('en-US')} groups
+          {playlist.last_synced_at ? (
+            <>
+              {' · updated '}
+              <LocalTime at={playlist.last_synced_at} />
+            </>
+          ) : null}
+        </p>
+        {playlist.last_error ? <p class="feedback error">{playlist.last_error}</p> : null}
+
+        {/*
+          What KIND of thing is on this line.
+
+          The question behind this is "does my provider actually carry films", and
+          nothing on the site answered it -- so a reader whose list is seven
+          thousand live channels and no VOD had no way to tell that from the
+          matching being broken. They are very different problems and only one of
+          them is ours.
+
+          `unknown` is shown rather than hidden: it means those rows were imported
+          before the kind was stored, and they repair themselves on the next
+          refresh. Silently folding them into "live" is the exact mistake that
+          produced this section.
+        */}
+        {kinds.length > 0 ? (
+          <ul class="kind-counts">
+            {kinds.map((k) => (
+              <li class={`kind-count kind-${k.kind}`}>
+                <strong>{k.count.toLocaleString('en-US')}</strong> {KIND_WORD[k.kind] ?? k.kind}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {kinds.length > 0 && !kinds.some((k) => k.kind === 'vod' || k.kind === 'series') ? (
+          <p class="notice">
+            Nothing on this line looks like a film or an episode file — it is all live channels. We
+            can still tell you which channel is carrying something, but “Available on demand” will
+            stay empty, because there is nothing on demand in it to find.
+          </p>
+        ) : null}
+
+        <p class="muted small">
+          These are your provider's own groupings, shown exactly as they appear in your list.
+          Nothing here is shared with anyone else or streamed through TipoffWatch.
+        </p>
+        <ul class="group-grid">
+          {groups.map((g) => (
+            <li>
+              <span>{g.name}</span>
+              <span class="meta">{g.count.toLocaleString('en-US')} channels</span>
+            </li>
+          ))}
+        </ul>
+      </>
+    )}
+  </Layout>
+);
 
 export const Settings = ({
   user,

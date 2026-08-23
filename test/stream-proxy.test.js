@@ -239,14 +239,18 @@ describe('what the page offers, and to whom', () => {
     'utf8',
   );
 
-  test('Play here is offered for both a fixture channel and a competition one', () => {
-    // The two lists render one component now, so what matters is that both reach
-    // it and that the series flag travels. The rendered markup for each is
-    // asserted in channel-check.test.js, which does not care how it is written.
-    expect(view).toContain('<ChannelRow event={event} ch={ch} index={i} />');
-    expect(view).toContain('<ChannelRow event={event} ch={ch} index={i} series />');
-    expect(view).toContain('<PlayButton eventId={event.id} index={index} series={series} />');
-    expect(view).toMatch(/stream\.ts\?\$\{series/);
+  test('Play here is offered on every list that renders a row', () => {
+    /*
+     * Four places render one component now: the fixture's channels, the
+     * competition's, the per-country market listings, and a participant's own
+     * page. The series flag no longer travels with a row because rows are
+     * addressed by row id -- which list a row was ranked into cannot change what
+     * its links resolve to, and that is what let the other three exist at all.
+     */
+    expect(view).toContain('ownChannels.matches.map((ch) => (');
+    expect(view).toContain('ownChannels.competition.map((ch) => (');
+    expect(view).toContain('<PlayButton channelId={mine} />');
+    expect(view).toMatch(/\/my\/channels\/\$\{channelId\}\/stream\.ts/);
   });
 
   test('the button ships disabled, so a browser that cannot play never shows a live one', () => {
@@ -257,7 +261,7 @@ describe('what the page offers, and to whom', () => {
     // The credential is in the VLC href because an external app holds no session
     // with us. The page does, so nothing here needs it -- and a URL in a
     // data-attribute would additionally sit in the DOM for any extension to read.
-    expect(view).toMatch(/data-play=\{`\/events\/\$\{eventId\}\/stream\.ts/);
+    expect(view).toMatch(/data-play=\{`\/my\/channels\/\$\{channelId\}\/stream\.ts`\}/);
     expect(view).not.toMatch(/data-play=\{playerLinks/);
   });
 
