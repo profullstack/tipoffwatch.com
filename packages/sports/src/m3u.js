@@ -15,8 +15,14 @@
 
 import { normaliseTeam } from './sportsdb.js';
 
-/** Hard ceiling on a stored list. A real one is ~7k lines; this bounds abuse. */
-export const MAX_CHANNELS = 20000;
+/**
+ * Fallback ceiling for callers that do not pass one.
+ *
+ * The real limit is configuration -- see playlists.maxChannels -- because it had to
+ * become a knob: at 20,000 this silently truncated a 300,000-entry VOD catalogue
+ * and the reader had no way to tell which entries were missing.
+ */
+export const MAX_CHANNELS = 300_000;
 
 /**
  * Pull `key="value"` pairs out of the attribute block of an #EXTINF line.
@@ -74,13 +80,13 @@ export function entryKind({ url, group } = {}) {
  *
  * @param {string} text
  */
-export function parseM3u(text) {
+export function parseM3u(text, { max = MAX_CHANNELS } = {}) {
   const lines = String(text ?? '').split(/\r?\n/);
   const out = [];
   /** `#EXTGRP:` is the other way providers state a group; it applies until changed. */
   let currentGroup = null;
 
-  for (let i = 0; i < lines.length && out.length < MAX_CHANNELS; i++) {
+  for (let i = 0; i < lines.length && out.length < max; i++) {
     const line = lines[i].trim();
 
     if (line.startsWith('#EXTGRP:')) {
@@ -226,6 +232,32 @@ function hasWhole(normTitle, name) {
   const t = normaliseTeam(name);
   if (t.length < 4) return false;
   return ` ${normTitle} `.includes(` ${t} `);
+}
+
+/**
+ * The words worth asking the database about, for one fixture.
+ *
+ * Exported so the candidate query and the ranker agree on what "significant"
+ * means. They have to: the query narrows a list to rows worth ranking, and a word
+ * the ranker would have matched but the query never asked for is a channel the
+ * reader is silently not offered.
+ *
+ * This exists because a list can now be a whole VOD catalogue. At seven thousand
+ * entries, loading all of them and normalising each per page view was free. At
+ * three hundred thousand it is a third of a second of CPU on every fixture page,
+ * for a handful of rows that could have been selected by index.
+ */
+export function matchTerms({ home, away, eventName, leagueName, leagueAbbr } = {}) {
+  const out = new Set();
+  for (const name of [home, away, eventName, leagueName, leagueAbbr]) {
+    if (!name) continue;
+    for (const t of tokens(name)) out.add(t);
+  }
+  // A league abbreviation is often two characters ("F1"), which tokens() drops for
+  // being short -- and it is the single most useful word there is for a race.
+  const short = normaliseTeam(leagueAbbr ?? '').replace(/\s+/g, '');
+  if (short.length >= 2) out.add(short);
+  return [...out];
 }
 
 /**

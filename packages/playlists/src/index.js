@@ -5,6 +5,7 @@ import * as q from '@tipoff/db/queries';
 import {
   MAX_CHANNELS,
   marketsWithOwnChannels,
+  matchTerms,
   normaliseTeam,
   parseM3u,
   rankChannelsForFixture,
@@ -78,11 +79,11 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
   // near kickoff and the other 7,000 entries sit still.
   const contentHash = createHash('sha256').update(text).digest('hex');
   if (knownHash && knownHash === contentHash) {
-    await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt() });
+    await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt(text.length) });
     return { channels: null, unchanged: true };
   }
 
-  const channels = parseM3u(text).map((c) => ({
+  const channels = parseM3u(text, { max: config.playlists.maxChannels }).map((c) => ({
     title: c.title,
     // The provider's own group-title, verbatim. Not mapped onto our leagues: every
     // provider names these differently and a wrong mapping is worse than the raw
@@ -104,10 +105,10 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
   }
 
   await q.replacePlaylistChannels({ userId, channels });
-  await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt() });
+  await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt(text.length) });
   return {
     channels: channels.length,
-    truncated: channels.length >= MAX_CHANNELS,
+    truncated: channels.length >= config.playlists.maxChannels,
     unchanged: false,
   };
 }
@@ -119,8 +120,23 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
  * the same afternoon do not all fetch on the same tick forever after -- which is
  * the shape of traffic a provider notices.
  */
-function nextRefreshAt() {
-  const base = config.playlists.refreshMinutes * 60_000;
+/**
+ * When to poll this list again, scaled by how big it is.
+ *
+ * The provider supports no conditional request, so every poll downloads the whole
+ * file whether or not a byte changed. Five minutes is right for a channel lineup
+ * and ruinous for a full VOD catalogue: a 38MB list on a five-minute cycle pulls
+ * 11GB a day off the reader's own subscription from a datacenter IP, which is how
+ * a line gets flagged.
+ *
+ * So the interval is the configured minimum or size/rate, whichever is longer. An
+ * ordinary list is unaffected; a large one is polled proportionally less often.
+ * The jitter stops every list on a deploy waking up in the same second.
+ */
+function nextRefreshAt(bytes = 0) {
+  const floorMs = config.playlists.refreshMinutes * 60_000;
+  const scaledMs = (bytes / config.playlists.refreshBytesPerMinute) * 60_000;
+  const base = Math.max(floorMs, scaledMs);
   return new Date(Date.now() + base + Math.floor(Math.random() * base * 0.25));
 }
 
@@ -203,8 +219,25 @@ export async function ownChannelsFor({ userId, fixture }) {
   const none = { hasList: false, channelCount: 0, matches: [], competition: [] };
   if (!config.playlists.enabled || !userId) return none;
 
-  const rows = await q.playlistChannels(userId);
-  if (rows.length === 0) return none;
+  /*
+   * Narrowed in the database, ranked in JavaScript.
+   *
+   * This used to load the whole list. That was free at seven thousand entries and
+   * is not at three hundred thousand -- a provider that exposes its VOD catalogue
+   * ships one -- so the rows that could not possibly match are dropped by an index
+   * before they are ever sent. The ranker below is unchanged and still decides
+   * everything; this only decides what it is shown.
+   *
+   * The count is fetched separately because it is still owed to the page even when
+   * nothing matched: "none of your 7,059 channels name this" is an answer, and it
+   * used to come free from having loaded them all.
+   */
+  const [channelCount, rows] = await Promise.all([
+    q.playlistChannelCount(userId),
+    q.playlistCandidates(userId, { terms: matchTerms(fixture) }),
+  ]);
+  if (channelCount === 0) return none;
+  if (rows.length === 0) return { hasList: true, channelCount, matches: [], competition: [] };
 
   const ranked = rankChannelsForFixture(
     rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
@@ -245,7 +278,7 @@ export async function ownChannelsFor({ userId, fixture }) {
 
   return {
     hasList: true,
-    channelCount: rows.length,
+    channelCount,
     matches: unseal(matches),
     // Channels for the SERIES rather than this fixture -- a 24/7 "F1 TV" carries
     // whatever Formula 1 is on. Shown separately so the page never claims more
@@ -384,7 +417,20 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
 export async function marketChannelsForEvent({ userId, markets }) {
   if (!config.playlists.enabled || !userId || !markets?.length) return null;
 
-  const rows = await q.playlistChannels(userId);
+  /*
+   * Narrowed by the broadcaster names themselves.
+   *
+   * Same reason as ownChannelsFor: this used to load every row to find the handful
+   * named in a listing, which a 300,000-entry catalogue makes untenable. The terms
+   * here are the broadcasters ESPN and TheSportsDB named, so the query asks for
+   * exactly what marketsWithOwnChannels is about to look for.
+   */
+  const terms = [
+    ...new Set(
+      markets.flatMap((m) => (m.channels ?? []).flatMap((name) => matchTerms({ eventName: name }))),
+    ),
+  ];
+  const rows = await q.playlistCandidates(userId, { terms });
   if (rows.length === 0) return null;
 
   const paired = marketsWithOwnChannels(

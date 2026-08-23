@@ -19,6 +19,7 @@ export {
   isPlaceholder,
   MAX_CHANNELS,
   marketsWithOwnChannels,
+  matchTerms,
   oneChannelM3u,
   parseM3u,
   rankChannelsForFixture,

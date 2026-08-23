@@ -353,7 +353,7 @@ app.get('/events/:id', async (c) => {
   if (!event) return c.html(await render(<NotFound user={user} />), 404);
   const [offers, entitlement, plays, comments, followingHome, followingAway, followingLeague] =
     await Promise.all([
-      pay.offersForEvent(event.id),
+      q.offersForEvent(event.id),
       user ? pay.activeEntitlement({ userId: user.id, eventId: event.id }) : null,
       q.playsForEvent(event.id, { limit: 60 }),
       q.commentsForEvent(event.id),
@@ -1714,12 +1714,26 @@ app.post('/api/events/:id/buy', async (c) => {
   if (!event) return c.json({ error: 'no such event' }, 404);
 
   const body = await c.req.parseBody();
-  const [offer] = (await pay.offersForEvent(event.id)).filter(
-    (o) => o.id === Number(body.offer_id),
-  );
+  const [offer] = (await q.offersForEvent(event.id)).filter((o) => o.id === Number(body.offer_id));
   if (!offer) return c.json({ error: 'offer unavailable' }, 409);
 
-  const checkoutUrl = await pay.createCheckout({ user, event, offer });
+  /*
+   * What is being bought is described HERE, not in the payments package.
+   *
+   * That package is copied verbatim between brands, so it takes an amount, a
+   * description and a metadata bag rather than knowing what an offer is. The
+   * metadata is echoed back on the webhook and is the only thing linking the money
+   * to this fixture and this seat.
+   */
+  const checkoutUrl = await pay.createCheckout({
+    user,
+    amountCents: offer.price_cents,
+    currency: offer.currency,
+    description: `Stream: ${event.name}`,
+    metadata: { event_id: String(event.id), offer_id: String(offer.id) },
+    successUrl: `${config.siteUrl}/events/${event.id}?paid=1`,
+    cancelUrl: `${config.siteUrl}/events/${event.id}`,
+  });
   return respond(c, { json: { checkoutUrl }, redirectTo: checkoutUrl });
 });
 
@@ -1736,7 +1750,40 @@ app.post('/api/webhooks/coinpay', async (c) => {
   });
   if (!ok) return c.json({ error: 'bad signature' }, 401);
 
-  const result = await pay.grantFromWebhook(JSON.parse(raw));
+  /*
+   * The grant is supplied by this app, because only this app knows what was sold.
+   *
+   * It runs inside settleWebhook's transaction, so claiming the seat and writing
+   * the entitlement are one decision -- which is what stops two buyers being sold
+   * the last seat at once.
+   */
+  const result = await pay.settleWebhook(JSON.parse(raw), {
+    grant: async (tx, { meta, payment }) => {
+      const eventId = Number(meta.event_id);
+      const offerId = Number(meta.offer_id);
+      if (!Number.isFinite(eventId)) return null;
+
+      if (Number.isFinite(offerId) && !(await q.claimOfferSeat(tx, offerId))) return null;
+
+      const startsAt = await q.eventStartsAt(tx, eventId);
+      if (!startsAt) return null;
+
+      // Access dies with the game plus a grace window. There is no perpetual
+      // licence to a live stream, and an open-ended grant is what turns a small
+      // sale into redistribution.
+      const expiresAt = new Date(
+        new Date(startsAt).getTime() + config.payments.entitlementGraceHours * 3600_000,
+      );
+
+      return pay.grantEventEntitlement(tx, {
+        userId: meta.user_id,
+        eventId,
+        offerId: Number.isFinite(offerId) ? offerId : null,
+        paymentId: payment?.id ?? null,
+        expiresAt,
+      });
+    },
+  });
   return c.json(result);
 });
 

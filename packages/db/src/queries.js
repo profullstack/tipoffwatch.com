@@ -555,6 +555,62 @@ export async function ownChannelById(userId, channelId) {
 }
 
 /**
+ * How many entries this reader has, without fetching any of them.
+ *
+ * Carried back to the page even when nothing matched -- "none of your 7,059
+ * channels name this fixture" is an answer where silence is not -- and it used to
+ * come free from having loaded the list. It does not any more, so it is its own
+ * cheap count.
+ */
+export async function playlistChannelCount(userId) {
+  const [row] = await sql`
+    select count(*)::int as n
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId}
+  `;
+  return row?.n ?? 0;
+}
+
+/**
+ * The entries worth ranking against one fixture.
+ *
+ * The read used to be "give me every row" and the ranking happened entirely in
+ * JavaScript. That was free at seven thousand entries and is not at three hundred
+ * thousand: a provider that exposes its VOD catalogue ships one, and normalising
+ * every title on every page view is a third of a second of CPU to find four rows.
+ *
+ * So the obviously-irrelevant rows are dropped in the database first. `norm_title`
+ * is written at import by the same normaliser the ranker uses, and carries a
+ * trigram index, so a substring test on it is the cheapest question available. The
+ * survivors are ranked in JS exactly as before -- this narrows the input, it does
+ * not decide anything.
+ *
+ * The terms come from matchTerms, so the query asks for precisely the words the
+ * ranker would have matched on. A word it would match but this never asked for is
+ * a channel the reader is silently not offered, which is why they share one
+ * function rather than two lists that look alike.
+ */
+export async function playlistCandidates(userId, { terms = [], limit = 3000 } = {}) {
+  const usable = (terms ?? []).filter((t) => t && t.length >= 2);
+  if (!userId || usable.length === 0) return [];
+
+  return sql`
+    select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,
+           c.is_live, c.checked_at
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.user_id = ${userId}
+      -- Same freshness rule as before: a "dead" verdict is respected only while it
+      -- is recent, and NULL is never filtered out because unchecked is not dead.
+      and (c.is_live is not false or c.checked_at < now() - interval '30 minutes')
+      and c.norm_title like any(${pgArray(usable.map((t) => `%${t}%`))}::text[])
+    order by c.position
+    limit ${limit}
+  `;
+}
+
+/**
  * Record what a probe saw.
  *
  * Scoped by user as well as by channel id, so an id from anywhere else cannot
@@ -1311,6 +1367,53 @@ export async function startingSoonCount({ hours = 4 } = {}) {
       and starts_at <= now() + (${hours} * interval '1 hour')
   `;
   return row?.n ?? 0;
+}
+
+/* -------------------------------------------------------- paid access -- */
+
+/**
+ * Stream offers still open on this fixture.
+ *
+ * Lives here rather than in @tipoff/payments, and that move is the point of the
+ * refactor: the payments package is copied verbatim between brands, so it must not
+ * know what is being sold. Offers are a resale concept this brand has and the
+ * sibling does not.
+ *
+ * Nothing in this codebase ever INSERTs into stream_offers -- there is no seller
+ * UI and no API to list one -- so in practice this returns empty and the fixture
+ * page says nobody is sharing a stream. It is read-side scaffolding, kept because
+ * the buy path and the schema are already here.
+ */
+export async function offersForEvent(eventId) {
+  return sql`
+    select id, price_cents, currency, capacity, sold, (capacity - sold) as remaining
+    from stream_offers
+    where event_id = ${eventId} and active and sold < capacity
+    order by price_cents
+  `;
+}
+
+/**
+ * Take one seat on an offer, inside the caller's transaction.
+ *
+ * The conditional UPDATE is what makes the last seat go to exactly one buyer:
+ * checking capacity first and inserting afterwards lets two buyers pass the check
+ * together and both get a seat that exists once. It has to run in the same
+ * transaction as the grant, which is why it takes `tx`.
+ */
+export async function claimOfferSeat(tx, offerId) {
+  const [claimed] = await tx`
+    update stream_offers set sold = sold + 1
+    where id = ${offerId} and active and sold < capacity
+    returning id
+  `;
+  return Boolean(claimed);
+}
+
+/** When a fixture starts, for working out when access to it should die. */
+export async function eventStartsAt(tx, eventId) {
+  const [row] = await tx`select starts_at from events where id = ${eventId}`;
+  return row?.starts_at ?? null;
 }
 
 /* ----------------------------------------------------------------- follows -- */
