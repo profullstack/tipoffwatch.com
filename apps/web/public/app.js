@@ -638,6 +638,10 @@ function initNavigation() {
         location.href = url;
         return;
       }
+      // Before the swap: the player lives inside <main>, and removing its <video>
+      // from the document does not stop it pulling the stream.
+      window.__tipoffStopPlayer?.();
+      window.__tipoffStopPlayer = null;
       main().replaceWith(next);
       document.title = doc.title;
       if (push) history.pushState({}, '', url);
@@ -645,6 +649,7 @@ function initNavigation() {
       localiseTimes();
       initMarketTabs();
       initOwnChannelActions();
+      initInlinePlayer();
       initPush();
       initPasskeys();
     } catch {
@@ -681,6 +686,7 @@ localiseTimes();
 reportTimezone();
 initMarketTabs();
 initOwnChannelActions();
+initInlinePlayer();
 initPush();
 initPasskeys();
 // Before initFollowForms: it must be able to cancel a submit that handler would
@@ -832,4 +838,197 @@ function initOwnChannelActions(root = document) {
       section.append(hint);
     }
   }
+}
+
+/* ------------------------------------------------------------ in-page player -- */
+
+/**
+ * Playing a channel in the page, for the screens that have nowhere else to play it.
+ *
+ * The VLC and Infuse buttons assume a device with apps on it. A Fire TV, an
+ * Android TV box or a locked-down desktop has a browser and nothing else, and
+ * "install VLC" is not an answer on a television. This is that answer.
+ *
+ * It is strictly an addition. The deep links stay exactly where they were, the
+ * button ships disabled, and it is enabled only after the browser has been asked
+ * whether it can do the job -- so the failure mode of every check below is the
+ * page exactly as it was before this existed.
+ */
+
+/**
+ * The two pieces of state this needs, on `window` rather than in module scope.
+ *
+ * Not a stylistic choice. This section sits below the block that calls
+ * initInlinePlayer() at boot, and a `let` at the bottom of the file is in its
+ * temporal dead zone when that call runs -- so the first reader with a channel
+ * list would get a ReferenceError instead of a player. Function declarations
+ * hoist and bindings do not, which is why every other late section here gets away
+ * with holding no state at all. `window.__tipoffPlayer` is already the handoff
+ * between the two files, so this stays beside it.
+ *
+ * `__tipoffPlayerLoading` is the in-flight bundle fetch: two presses must not
+ * pull a quarter of a megabyte twice.
+ *
+ * `__tipoffStopPlayer` is how anything else stops playback, and the navigation
+ * handler is what needs it: it replaces <main> wholesale, and a player whose
+ * <video> has been removed from the document does not stop -- it keeps pulling
+ * the stream, holding the one connection the reader's line allows, until the tab
+ * closes. The symptom is the next channel refusing to start with "you are already
+ * watching", on a page showing no player at all.
+ */
+
+function loadPlayerBundle(src) {
+  if (window.__tipoffPlayer) return Promise.resolve(window.__tipoffPlayer);
+  if (window.__tipoffPlayerLoading) return window.__tipoffPlayerLoading;
+  window.__tipoffPlayerLoading = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = () =>
+      window.__tipoffPlayer ? resolve(window.__tipoffPlayer) : reject(new Error('no player'));
+    el.onerror = () => {
+      // Cleared, so a reader on a flaky connection can press again rather than
+      // being left holding a promise that will never settle.
+      window.__tipoffPlayerLoading = null;
+      reject(new Error('could not load the player'));
+    };
+    document.head.append(el);
+  });
+  return window.__tipoffPlayerLoading;
+}
+
+/**
+ * Can this browser transmux at all?
+ *
+ * Asked WITHOUT loading the bundle, which is the whole point of asking here: an
+ * iPhone would otherwise download 270KB of demuxer to be told it cannot use it.
+ * MediaSource with an H.264/AAC fragment is precisely what the library needs, so
+ * a yes here and a yes from the library agree in practice -- and the library is
+ * asked again anyway before anything is attached.
+ */
+function canTransmux() {
+  try {
+    return Boolean(
+      window.MediaSource?.isTypeSupported?.('video/mp4; codecs="avc1.42E01E,mp4a.40.2"'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function initInlinePlayer(root = document) {
+  const section = root.querySelector('.own-line[data-player-src]');
+  if (!section || section.dataset.player) return;
+  section.dataset.player = '1';
+
+  const buttons = [...section.querySelectorAll('button[data-play]')];
+  if (buttons.length === 0) return;
+
+  /*
+   * A browser that cannot play these loses the button rather than keeping a dead
+   * one.
+   *
+   * iPhone Safari is the case: no Media Source Extensions, so there is nothing to
+   * push fragments into, and no header or container that changes it. It already
+   * has the right answer on the page -- VLC, which demuxes TS natively -- and a
+   * "Play here" that silently failed would pull people away from the button that
+   * works.
+   */
+  if (!canTransmux()) {
+    for (const b of buttons) b.remove();
+    return;
+  }
+
+  const src = section.dataset.playerSrc;
+  let stop = null;
+  let stage = null;
+
+  /** One at a time, because the reader's line allows one. */
+  const teardown = () => {
+    if (stop) stop();
+    stop = null;
+    stage?.remove();
+    stage = null;
+  };
+  window.__tipoffStopPlayer = teardown;
+
+  const fail = (message) => {
+    teardown();
+    for (const b of buttons) {
+      b.dataset.playing = '';
+      b.textContent = 'Play here';
+      b.disabled = false;
+    }
+    section.querySelector('.player-error')?.remove();
+    const p = document.createElement('p');
+    p.className = 'feedback error player-error';
+    p.textContent = message;
+    section.prepend(p);
+  };
+
+  for (const button of buttons) {
+    button.disabled = false;
+    button.addEventListener('click', async () => {
+      section.querySelector('.player-error')?.remove();
+
+      // Pressing the channel that is already playing stops it. Without this the
+      // only way to release the connection is to leave the page -- and the server
+      // refuses the second stream, which reads as the button being broken.
+      if (button.dataset.playing) {
+        button.dataset.playing = '';
+        button.textContent = 'Play here';
+        teardown();
+        return;
+      }
+
+      teardown();
+      for (const b of buttons) {
+        b.dataset.playing = '';
+        b.textContent = 'Play here';
+      }
+
+      button.disabled = true;
+      button.textContent = 'Starting…';
+
+      let player;
+      try {
+        player = await loadPlayerBundle(src);
+      } catch {
+        button.disabled = false;
+        button.textContent = 'Play here';
+        fail('The player could not be loaded. Try VLC, or reload the page.');
+        return;
+      }
+
+      button.disabled = false;
+
+      if (!player.supported()) {
+        for (const b of buttons) b.remove();
+        fail('This browser cannot play these streams. Open the channel in VLC instead.');
+        return;
+      }
+
+      stage = document.createElement('div');
+      stage.className = 'player-stage';
+      const video = document.createElement('video');
+      video.controls = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      // Muted, and not as a preference. Every browser refuses to autoplay audible
+      // video without a gesture, and the refusal arrives as a rejected play() that
+      // leaves a black rectangle -- which reads as a broken stream rather than a
+      // blocked one. The reader unmutes with the control.
+      video.muted = true;
+      stage.append(video);
+      button.closest('li')?.after(stage);
+
+      stop = player.attach(video, button.dataset.play, fail);
+      button.dataset.playing = '1';
+      button.textContent = 'Stop';
+    });
+  }
+
+  // Leaving the page must drop the provider connection rather than wait for a
+  // socket to time out. pagehide rather than unload: it is the one that fires on
+  // iOS and on a back/forward navigation.
+  window.addEventListener('pagehide', teardown);
 }

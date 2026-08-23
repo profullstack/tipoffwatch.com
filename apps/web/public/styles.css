@@ -2035,3 +2035,34 @@ ul.messages time {
   gap: 0.35rem;
   flex: none;
 }
+
+/* Play here ships disabled and is enabled by app.js once the browser has been
+   asked whether it can transmux. Styled so the difference is visible: an
+   indistinguishable dead button is worse than no button. */
+.play-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The video, inserted after the row that started it.
+
+   Aspect-ratio rather than a fixed height: the box is the right shape before a
+   single frame has arrived, so the page does not jump when playback starts. Black
+   because it is letterboxed -- these streams are whatever shape the broadcaster
+   sent, and 4:3 inside 16:9 is normal on this catalogue. */
+.player-stage {
+  margin: 0.6rem 0 0.2rem;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+.player-stage video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* contain, not cover: cover crops, and cropping a scoreboard off the top of a
+     broadcast is exactly the wrong thing to do here. */
+  object-fit: contain;
+  background: #000;
+}

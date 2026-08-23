@@ -4,8 +4,10 @@ import * as q from '@tipoff/db/queries';
 import { sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
 import {
+  claimStreamSlot,
   firstLiveChannel,
   importPlaylist,
+  openStream,
   ownChannelsForEvent,
   refreshPlaylist,
 } from '@tipoff/playlists';
@@ -662,22 +664,35 @@ app.post('/api/playlist/delete', async (c) => {
  *
  * `no-store`, because the response body is a credential.
  */
+/**
+ * Which channel a link on the event page is pointing at.
+ *
+ * `series` picks from the competition tier, `n` from the fixture matches. Two
+ * parameters rather than one index across a concatenated list, so adding a match
+ * cannot silently shift which channel an existing link points at.
+ *
+ * Shared by the .m3u download and the in-page player so the two can never
+ * disagree about what "channel 2" means -- and, more to the point, so both go
+ * through ownChannelsForEvent, which is where ownership is enforced. An index is
+ * not a capability: it selects from a list that was already scoped to this
+ * account by the query that built it.
+ */
+async function pickOwnChannel(c, user, event) {
+  const { matches, competition } = await ownChannelsForEvent({ userId: user.id, event });
+  const seriesIdx = c.req.query('series');
+  const list = seriesIdx === undefined ? matches : competition;
+  const wanted = Number(seriesIdx ?? c.req.query('n') ?? 0);
+  if (list.length === 0) return { list: [], asked: 0 };
+  return { list, asked: Number.isInteger(wanted) && list[wanted] ? wanted : 0 };
+}
+
 app.get('/events/:id/playlist.m3u', async (c) => {
   const user = requireUser(c);
   const event = await q.getEvent(Number(c.req.param('id')));
   if (!event) return c.notFound();
 
-  const { matches, competition } = await ownChannelsForEvent({ userId: user.id, event });
-
-  // `series` picks from the competition tier, `n` from the fixture matches. Two
-  // parameters rather than one index across a concatenated list, so adding a match
-  // cannot silently shift which channel an existing link points at.
-  const seriesIdx = c.req.query('series');
-  const list = seriesIdx === undefined ? matches : competition;
-  const wanted = Number(seriesIdx ?? c.req.query('n') ?? 0);
+  const { list, asked } = await pickOwnChannel(c, user, event);
   if (list.length === 0) return c.redirect(`/events/${event.id}`, 303);
-
-  const asked = Number.isInteger(wanted) && list[wanted] ? wanted : 0;
 
   /*
    * Ask the stream whether it is there, before handing anybody a file.
@@ -717,6 +732,111 @@ app.get('/events/:id/playlist.m3u', async (c) => {
   c.header('content-disposition', `attachment; filename="${event.short_name ?? 'game'}.m3u"`);
   c.header('cache-control', 'no-store, private');
   return c.body(oneChannelM3u(pick));
+});
+
+/**
+ * The same channel, for a device with no player to hand it to.
+ *
+ * A television is the case this exists for. A Fire TV, an Android TV box or a
+ * games console has a browser and nothing else: no VLC to deep-link into, no
+ * Infuse, no filesystem to drop an .m3u onto. "Open it in another app" is not an
+ * answer there, and a sports app is watched on exactly that screen.
+ *
+ * So the bytes come through this server -- the only route on the site that does
+ * that, and see packages/playlists/src/proxy.js for why a browser leaves no other
+ * option. What it is NOT is a restream: the response is one reader's own
+ * subscription played back to that reader's own session, never cached, never
+ * shared, and never reachable without the cookie of the account that supplied the
+ * list.
+ *
+ * `.ts` in the path rather than a query flag, because what comes back really is a
+ * transport stream and some clients decide how to treat a URL by looking at it.
+ */
+app.get('/events/:id/stream.ts', async (c) => {
+  const user = requireUser(c);
+  if (!config.playlists.proxy.enabled) return c.json({ error: 'player is off' }, 404);
+
+  const event = await q.getEvent(Number(c.req.param('id')));
+  if (!event) return c.notFound();
+
+  const { list, asked } = await pickOwnChannel(c, user, event);
+  const pick = list[asked];
+  if (!pick) return c.json({ error: 'no channel' }, 404);
+
+  /*
+   * Claimed before the upstream is touched, not after.
+   *
+   * A reader with two tabs open is two connections on a line that usually allows
+   * one, and the provider's answer to that is to suspend the account rather than
+   * to refuse the second stream. Reserving the slot first means the second tab
+   * never opens the connection at all.
+   */
+  const release = claimStreamSlot(user.id, { max: config.playlists.proxy.maxPerUser });
+  if (!release) {
+    return c.json(
+      { error: 'You are already watching a channel. Stop that one and try again.' },
+      429,
+    );
+  }
+
+  const signal = c.req.raw.signal;
+  const result = await openStream(pick.url, { signal });
+
+  if (!result.ok) {
+    release();
+    // Remembered, so the page stops offering a slot that is not there -- the same
+    // verdict the probe writes, from the same headers. Not for a reader who simply
+    // closed the tab: that says nothing about the channel.
+    if (!result.silent && pick.id) {
+      await q
+        .markChannelChecked({ userId: user.id, channelId: pick.id, live: false, note: result.note })
+        .catch(() => {});
+    }
+    return c.json({ error: result.note }, result.status === 499 ? 499 : result.status);
+  }
+
+  if (pick.id) {
+    await q
+      .markChannelChecked({ userId: user.id, channelId: pick.id, live: true, note: result.note })
+      .catch(() => {});
+  }
+
+  /*
+   * Give the slot back when the stream ends, however it ends.
+   *
+   * Two ways out and both are wired, because missing either leaks the reader's
+   * only connection until the process restarts: `flush` is the upstream reaching
+   * its end, and the abort is the reader closing the tab -- which is by far the
+   * commoner one and never touches the transform at all. Releasing twice is
+   * harmless by construction; releasing never is a feature that works once per
+   * deploy.
+   */
+  signal?.addEventListener('abort', release, { once: true });
+  const body = result.body.pipeThrough(
+    new TransformStream({
+      flush: release,
+      cancel: release,
+    }),
+  );
+
+  return new Response(body, {
+    headers: {
+      // What the provider called it, unless it declined to say. mpegts.js reads
+      // the bytes rather than the header, but a bare octet-stream tells an
+      // intermediary nothing about whether it may buffer.
+      'content-type': /^video\/|^audio\//i.test(result.contentType)
+        ? result.contentType
+        : 'video/mp2t',
+      // The body is somebody's live subscription. Nothing may hold a copy.
+      'cache-control': 'no-store, private',
+      // No length, no ranges: this has no end and cannot be seeked. Saying so
+      // stops a client asking for byte ranges the provider will not honour.
+      'accept-ranges': 'none',
+      // Ask intermediaries to pass it through rather than accumulate it; a proxy
+      // that buffers a live stream adds its buffer to the latency, permanently.
+      'x-accel-buffering': 'no',
+    },
+  });
 });
 
 /* -------------------------------------------------------------------- auth -- */
@@ -1490,6 +1610,9 @@ const STATIC_FILES = [
   ['/app.js', 'app.js', 'text/javascript'],
   ['/push-check.js', 'push-check.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
+  // Fetched by app.js on the first press of Play, not linked by the Layout: it is
+  // a quarter of a megabyte of demuxer that most readers never need.
+  ['/vendor-mpegts.js', 'vendor-mpegts.js', 'text/javascript'],
   ['/sw.js', 'sw.js', 'text/javascript'],
   ['/logo.png', 'logo.png', 'image/png'],
 ];

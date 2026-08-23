@@ -53,6 +53,31 @@ function playerLinks(url) {
   };
 }
 
+/**
+ * The Play button, which is not an anchor and not always usable.
+ *
+ * Rendered as a disabled button and enabled by app.js once it has established
+ * that this browser has Media Source Extensions -- which is a fact about the
+ * device, and this page is served identically to every device. Enhancing upward
+ * is the safe direction: a reader whose scripting is off, or whose browser cannot
+ * transmux, sees a control that plainly cannot be pressed next to two that can,
+ * rather than a live-looking button that does nothing.
+ *
+ * `data-play` carries the route rather than the stream. The provider URL is in
+ * the VLC and Infuse hrefs because an external app cannot hold our session; the
+ * page can, so nothing here needs the credential.
+ */
+const PlayButton = ({ eventId, index, series = false }) => (
+  <button
+    type="button"
+    class="ghost small-btn play-btn"
+    disabled
+    data-play={`/events/${eventId}/stream.ts?${series ? 'series' : 'n'}=${index}`}
+  >
+    Play here
+  </button>
+);
+
 function marketsOf(event) {
   const raw = event?.broadcast_markets;
   if (!raw) return [];
@@ -872,9 +897,15 @@ export const EventPage = ({
           section that simply vanishes on a miss is indistinguishable from a broken
           feature, which is exactly how it read: a list was added, no game ever lit
           up, and there was no way to tell "your provider does not carry this" from
-          "this is not working". */}
+          "this is not working".
+
+          data-player-src rather than a script tag in the Layout: the bundle is a
+          quarter of a megabyte of demuxer, and app.js fetches it on the first
+          press of Play. Versioned here because only the server knows the hash --
+          an unversioned URL is served with a sixty-second cache, so a deploy
+          would take an hour to reach anyone. */}
       {ownChannels?.hasList ? (
-        <section class="own-line">
+        <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
           <h2>On your line</h2>
           {/* Sent here by the .m3u route when every candidate it probed was dead.
               Naming what the provider actually said beats "something went wrong":
@@ -902,14 +933,15 @@ export const EventPage = ({
                 {ownChannels.matches.length === 1
                   ? 'One of your channels looks like it is carrying this game.'
                   : `${ownChannels.matches.length} of your channels look like they are carrying this game.`}{' '}
-                Open one in VLC or Infuse, or take the .m3u for a desktop player. Nothing plays here
-                — these are your provider's streams, not ours.
+                Play it here, or open it in VLC or Infuse. These are your provider's streams, not
+                ours — we only pass them through to your own browser.
               </p>
               <ul class="own-channels">
                 {ownChannels.matches.map((ch, i) => (
                   <li>
                     <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
                     <span class="own-channel-actions">
+                      <PlayButton eventId={event.id} index={i} />
                       <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
                         VLC
                       </a>
@@ -945,6 +977,7 @@ export const EventPage = ({
                   <li>
                     <span class="own-channel-name">{ch.title || 'Untitled channel'}</span>
                     <span class="own-channel-actions">
+                      <PlayButton eventId={event.id} index={i} series />
                       <a class="ghost small-btn" href={playerLinks(ch.url).vlc}>
                         VLC
                       </a>

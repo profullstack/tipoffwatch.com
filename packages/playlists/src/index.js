@@ -6,6 +6,7 @@ import { MAX_CHANNELS, normaliseTeam, parseM3u, rankChannelsForFixture } from '@
 import { firstLiveChannel } from './probe.js';
 
 export { firstLiveChannel, probeStream } from './probe.js';
+export { claimStreamSlot, openStream } from './proxy.js';
 
 /**
  * Importing and reading a reader's own channel list.
