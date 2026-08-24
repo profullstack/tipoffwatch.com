@@ -1733,12 +1733,11 @@ app.post('/api/events/:id/buy', async (c) => {
     metadata: { event_id: String(event.id), offer_id: String(offer.id) },
     blockchain: config.payments.blockchain,
     /*
-     * Where the money goes. Without it the upstream settles to the PLATFORM
-     * wallet, silently -- every payment succeeds and the proceeds land somewhere
-     * this site never chose. createCheckout refuses rather than letting that
-     * happen, so an unset COINPAY_PAYOUT_ADDRESS fails loudly here instead.
+     * Normally undefined, and that is right: the upstream then forwards to this
+     * business's own wallet for the chain, and refuses the payment outright if
+     * none is configured. Set only to pay somebody who is not this business.
      */
-    payTo: config.payments.payoutAddress,
+    payTo: config.payments.payoutAddress || undefined,
     successUrl: `${config.siteUrl}/events/${event.id}?paid=1`,
     cancelUrl: `${config.siteUrl}/events/${event.id}`,
   });
