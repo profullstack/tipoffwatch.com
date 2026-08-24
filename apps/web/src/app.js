@@ -1725,12 +1725,20 @@ app.post('/api/events/:id/buy', async (c) => {
    * metadata is echoed back on the webhook and is the only thing linking the money
    * to this fixture and this seat.
    */
-  const checkoutUrl = await pay.createCheckout({
+  const { checkoutUrl } = await pay.createCheckout({
     user,
     amountCents: offer.price_cents,
     currency: offer.currency,
     description: `Stream: ${event.name}`,
     metadata: { event_id: String(event.id), offer_id: String(offer.id) },
+    blockchain: config.payments.blockchain,
+    /*
+     * Where the money goes. Without it the upstream settles to the PLATFORM
+     * wallet, silently -- every payment succeeds and the proceeds land somewhere
+     * this site never chose. createCheckout refuses rather than letting that
+     * happen, so an unset COINPAY_PAYOUT_ADDRESS fails loudly here instead.
+     */
+    payTo: config.payments.payoutAddress,
     successUrl: `${config.siteUrl}/events/${event.id}?paid=1`,
     cancelUrl: `${config.siteUrl}/events/${event.id}`,
   });
