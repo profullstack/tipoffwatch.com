@@ -732,6 +732,61 @@ export async function setPlaylistShared({ userId, shared, label = null }) {
  * page, and a channel appearing in both reads as a duplicate rather than as two
  * facts.
  */
+
+/**
+ * How many entries are on shared lists the viewer could see.
+ *
+ * Owed to the page for the same reason the owner's count is: without it, "nobody
+ * has shared a list" and "somebody has, and none of it carries this" render
+ * identically as nothing at all.
+ */
+export async function sharedChannelCount({ viewerId = null } = {}) {
+  const [row] = await sql`
+    select count(*)::int as n
+    from user_playlist_channels c
+    join user_playlists p on p.id = c.playlist_id
+    where p.shared
+      and (${viewerId}::uuid is null or p.user_id <> ${viewerId})
+  `;
+  return row?.n ?? 0;
+}
+
+/**
+ * The entries on SHARED lists worth ranking against one fixture.
+ *
+ * The shared read used to be `order by position limit 20000` -- the first twenty
+ * thousand rows of somebody's list, unfiltered, ranked in JavaScript. That was
+ * survivable when a list was a channel lineup and silently wrong the moment one
+ * was a VOD catalogue: on a 300,000-entry list the channel that carries a given
+ * fixture is usually past row 20,000, so the owner saw it on their own page (which
+ * narrows in SQL across the whole list) and everybody else saw nothing. The two
+ * paths have to search the same way or they disagree about what a shared list
+ * contains.
+ *
+ * So this is playlistCandidates for other people's lists: same trigram index on
+ * norm_title, same terms from matchTerms, same freshness rule.
+ */
+export async function sharedPlaylistCandidates({ viewerId = null, terms = [], limit = 3000 } = {}) {
+  const usable = (terms ?? []).filter((t) => t && t.length >= 2);
+  if (usable.length === 0) return [];
+
+  return sql`
+    select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,
+           c.is_live, c.checked_at,
+           p.user_id as owner_id,
+           coalesce(p.shared_label, u.display_name, '@' || u.handle::text, 'someone') as owner_label
+    from user_playlists p
+    join users u on u.id = p.user_id
+    join user_playlist_channels c on c.playlist_id = p.id
+    where p.shared
+      and (${viewerId}::uuid is null or p.user_id <> ${viewerId})
+      and (c.is_live is not false or c.checked_at < now() - interval '30 minutes')
+      and c.norm_title like any(${pgArray(usable.map((t) => `%${t}%`))}::text[])
+    order by c.position
+    limit ${limit}
+  `;
+}
+
 export async function sharedPlaylistChannels({ viewerId = null, limit = 20000 } = {}) {
   return sql`
     select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,

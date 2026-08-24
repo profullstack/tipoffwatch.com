@@ -1487,20 +1487,35 @@ export const EventPage = ({
         Rendered independently of ownChannels.hasList: a reader with no list of
         their own still gets a player, which that guard would otherwise deny them.
       */}
-      {sharedChannels?.channels?.length > 0 ? (
+      {sharedChannels?.channelCount > 0 ? (
         <section class="own-line shared-line" data-player-src={assetUrl('vendor-mpegts.js')}>
           <h2>Shared with you</h2>
-          <p class="muted small">
-            From {sharedChannels.owners === 1 ? 'a list' : `${sharedChannels.owners} lists`} other
-            people have opened to everyone signed in. These play here and nowhere else — you never
-            get the address — and one person at a time, because that is what a provider line allows.
-            See <a href="/shared">whose lists are open</a>.
-          </p>
-          <ul class="own-channels">
-            {sharedChannels.channels.map((ch) => (
-              <SharedChannelRow ch={ch} />
-            ))}
-          </ul>
+          {sharedChannels.channels.length > 0 ? (
+            <>
+              <p class="muted small">
+                From {sharedChannels.owners === 1 ? 'a list' : `${sharedChannels.owners} lists`}{' '}
+                other people have opened to everyone signed in. These play here and nowhere else —
+                you never get the address — and one person at a time, because that is what a
+                provider line allows. See <a href="/shared">whose lists are open</a>.
+              </p>
+              <ul class="own-channels">
+                {sharedChannels.channels.map((ch) => (
+                  <SharedChannelRow ch={ch} />
+                ))}
+              </ul>
+            </>
+          ) : (
+            /*
+             * Rendered on a miss too, and that is the point. Showing nothing made
+             * "nobody has shared a list" and "somebody has, and none of it names
+             * this fixture" identical from the outside -- and the second reads as
+             * the feature being broken, which is how it was reported.
+             */
+            <p class="muted">
+              None of the {sharedChannels.channelCount.toLocaleString('en-US')} channels shared with
+              you name this fixture.
+            </p>
+          )}
         </section>
       ) : null}
 

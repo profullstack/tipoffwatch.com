@@ -355,20 +355,35 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
   const none = { channels: [], owners: 0 };
   if (!config.playlists.enabled || !viewerId) return none;
 
-  const rows = await q.sharedPlaylistChannels({ viewerId });
-  if (rows.length === 0) return none;
+  const fixture = {
+    home: event.home_name,
+    away: event.away_name,
+    // Carried so a race, a fight card or a tournament -- which have no two sides
+    // and so could never match on teams -- have something to match on.
+    eventName: event.name,
+    leagueName: event.league_name,
+    leagueAbbr: event.league_abbr,
+  };
+
+  /*
+   * Narrowed across the WHOLE shared set, the same way the owner's own page is.
+   *
+   * This used to take the first 20,000 rows by position and rank those. On a
+   * 300,000-entry VOD catalogue the channel carrying a given fixture is usually
+   * past that, so the owner saw it and everybody they shared with saw nothing --
+   * which reads exactly like sharing being broken. The count comes back separately
+   * so an empty result can say which kind of empty it is.
+   */
+  const [channelCount, rows] = await Promise.all([
+    q.sharedChannelCount({ viewerId }),
+    q.sharedPlaylistCandidates({ viewerId, terms: matchTerms(fixture) }),
+  ]);
+  if (channelCount === 0) return none;
+  if (rows.length === 0) return { channels: [], owners: 0, channelCount };
 
   const ranked = rankChannelsForFixture(
     rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
-    {
-      home: event.home_name,
-      away: event.away_name,
-      // Carried so a race, a fight card or a tournament -- which have no two sides
-      // and so could never match on teams -- have something to match on.
-      eventName: event.name,
-      leagueName: event.league_name,
-      leagueAbbr: event.league_abbr,
-    },
+    fixture,
   );
 
   const byId = new Map(rows.map((r) => [r.id, r]));
@@ -394,7 +409,7 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
     .filter(Boolean)
     .slice(0, 10);
 
-  return { channels, owners: new Set(channels.map((c) => c.ownerId)).size };
+  return { channels, owners: new Set(channels.map((c) => c.ownerId)).size, channelCount };
 }
 
 /**
