@@ -2,6 +2,7 @@ import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { CATALOG_ADAPTERS, ingest } from './catalog.js';
 import * as espn from './espn.js';
+import { regionFor } from './regions.js';
 import { normaliseTitle } from './slug.js';
 import * as sportsdb from './sportsdb.js';
 
@@ -103,7 +104,52 @@ export async function syncCatalogue({ log = console.log } = {}) {
     }
     log(`[sync] ${adapter.name}: ${leagues.length} leagues`);
   }
+
+  const regions = await backfillLeagueRegions({ log });
+  const { ambiguous } = await q.recomputeAbbrAmbiguity();
+  log(
+    `[sync] regions: ${regions.resolved}/${regions.checked} resolved, ${ambiguous} ambiguous abbreviations`,
+  );
   return n;
+}
+
+/**
+ * Fill in where each league is played, a few at a time.
+ *
+ * Deliberately incremental. The country is only on ESPN's per-league endpoint --
+ * not on the scoreboard, which is fetched anyway -- so resolving the whole
+ * catalogue at once would put 354 extra requests through metered residential
+ * bandwidth every night to learn something that never changes. Forty a run
+ * drains the backlog inside a week and then costs nothing, because a resolved
+ * league stops being selected.
+ *
+ * The curated table wins over the provider: see regions.js for why, and for the
+ * one that prompted all of this (Australia's NBL reading as the NBA).
+ *
+ * Never throws. A region is decoration on a chip, and a decoration must not be
+ * able to fail the sync that carries the fixtures.
+ */
+export async function backfillLeagueRegions({ log = console.log, limit = 40 } = {}) {
+  let checked = 0;
+  let resolved = 0;
+  try {
+    const due = await q.leaguesMissingRegion({ limit });
+    for (const league of due) {
+      checked++;
+      const curated = regionFor(league.provider_key, null);
+      // A curated answer is already known, so it costs no request at all.
+      const region =
+        curated ??
+        (league.provider === 'espn' ? await espn.fetchLeagueRegion(league.provider_key) : null);
+      if (region) {
+        await q.setLeagueRegion(league.id, region);
+        resolved++;
+      }
+    }
+  } catch (err) {
+    log(`[sync] region backfill stopped: ${err?.message ?? err}`);
+  }
+  return { checked, resolved };
 }
 
 /**

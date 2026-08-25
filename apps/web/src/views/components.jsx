@@ -161,16 +161,39 @@ export const FollowButton = ({ user, subjectType, subjectId, following, next, la
  * abbreviation for the leagues anybody has heard of and leaves it null for the
  * long tail, which is exactly the split where a full name is worth the width.
  *
- * `title` carries the unabbreviated name, so a chip reading "NCAAB" is still
- * identifiable by anybody who does not already know it.
+ * Two things a bare abbreviation cannot do, both reported:
+ *
+ *   1. Tell apart competitions named almost the same. Australia's NBL is really
+ *      the "National Basketball League"; against the NBA's "National Basketball
+ *      Association" that is one word, rendered as one letter. It was reported as
+ *      the NBA being mislabelled -- the data was right and the chip could not be
+ *      told apart, which from outside is the same defect. So the region is shown
+ *      whenever we have one.
+ *   2. Identify a league at all when the abbreviation is shared. Thirteen MMA
+ *      promotions abbreviate to "BFC" and two summer leagues to "NBAGS". There
+ *      the short form is not brevity, it is a coin flip, so the full name wins
+ *      however long it is -- unless a region settles it, which is cheaper to
+ *      read than a full name.
+ *
+ * `title` always carries the unabbreviated name, so a chip reading "NCAAB" is
+ * still identifiable by anybody who does not already know it.
  */
 export const LeagueTag = ({ event }) => {
   const short = event.league_abbr?.trim();
   const full = event.league_name?.trim();
   if (!short && !full) return null;
-  const label = short || full;
+
+  const region = event.league_region?.trim();
+  // A shared abbreviation names nothing on its own; prefer anything that does.
+  const usable = short && !(event.league_abbr_ambiguous && !region);
+  const base = usable ? short : full || short;
+  const label = region ? `${base} · ${region}` : base;
+
+  // The tooltip is the long form, and it is the only place the full name is
+  // guaranteed to appear once the chip starts preferring a region.
+  const hover = [full, region].filter(Boolean).join(' · ');
   const tag = (
-    <span class="league-tag" title={full && full !== label ? full : undefined}>
+    <span class="league-tag" title={hover && hover !== label ? hover : undefined}>
       {label}
     </span>
   );

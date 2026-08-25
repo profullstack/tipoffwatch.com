@@ -151,6 +151,31 @@ async function getJson(url, { timeoutMs = 20000, log = console.warn } = {}) {
   return res.json();
 }
 
+/**
+ * Where a league is played, if the provider will say.
+ *
+ * The country lives ONLY on the core league endpoint, and only for domestic
+ * soccer. It is not on the scoreboard -- which would have been free, since that
+ * response is fetched anyway -- so this is a request per league, and the caller
+ * is expected to spend them a few at a time rather than sweeping 354 a night.
+ *
+ * Returns null for every non-soccer league and for continental competitions,
+ * which is a fact about the provider rather than a failure: see regions.js for
+ * what fills the gap.
+ */
+export async function fetchLeagueRegion(providerKey) {
+  const [sport, slug] = String(providerKey).split('/');
+  if (!sport || !slug) return null;
+  try {
+    const j = await getJson(`${CORE}/sports/${sport}/leagues/${slug}`);
+    return j?.country?.name ?? null;
+  } catch {
+    // A league whose detail endpoint 404s still has fixtures and a name. This is
+    // decoration; it must never be able to fail a sync.
+    return null;
+  }
+}
+
 /** The `$ref` links carry the slug in the path; parsing it beats a fetch per league. */
 const slugFromRef = (ref, segment) => ref.split(`/${segment}/`)[1].split('?')[0];
 

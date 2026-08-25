@@ -991,6 +991,66 @@ export async function upsertLeague(league) {
 }
 
 /**
+ * Leagues we have never resolved a region for, oldest first.
+ *
+ * Bounded, and the bound is the point. The region lives on a per-league endpoint
+ * (see fetchLeagueRegion), so resolving all 354 in one pass would add 354
+ * requests to the nightly catalogue sync through metered residential bandwidth,
+ * to learn something that changes never. A few dozen a night drains the backlog
+ * in under a week and then returns nothing forever.
+ *
+ * `region is null` is the only condition it can use, which means a league the
+ * provider genuinely has no country for is retried on every run. That is
+ * accepted: the alternative is a "we asked and got nothing" marker whose only
+ * job is to save a request on a query that already returns almost nothing.
+ */
+export async function leaguesMissingRegion({ limit = 40 } = {}) {
+  return sql`
+    select id, provider, provider_key, sport
+    from leagues
+    where active and region is null
+    order by priority, id
+    limit ${limit}
+  `;
+}
+
+/** Write a resolved region. Null is written too -- see leaguesMissingRegion. */
+export async function setLeagueRegion(id, region) {
+  await sql`update leagues set region = ${region ?? null} where id = ${id}`;
+}
+
+/**
+ * Recompute which abbreviations identify nothing on their own.
+ *
+ * One statement over a few hundred rows, run after a catalogue sync. Thirteen
+ * MMA promotions answer to "BFC" and two summer leagues to "NBAGS"; a chip
+ * showing either is not an abbreviation, it is a coin flip, so the renderer
+ * falls back to the full name and this is what tells it to.
+ *
+ * Superseded rows are excluded from the count on purpose. A duplicate must not
+ * be the reason its own survivor gets marked ambiguous -- that is how hiding the
+ * CONCACAF duplicate would otherwise have made the remaining one render its full
+ * name for no reason at all.
+ */
+export async function recomputeAbbrAmbiguity() {
+  const rows = await sql`
+    with counted as (
+      select abbreviation
+      from leagues
+      where active and superseded_by is null and abbreviation is not null
+      group by abbreviation
+      having count(*) > 1
+    )
+    update leagues l
+       set abbr_ambiguous = coalesce(l.abbreviation in (select abbreviation from counted), false)
+    returning l.abbr_ambiguous
+  `;
+  // Every league is rewritten, which is cheap at a few hundred rows and means
+  // one pass restores the truth however the previous state drifted.
+  return { rows: rows.length, ambiguous: rows.filter((r) => r.abbr_ambiguous).length };
+}
+
+/**
  * How many leagues are still named after their raw slug.
  *
  * A non-zero count means display names have never been backfilled from the
@@ -1095,7 +1155,7 @@ export async function leaguesWithFixturesBetween({ from, to }) {
     select distinct l.*
     from leagues l
     join events e on e.league_id = l.id
-    where l.active
+    where l.active and l.superseded_by is null
       and e.starts_at >= ${from}
       and e.starts_at < ${to}
     order by l.priority, l.name
@@ -1176,19 +1236,20 @@ export async function fillMissingBroadcasts(rows) {
 
 export async function listLeagues({ sport = null, limit = 500 } = {}) {
   if (sport) {
-    return sql`select * from leagues where active and sport = ${sport} order by priority, name limit ${limit}`;
+    return sql`select * from leagues where active and superseded_by is null and sport = ${sport} order by priority, name limit ${limit}`;
   }
-  return sql`select * from leagues where active order by priority, name limit ${limit}`;
+  return sql`select * from leagues where active and superseded_by is null order by priority, name limit ${limit}`;
 }
 
 export async function listSports() {
-  return sql`select sport, count(*)::int as leagues from leagues where active group by sport order by sport`;
+  return sql`select sport, count(*)::int as leagues from leagues where active and superseded_by is null group by sport order by sport`;
 }
 
 /** Trigram search over team names, for the follow picker. */
 export async function searchTeams(term, limit = 25) {
   return sql`
-    select t.id, t.slug, t.display_name, t.logo_url, l.name as league_name, l.abbreviation as league_abbr, l.sport
+    select t.id, t.slug, t.display_name, t.logo_url, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport
     from teams t left join leagues l on l.id = t.league_id
     where t.display_name ilike ${`%${term}%`}
     order by similarity(t.display_name, ${term}) desc
@@ -1218,7 +1279,7 @@ export async function searchLeagues(term, { limit = 8, sport = null } = {}) {
            (select count(*) from events e
              where e.league_id = l.id and e.starts_at > now())::int as upcoming
     from leagues l
-    where l.active
+    where l.active and l.superseded_by is null
       and (${sport}::text is null or l.sport = ${sport})
       and (lower(l.name) % ${q}
            or lower(l.name) like ${`%${q}%`}
@@ -1251,7 +1312,8 @@ export async function searchTeamsFull(term, { limit = 20, sport = null } = {}) {
 
   return sql`
     select t.id, t.slug, t.display_name, t.abbreviation, t.logo_url,
-           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
            (select e.id from events e
              where (e.home_team_id = t.id or e.away_team_id = t.id) and e.starts_at > now()
              order by e.starts_at limit 1) as next_event_id,
@@ -1286,7 +1348,8 @@ export async function searchFixtures(term, { limit = 10, sport = null } = {}) {
 
   return sql`
     select e.id, e.name, e.short_name, e.starts_at, e.state, e.venue,
-           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
            ht.display_name as home_name, at.display_name as away_name
     from events e
     join leagues l on l.id = e.league_id
@@ -1391,7 +1454,8 @@ export async function startingSoon({
   teamId = null,
 } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1403,7 +1467,7 @@ export async function startingSoon({
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
-    join leagues l on l.id = e.league_id
+    join leagues l on l.id = e.league_id and l.superseded_by is null
     left join teams ht on ht.id = e.home_team_id
     left join teams at on at.id = e.away_team_id
     where e.state = 'pre'
@@ -1431,7 +1495,7 @@ export async function startingSoonCount({
 } = {}) {
   const [row] = await sql`
     select count(*)::int as n
-    from events e join leagues l on l.id = e.league_id
+    from events e join leagues l on l.id = e.league_id and l.superseded_by is null
     where e.state = 'pre'
       and e.time_known
       and e.starts_at > now()
@@ -1513,7 +1577,7 @@ export async function addFollow({ userId, subjectType, subjectId }) {
 export async function followAllLeagues(userId) {
   const rows = await sql`
     insert into follows (user_id, subject_type, subject_id)
-    select ${userId}, 'league', l.id from leagues l where l.active
+    select ${userId}, 'league', l.id from leagues l where l.active and l.superseded_by is null
     on conflict do nothing
     returning subject_id
   `;
@@ -1557,7 +1621,7 @@ export async function unfollowAllLeagues(userId) {
 export async function leagueFollowCounts(userId) {
   const [row] = await sql`
     select
-      (select count(*)::int from leagues where active) as total,
+      (select count(*)::int from leagues where active and superseded_by is null) as total,
       (select count(*)::int from follows
         where user_id = ${userId}::uuid and subject_type = 'league') as following
   `;
@@ -1642,7 +1706,8 @@ export async function publicFollows(userId, { limit = 60 } = {}) {
 /** The signed-in calendar: every upcoming game involving anything the user follows. */
 export async function upcomingForUser(userId, { limit = 100 } = {}) {
   return sql`
-    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport, true as following,
+    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport, true as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -1675,7 +1740,8 @@ export async function upcomingForUser(userId, { limit = 100 } = {}) {
  */
 export async function upcomingForProfile(userId, { limit = 10 } = {}) {
   return sql`
-    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport, false as following,
+    select distinct e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport, false as following,
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
@@ -1697,7 +1763,8 @@ export async function upcomingForProfile(userId, { limit = 10 } = {}) {
 export async function scheduleForDay({ day, sport = null, limit = 300, viewerId = null }) {
   if (sport) {
     return sql`
-      select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
+      select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
              exists (
                select 1 from follows vf
                where vf.user_id = ${viewerId}
@@ -1718,7 +1785,8 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
     `;
   }
   return sql`
-    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1801,7 +1869,8 @@ export async function liveNow({
   teamId = null,
 } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -1813,7 +1882,7 @@ export async function liveNow({
            ht.display_name as home_name, ht.logo_url as home_logo,
            at.display_name as away_name, at.logo_url as away_logo
     from events e
-    join leagues l on l.id = e.league_id
+    join leagues l on l.id = e.league_id and l.superseded_by is null
     left join teams ht on ht.id = e.home_team_id
     left join teams at on at.id = e.away_team_id
     where e.state = 'in'
@@ -1830,7 +1899,7 @@ export async function liveNow({
 export async function liveNowCount({ sport = null, leagueId = null, teamId = null } = {}) {
   const [row] = await sql`
     select count(*)::int as n
-    from events e join leagues l on l.id = e.league_id
+    from events e join leagues l on l.id = e.league_id and l.superseded_by is null
     where e.state = 'in'
       and e.updated_at > now() - ${LIVE_MAX_STALENESS}::interval
       and (${sport}::text is null or l.sport = ${sport})
@@ -1859,7 +1928,8 @@ export async function stalledLiveCount() {
 export async function getEvent(eventId) {
   const [row] = await sql`
     select e.*, l.name as league_name, l.slug as league_slug, l.sport,
-           l.abbreviation as league_abbr,
+           l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous,
            ht.display_name as home_name, ht.logo_url as home_logo, ht.slug as home_slug,
            at.display_name as away_name, at.logo_url as away_logo, at.slug as away_slug
     from events e
@@ -2060,7 +2130,8 @@ export async function renameLeague({ id, name, abbreviation, logoUrl }) {
 }
 
 export async function getLeagueBySlug(slug) {
-  const [row] = await sql`select * from leagues where slug = ${slug} and active`;
+  const [row] =
+    await sql`select * from leagues where slug = ${slug} and active and superseded_by is null`;
   return row ?? null;
 }
 
@@ -2072,7 +2143,8 @@ export async function getLeagueBySlug(slug) {
  */
 export async function upcomingForLeague(leagueId, { limit = 200, viewerId = null } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -2097,8 +2169,8 @@ export async function upcomingForLeague(leagueId, { limit = 200, viewerId = null
 export async function catalogueStats() {
   const [row] = await sql`
     select
-      (select count(*)::int from leagues where active)                as leagues,
-      (select count(distinct sport)::int from leagues where active)   as sports,
+      (select count(*)::int from leagues where active and superseded_by is null) as leagues,
+      (select count(distinct sport)::int from leagues where active and superseded_by is null) as sports,
       (select count(*)::int from teams)                               as teams,
       (select count(*)::int from events where starts_at > now())      as upcoming_events,
       (select max(updated_at) from events)                            as last_sync
@@ -2113,7 +2185,8 @@ export async function publicEvents({ leagueSlug = null, sport = null, from = nul
     select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name, e.venue,
            e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score,
-           l.slug as league, l.name as league_name, l.abbreviation as league_abbr, l.sport,
+           l.slug as league, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
            ht.display_name as home, at.display_name as away
     from events e
     join leagues l on l.id = e.league_id
@@ -2176,7 +2249,8 @@ export async function teamsForLeague(leagueId, userId = null) {
 
 export async function getTeamBySlug(slug) {
   const [row] = await sql`
-    select t.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport
+    select t.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport
     from teams t left join leagues l on l.id = t.league_id
     where t.slug = ${slug}
   `;
@@ -2195,7 +2269,8 @@ export async function isFollowing({ userId, subjectType, subjectId }) {
 /** A single team's upcoming fixtures, home or away. */
 export async function upcomingForTeam(teamId, { limit = 60, viewerId = null } = {}) {
   return sql`
-    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.sport,
+    select e.*, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
            exists (
              select 1 from follows vf
              where vf.user_id = ${viewerId}
@@ -2228,7 +2303,7 @@ export async function leaguesForSport(sport, userId = null) {
     from leagues l
     left join follows f
       on f.subject_type = 'league' and f.subject_id = l.id and f.user_id = ${userId}::uuid
-    where l.active and l.sport = ${sport}
+    where l.active and l.superseded_by is null and l.sport = ${sport}
     order by l.priority, l.name
   `;
 }
@@ -2396,7 +2471,8 @@ export async function feedEvents({
            e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score, e.status_detail, e.broadcast, e.broadcast_country,
            e.updated_at,
-           l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
+           l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
            ht.display_name as home_name, at.display_name as away_name
     from events e
     join leagues l on l.id = e.league_id
@@ -2417,7 +2493,7 @@ export async function leaguesWithUpcoming(limit = 400) {
     select l.slug, l.name, l.sport, count(e.id)::int as upcoming
     from leagues l
     join events e on e.league_id = l.id and e.starts_at > now()
-    where l.active
+    where l.active and l.superseded_by is null
     group by l.slug, l.name, l.sport
     order by count(e.id) desc, l.name
     limit ${limit}

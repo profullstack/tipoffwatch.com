@@ -22,13 +22,23 @@ describe('what the tag says', () => {
   test('the abbreviation where there is one, the full name otherwise', () => {
     expect(components).toContain('const short = event.league_abbr?.trim()');
     expect(components).toContain('const full = event.league_name?.trim()');
-    expect(components).toContain('const label = short || full');
+    /*
+     * `short || full` no longer decides it on its own. An abbreviation shared by
+     * several leagues -- thirteen MMA promotions answer to "BFC" -- identifies
+     * none of them, so the full name wins there however long it is. See
+     * test/league-identity.test.js, which exercises the rendered output rather
+     * than the source.
+     */
+    expect(components).toContain('const base = usable ? short : full || short');
   });
 
   /* A chip reading "NCAAB" has to stay identifiable to somebody who does not
-     already know it, and the row has no room to spell it out. */
+     already know it, and the row has no room to spell it out. Now that the chip
+     itself may carry a region, the title is the one place the full name is
+     guaranteed to appear -- so it carries the region too. */
   test('the unabbreviated name is carried in the title attribute', () => {
-    expect(components).toContain('title={full && full !== label ? full : undefined}');
+    expect(components).toContain("const hover = [full, region].filter(Boolean).join(' · ')");
+    expect(components).toContain('title={hover && hover !== label ? hover : undefined}');
   });
 
   test('a row with neither renders nothing rather than an empty chip', () => {
