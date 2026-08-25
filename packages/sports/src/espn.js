@@ -85,9 +85,17 @@ const USER_AGENT = 'curl/8.5.0 (+https://tipoffwatch.com)';
  *     so retrying direct would burn a round trip to be blocked again.
  *
  * And it is a circuit breaker rather than a per-request retry, so an exhausted
- * plan costs exactly one doomed round trip per PROXY_COOLDOWN_MS instead of one
- * per request. It re-arms itself: when the plan is topped up the next probe
- * succeeds and the proxy is in use again with no deploy.
+ * plan costs one doomed BURST per PROXY_COOLDOWN_MS instead of one per request.
+ * A burst, not a single probe, and the distinction is worth stating: the score
+ * tick fetches its leagues concurrently, so every request already in flight when
+ * the first 402 lands has passed the check too. Measured at ten on the first pass
+ * after this shipped, then none until the cooldown expires. That is left alone
+ * deliberately -- serialising the probe would mean holding every league's fetch
+ * behind one request on the happy path, which is a real cost every minute to save
+ * ten 68-byte error responses every five.
+ *
+ * It re-arms itself: when the plan is topped up the next probe succeeds and the
+ * proxy is in use again with no deploy.
  */
 const PROXY_COOLDOWN_MS = 5 * 60_000;
 

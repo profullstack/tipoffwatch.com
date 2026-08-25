@@ -185,6 +185,8 @@ describe('a proxy that runs out of money', () => {
   });
 
   test('and stops paying for the doomed round trip after the first one', async () => {
+    // Sequential calls here, which is the property being pinned. Concurrent ones
+    // all pass the check before the first 402 lands -- see the note in espn.js.
     const calls = [];
     globalThis.fetch = async (_url, opts) => {
       calls.push(opts?.proxy ? 'proxy' : 'direct');
