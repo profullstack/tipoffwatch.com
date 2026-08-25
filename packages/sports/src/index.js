@@ -141,10 +141,11 @@ export async function backfillLeagueRegions({ log = console.log, limit = 40 } = 
       const region =
         curated ??
         (league.provider === 'espn' ? await espn.fetchLeagueRegion(league.provider_key) : null);
-      if (region) {
-        await q.setLeagueRegion(league.id, region);
-        resolved++;
-      }
+      // Written unconditionally, including when the answer is null: the write is
+      // what stamps region_checked_at, and without that stamp the sweep re-asks
+      // the same unresolvable leagues forever and never reaches the rest.
+      await q.setLeagueRegion(league.id, region);
+      if (region) resolved++;
     }
   } catch (err) {
     log(`[sync] region backfill stopped: ${err?.message ?? err}`);

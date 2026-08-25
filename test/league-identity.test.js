@@ -227,6 +227,69 @@ describe('the same competition under two provider keys', () => {
   });
 });
 
+/* ------------------------------------------------------- draining the backlog -- */
+
+describe('asking the provider where a league is', () => {
+  let db;
+
+  const DUE = `
+    select provider_key from leagues
+    where active and region is null
+      and (region_checked_at is null or region_checked_at < now() - interval '30 days')
+    order by region_checked_at nulls first, priority, id
+    limit 2`;
+
+  beforeAll(async () => {
+    db = await new PGlite({ extensions: { citext, pg_trgm } });
+    const dir = new URL('../packages/db/migrations/', import.meta.url).pathname;
+    for (const f of (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort()) {
+      await db.exec(await readFile(dir + f, 'utf8'));
+    }
+    await db.exec(`
+      insert into leagues (provider, provider_key, sport, slug, name, active, priority)
+      values ('espn','a/1','baseball','a-1','One', true, 1),
+             ('espn','a/2','hockey','a-2','Two', true, 2),
+             ('espn','a/3','soccer','a-3','Three', true, 3),
+             ('espn','a/4','soccer','a-4','Four', true, 4);
+    `);
+  }, 120_000);
+
+  /*
+   * The bug this column exists for. ESPN has no country outside domestic soccer,
+   * so most of these can never resolve -- and a sweep that selects on `region is
+   * null` alone hands back the same two every run while the rest are never seen.
+   */
+  test('a league with no country is not handed back forever', async () => {
+    const first = (await db.query(DUE)).rows.map((r) => r.provider_key);
+    expect(first).toEqual(['a/1', 'a/2']);
+
+    // Asked, and the provider said nothing. The stamp still lands.
+    await db.query(
+      `update leagues set region = coalesce(null, region), region_checked_at = now()
+       where provider_key = any($1)`,
+      [first],
+    );
+
+    const second = (await db.query(DUE)).rows.map((r) => r.provider_key);
+    expect(second).toEqual(['a/3', 'a/4']);
+  });
+
+  test('and the whole catalogue is walked before anything is revisited', async () => {
+    await db.query(
+      `update leagues set region_checked_at = now() where provider_key in ('a/3','a/4')`,
+    );
+    expect((await db.query(DUE)).rows).toHaveLength(0);
+  });
+
+  test('a resolved region is never asked about again', async () => {
+    await db.query(
+      `update leagues set region = 'Italy', region_checked_at = null where provider_key = 'a/3'`,
+    );
+    const due = (await db.query(DUE)).rows.map((r) => r.provider_key);
+    expect(due).not.toContain('a/3');
+  });
+});
+
 /* --------------------------------------------------------- the recompute -- */
 
 describe('recomputing which abbreviations are ambiguous', () => {

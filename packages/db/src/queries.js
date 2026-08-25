@@ -999,24 +999,43 @@ export async function upsertLeague(league) {
  * to learn something that changes never. A few dozen a night drains the backlog
  * in under a week and then returns nothing forever.
  *
- * `region is null` is the only condition it can use, which means a league the
- * provider genuinely has no country for is retried on every run. That is
- * accepted: the alternative is a "we asked and got nothing" marker whose only
- * job is to save a request on a query that already returns almost nothing.
+ * Ordered by when we last ASKED, not by whether we know. That distinction is
+ * load-bearing and the first version got it wrong: selecting `region is null` in
+ * a stable order means the leagues the provider has no country for -- which is
+ * everything outside domestic soccer -- come back every run, so the same forty
+ * are re-fetched forever and league 41 is never reached. The backlog looks like
+ * it is draining and does not move.
+ *
+ * Nulls first, so a league nobody has asked about outranks one we asked about a
+ * month ago, and the whole catalogue is walked exactly once before anything is
+ * revisited.
  */
-export async function leaguesMissingRegion({ limit = 40 } = {}) {
+export async function leaguesMissingRegion({ limit = 40, recheckDays = 30 } = {}) {
   return sql`
     select id, provider, provider_key, sport
     from leagues
-    where active and region is null
-    order by priority, id
+    where active
+      and region is null
+      and (region_checked_at is null
+           or region_checked_at < now() - (${recheckDays} * interval '1 day'))
+    order by region_checked_at nulls first, priority, id
     limit ${limit}
   `;
 }
 
-/** Write a resolved region. Null is written too -- see leaguesMissingRegion. */
+/**
+ * Record the answer, including when the answer is "nothing".
+ *
+ * The timestamp is stamped either way. That is what lets the sweep move on --
+ * see leaguesMissingRegion for what happens when it cannot.
+ */
 export async function setLeagueRegion(id, region) {
-  await sql`update leagues set region = ${region ?? null} where id = ${id}`;
+  await sql`
+    update leagues
+       set region = coalesce(${region ?? null}, region),
+           region_checked_at = now()
+     where id = ${id}
+  `;
 }
 
 /**
