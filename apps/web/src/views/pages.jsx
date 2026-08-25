@@ -2143,7 +2143,30 @@ export const Settings = ({
             </button>
           </form>
         </div>
-      ) : null}
+      ) : (
+        /*
+         * Shown when there is NO list, which is the only reason this branch
+         * exists. Sharing used to render only for an account that already had
+         * one, so the feature was invisible to anybody who had not got that far.
+         * Reported on the sibling brand as sharing being missing from settings,
+         * twice, and it was the same here.
+         *
+         * No form, because there is nothing to submit yet. Saying what the
+         * feature is and what it needs first is the whole job.
+         */
+        <div class="card">
+          <div class="card-head">
+            <h3 class="card-title">Share your list</h3>
+            <p class="card-desc">
+              Once you have added a list you can open it to everyone signed in, and this is where
+              that switch appears. They never get the address — it carries your provider username
+              and password, so shared channels play through us and the VLC, Infuse and .m3u buttons
+              stay yours alone. Your line still permits one connection at a time, so somebody else
+              watching means you are not. See <a href="/shared">whose lists are open</a>.
+            </p>
+          </div>
+        </div>
+      )}
 
       <form method="post" action="/api/playlist">
         <label class="field">
