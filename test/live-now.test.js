@@ -31,17 +31,48 @@ beforeAll(async () => {
     new URL('../packages/db/src/queries.js', import.meta.url).pathname,
     'utf8',
   );
-  const body = source.match(/export async function liveNow\([\s\S]*?\n}/)[0];
-  const inner = body.match(/return sql`([\s\S]*?)`;/)[1];
-  // The template placeholders become positional parameters: viewer first, limit
-  // second, in the order they appear.
-  // Regexes, not string literals: the placeholders are template syntax, and
-  // writing them as text here trips the lint rule that looks for accidental ones.
-  liveSql = inner.replace(/\$\{viewerId\}/, '$1').replace(/\$\{limit\}/, '$2');
+  /*
+   * Anchored on `return sql` rather than on the function's closing brace. The
+   * signature is destructured across several lines now that the query is scoped
+   * by sport, league and team, so `\n}` matched the end of the PARAMETER list and
+   * the extraction came back without any SQL in it at all.
+   */
+  const from = source.indexOf('export async function liveNow(');
+  const inner = source.slice(from).match(/return sql`([\s\S]*?)`;/)[1];
+
+  /*
+   * The template placeholders become positional parameters, in the order the
+   * query uses them. Regexes rather than string literals: the placeholders are
+   * template syntax, and writing them as text trips the lint rule that looks for
+   * accidental ones. Every one is replaced globally -- the scope predicates name
+   * theirs twice (`is null or` ... `=` ...), and a first-match-only replace left
+   * the second copy as literal text.
+   */
+  liveSql = inner
+    .replace(/\$\{viewerId\}/g, '$1')
+    .replace(/\$\{limit\}/g, '$2')
+    .replace(/\$\{LIVE_MAX_STALENESS\}/g, '$3')
+    .replace(/\$\{sport\}/g, '$4')
+    .replace(/\$\{leagueId\}/g, '$5')
+    .replace(/\$\{teamId\}/g, '$6');
 }, 60_000);
 
-const run = async (viewerId = null, limit = 30) =>
-  (await db.query(liveSql, [viewerId, limit])).rows;
+/*
+ * Seeded events take the table's `default now()` for updated_at, so they are
+ * fresh and the staleness gate passes them. test/live-feed.test.js is where that
+ * gate is exercised on its own.
+ */
+const run = async (viewerId = null, limit = 30, scope = {}) =>
+  (
+    await db.query(liveSql, [
+      viewerId,
+      limit,
+      '30 minutes',
+      scope.sport ?? null,
+      scope.leagueId ?? null,
+      scope.teamId ?? null,
+    ])
+  ).rows;
 
 let leagueBig;
 let leagueSmall;
@@ -218,9 +249,17 @@ describe('how the page says it', () => {
   test('the section renders even when nothing is on', () => {
     // A section that appears only sometimes is indistinguishable from one that is
     // broken. The empty state is a sentence, not an absence.
-    expect(page).toContain('<section class="live-now">');
+    //
+    // The markup moved into <LiveSection> when the drill-down pages started
+    // carrying it too, so the guarantee is now asserted on the component: the
+    // <section> is unconditional inside it, and the emptiness is handled by
+    // EventList's emptyText rather than by not rendering.
+    const section = page.slice(page.indexOf('export const LiveSection'));
+    const body = section.slice(0, section.indexOf('\n);\n'));
+    expect(body).toContain('<section class={`live-now');
+    expect(body).toContain('emptyText={emptyText}');
+    expect(body).not.toMatch(/events\.length \? \(\s*<section/);
     expect(page).toContain('emptyText={brand.copy.liveEmpty}');
-    expect(page).not.toMatch(/live\?\.length \? \(\s*<section class="live-now">/);
   });
 
   test('the wording is per brand rather than a substituted noun', () => {
@@ -241,14 +280,18 @@ describe('how the page says it', () => {
   test('where to watch shows on the watch lists and nowhere else', () => {
     expect(components).toContain('showBroadcast && event.broadcast');
     /*
-     * Two, and only two: Live now and Starting soon.
+     * One, and only one, now that both lists render through <LiveSection>.
      *
-     * Both lists exist to answer "what can I watch", which is the question a
+     * It used to be two: Live now and Starting soon, each with its own copy of the
+     * markup. Both exist to answer "what can I watch", which is the question a
      * channel name answers. Every OTHER EventList on the site is about when
      * something starts, and a broadcaster beside a kick-off time there is noise --
-     * that is the regression this counts rather than the exact number.
+     * that is the regression this guards, and the component is now the single
+     * place the flag is set, which is a stronger guarantee than counting was.
      */
-    expect(page.match(/showBroadcast/g).length).toBe(2);
+    expect(page.match(/showBroadcast/g).length).toBe(1);
+    const section = page.slice(page.indexOf('export const LiveSection'));
+    expect(section.slice(0, section.indexOf('\n);\n'))).toContain('showBroadcast');
   });
 
   test('the page cache is short enough for a live score to be true', () => {

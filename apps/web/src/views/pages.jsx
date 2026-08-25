@@ -290,6 +290,60 @@ export const Landing = ({ user, today, vapidKey }) => (
 );
 
 /** Step 1 of the picker: sport. */
+/**
+ * "What is on right now", and "what is about to be".
+ *
+ * Pulled out of the category page so every drill-down can carry it. It used to
+ * exist only on /sports, which had it exactly backwards: the reader who has
+ * narrowed to their own team or league is the one who most wants to know whether
+ * there is something on, and they were the one told least.
+ *
+ * Rendered even when empty, on every level. A section that appears only
+ * sometimes cannot be told apart from one that is broken, and "nothing is in
+ * progress" is an answer where silence is not.
+ *
+ * `stalled` is the third state and the reason it is a prop rather than an
+ * inference from an empty list. Nothing on and nothing known look identical from
+ * here, and they were identical for sixteen hours while the score feed was down.
+ */
+export const LiveSection = ({
+  title,
+  blurb,
+  emptyText,
+  events = [],
+  total = 0,
+  extraClass = '',
+  stalled = 0,
+  countTitle = null,
+}) => (
+  <section class={`live-now ${extraClass}`.trim()}>
+    <div class="live-head">
+      <h2>{title}</h2>
+      {total > 0 ? (
+        <span class="live-count num" title={countTitle ?? `${total} in progress`}>
+          {total.toLocaleString('en-US')}
+        </span>
+      ) : null}
+    </div>
+    {events.length ? (
+      <p class="muted small">
+        {blurb}
+        {/* Said outright rather than left as a mystery: the list is capped, and a
+            reader on a Saturday afternoon is looking at a fraction of what is on. */}
+        {total > events.length ? ` Showing the first ${events.length}.` : ''}
+      </p>
+    ) : null}
+    {stalled > 0 && events.length === 0 ? (
+      <p class="muted small">
+        Scores are not updating at the moment, so nothing here is being called live rather than
+        showing you a frozen one. {stalled.toLocaleString('en-US')} fixture
+        {stalled === 1 ? '' : 's'} last refreshed too long ago to trust.
+      </p>
+    ) : null}
+    <EventList events={events} emptyText={emptyText} showBroadcast />
+  </section>
+);
+
 export const SportsIndex = ({
   user,
   sports,
@@ -297,6 +351,7 @@ export const SportsIndex = ({
   upcoming,
   live,
   liveTotal,
+  stalled = 0,
   soon,
   soonTotal,
   soonHours,
@@ -369,25 +424,14 @@ export const SportsIndex = ({
         Rendered even when nothing is on. A section that appears only sometimes is
         indistinguishable from one that is broken, and "nothing is in progress" is
         an answer where silence is not. */}
-    <section class="live-now">
-      <div class="live-head">
-        <h2>{brand.copy.liveTitle}</h2>
-        {liveTotal > 0 ? (
-          <span class="live-count num" title={`${liveTotal} in progress`}>
-            {liveTotal.toLocaleString('en-US')}
-          </span>
-        ) : null}
-      </div>
-      {live?.length ? (
-        <p class="muted small">
-          {brand.copy.liveBlurb}
-          {/* Said outright rather than left as a mystery: the list is capped, and a
-              reader on a Saturday afternoon is looking at a fraction of what is on. */}
-          {liveTotal > live.length ? ` Showing the first ${live.length}.` : ''}
-        </p>
-      ) : null}
-      <EventList events={live ?? []} emptyText={brand.copy.liveEmpty} showBroadcast />
-    </section>
+    <LiveSection
+      title={brand.copy.liveTitle}
+      blurb={brand.copy.liveBlurb}
+      emptyText={brand.copy.liveEmpty}
+      events={live ?? []}
+      total={liveTotal}
+      stalled={stalled}
+    />
 
     {/* And the state either side of "on now", which had no home on this page.
 
@@ -398,23 +442,15 @@ export const SportsIndex = ({
 
         Rendered even when empty, for the same reason the live block is. A section
         that appears only sometimes cannot be told apart from one that is broken. */}
-    <section class="live-now starting-soon">
-      <div class="live-head">
-        <h2>{brand.copy.soonTitle}</h2>
-        {soonTotal > 0 ? (
-          <span class="live-count num" title={`${soonTotal} in the next ${soonHours} hours`}>
-            {soonTotal.toLocaleString('en-US')}
-          </span>
-        ) : null}
-      </div>
-      {soon?.length ? (
-        <p class="muted small">
-          {brand.copy.soonBlurb}
-          {soonTotal > soon.length ? ` Showing the first ${soon.length}.` : ''}
-        </p>
-      ) : null}
-      <EventList events={soon ?? []} emptyText={brand.copy.soonEmpty} showBroadcast />
-    </section>
+    <LiveSection
+      title={brand.copy.soonTitle}
+      blurb={brand.copy.soonBlurb}
+      emptyText={brand.copy.soonEmpty}
+      events={soon ?? []}
+      total={soonTotal}
+      countTitle={`${soonTotal} in the next ${soonHours} hours`}
+      extraClass="starting-soon"
+    />
   </Layout>
 );
 
@@ -602,140 +638,234 @@ export const SearchPage = ({ user, term, sport, results }) => (
 );
 
 /** Step 2: league. Following a whole league is offered here too. */
-export const SportPage = ({ user, sport, leagues }) => (
-  <Layout title={sport} user={user} canonical={href.category(sport)}>
-    <ol class="crumbs" aria-label="Breadcrumb">
-      <li>
-        <a href={href.category()}>{Word.collections}</a>
-      </li>
-      <li aria-current="page">{sport.replace(/-/g, ' ')}</li>
-    </ol>
-    <h1>{sport.replace(/-/g, ' ')}</h1>
-    <p class="muted">{leagues.length} leagues. Open one to follow its teams.</p>
-    <ul class="leagues">
-      {leagues.map((l) => (
+export const SportPage = ({
+  user,
+  sport,
+  leagues,
+  live = [],
+  liveTotal = 0,
+  soon = [],
+  soonTotal = 0,
+  soonHours = 4,
+  stalled = 0,
+}) => {
+  const name = sport.replace(/-/g, ' ');
+  const liveEmpty = `Nothing in ${name} is on right now.`;
+  const soonEmpty = `Nothing in ${name} starts in the next ${soonHours} hours.`;
+  return (
+    <Layout title={sport} user={user} canonical={href.category(sport)}>
+      <ol class="crumbs" aria-label="Breadcrumb">
         <li>
-          <a href={href.collection(l.slug)}>{l.name}</a>
-          <FollowButton
-            user={user}
-            subjectType="league"
-            subjectId={l.id}
-            following={l.following}
-            next={href.category(sport)}
-            label="league"
-          />
+          <a href={href.category()}>{Word.collections}</a>
         </li>
-      ))}
-    </ul>
-  </Layout>
-);
-
-/** Step 3: teams. This is the page that was missing entirely. */
-export const LeaguePage = ({ user, league, teams, events, following }) => (
-  <Layout
-    title={league.name}
-    user={user}
-    canonical={href.collection(league.slug)}
-    feedUrl={`/feeds/league/${league.slug}.xml`}
-    feedTitle={`${league.name} fixtures`}
-  >
-    <ol class="crumbs" aria-label="Breadcrumb">
-      <li>
-        <a href={href.category()}>{Word.collections}</a>
-      </li>
-      <li>
-        <a href={href.category(league.sport)}>{league.sport.replace(/-/g, ' ')}</a>
-      </li>
-      <li aria-current="page">{league.name}</li>
-    </ol>
-
-    <div class="page-head">
-      <h1>{league.name}</h1>
-      <FollowButton
-        user={user}
-        subjectType="league"
-        subjectId={league.id}
-        following={following}
-        next={href.collection(league.slug)}
-        label="every game"
-      />
-    </div>
-    <p class="muted small">{brand.copy.followCollectionBlurb}</p>
-
-    <h2>
-      {Word.participants} ({teams.length})
-    </h2>
-    {teams.length === 0 ? (
-      <p class="empty">{brand.copy.emptyParticipants}</p>
-    ) : (
-      <ul class="teams">
-        {teams.map((t) => (
-          <TeamRow team={t} user={user} next={href.collection(league.slug)} />
+        <li aria-current="page">{sport.replace(/-/g, ' ')}</li>
+      </ol>
+      <h1>{sport.replace(/-/g, ' ')}</h1>
+      <p class="muted">{leagues.length} leagues. Open one to follow its teams.</p>
+      <ul class="leagues">
+        {leagues.map((l) => (
+          <li>
+            <a href={href.collection(l.slug)}>{l.name}</a>
+            <FollowButton
+              user={user}
+              subjectType="league"
+              subjectId={l.id}
+              following={l.following}
+              next={href.category(sport)}
+              label="league"
+            />
+          </li>
         ))}
       </ul>
-    )}
 
-    <h2>Upcoming fixtures</h2>
-    {/* Most leagues are out of season most of the year, which is not the same as
-        broken. Say which one it is, and keep the follow controls useful either way. */}
-    <EventList
-      events={events}
-      emptyText={
-        teams.length > 0
-          ? 'Nothing scheduled yet — this competition is between seasons. Follow its teams now and you will be told when they play.'
-          : 'No fixtures scheduled.'
-      }
-    />
-  </Layout>
-);
+      {/* On now and about to be, for this level.
 
-export const TeamPage = ({ user, team, events, following, ownChannels = null }) => (
-  <Layout
-    title={team.display_name}
-    user={user}
-    canonical={href.participant(team.slug)}
-    feedUrl={`/feeds/team/${team.slug}.xml`}
-    feedTitle={`${team.display_name} fixtures`}
-  >
-    <ol class="crumbs" aria-label="Breadcrumb">
-      <li>
-        <a href={href.category()}>{Word.collections}</a>
-      </li>
-      {team.sport ? (
-        <li>
-          <a href={href.category(team.sport)}>{team.sport.replace(/-/g, ' ')}</a>
-        </li>
-      ) : null}
-      {team.league_slug ? (
-        <li>
-          <a href={href.collection(team.league_slug)}>{team.league_name}</a>
-        </li>
-      ) : null}
-      <li aria-current="page">{team.display_name}</li>
-    </ol>
-
-    <div class="page-head">
-      <h1>
-        {team.logo_url ? <img src={team.logo_url} alt="" width="36" height="36" /> : null}
-        {team.display_name}
-      </h1>
-      <FollowButton
-        user={user}
-        subjectType="team"
-        subjectId={team.id}
-        following={following}
-        next={href.participant(team.slug)}
+        The same pair the category page carries, and the reason it is here is that
+        a reader who has narrowed to one sport, league or team is the one most
+        likely to be asking "is there anything on" -- and until now they were the
+        one the site answered least. */}
+      <LiveSection
+        title={brand.copy.liveTitle}
+        blurb={brand.copy.liveBlurb}
+        emptyText={liveEmpty}
+        events={live ?? []}
+        total={liveTotal}
+        stalled={stalled}
       />
-    </div>
-    <p class="muted small">
-      {following
-        ? "You'll get a reminder an hour before each of these, and again a minute out."
-        : 'Follow to get a reminder an hour before each game, and again a minute out.'}
-    </p>
+      <LiveSection
+        title={brand.copy.soonTitle}
+        blurb={brand.copy.soonBlurb}
+        emptyText={soonEmpty}
+        events={soon ?? []}
+        total={soonTotal}
+        countTitle={`${soonTotal} in the next ${soonHours} hours`}
+        extraClass="starting-soon"
+      />
+    </Layout>
+  );
+};
 
-    <EventList events={events} emptyText="Nothing scheduled for this team yet." />
+/** Step 3: teams. This is the page that was missing entirely. */
+export const LeaguePage = ({
+  user,
+  league,
+  teams,
+  events,
+  following,
+  live = [],
+  liveTotal = 0,
+  soon = [],
+  soonTotal = 0,
+  soonHours = 4,
+  stalled = 0,
+}) => {
+  const liveEmpty = `Nothing in ${league.name} is on right now.`;
+  const soonEmpty = `Nothing in ${league.name} starts in the next ${soonHours} hours.`;
+  return (
+    <Layout
+      title={league.name}
+      user={user}
+      canonical={href.collection(league.slug)}
+      feedUrl={`/feeds/league/${league.slug}.xml`}
+      feedTitle={`${league.name} fixtures`}
+    >
+      <ol class="crumbs" aria-label="Breadcrumb">
+        <li>
+          <a href={href.category()}>{Word.collections}</a>
+        </li>
+        <li>
+          <a href={href.category(league.sport)}>{league.sport.replace(/-/g, ' ')}</a>
+        </li>
+        <li aria-current="page">{league.name}</li>
+      </ol>
 
-    {/*
+      <div class="page-head">
+        <h1>{league.name}</h1>
+        <FollowButton
+          user={user}
+          subjectType="league"
+          subjectId={league.id}
+          following={following}
+          next={href.collection(league.slug)}
+          label="every game"
+        />
+      </div>
+      <p class="muted small">{brand.copy.followCollectionBlurb}</p>
+
+      <h2>
+        {Word.participants} ({teams.length})
+      </h2>
+      {teams.length === 0 ? (
+        <p class="empty">{brand.copy.emptyParticipants}</p>
+      ) : (
+        <ul class="teams">
+          {teams.map((t) => (
+            <TeamRow team={t} user={user} next={href.collection(league.slug)} />
+          ))}
+        </ul>
+      )}
+
+      <h2>Upcoming fixtures</h2>
+      {/* Most leagues are out of season most of the year, which is not the same as
+        broken. Say which one it is, and keep the follow controls useful either way. */}
+      <EventList
+        events={events}
+        emptyText={
+          teams.length > 0
+            ? 'Nothing scheduled yet — this competition is between seasons. Follow its teams now and you will be told when they play.'
+            : 'No fixtures scheduled.'
+        }
+      />
+
+      {/* On now and about to be, for this level.
+
+        The same pair the category page carries, and the reason it is here is that
+        a reader who has narrowed to one sport, league or team is the one most
+        likely to be asking "is there anything on" -- and until now they were the
+        one the site answered least. */}
+      <LiveSection
+        title={brand.copy.liveTitle}
+        blurb={brand.copy.liveBlurb}
+        emptyText={liveEmpty}
+        events={live ?? []}
+        total={liveTotal}
+        stalled={stalled}
+      />
+      <LiveSection
+        title={brand.copy.soonTitle}
+        blurb={brand.copy.soonBlurb}
+        emptyText={soonEmpty}
+        events={soon ?? []}
+        total={soonTotal}
+        countTitle={`${soonTotal} in the next ${soonHours} hours`}
+        extraClass="starting-soon"
+      />
+    </Layout>
+  );
+};
+
+export const TeamPage = ({
+  user,
+  team,
+  events,
+  following,
+  ownChannels = null,
+  live = [],
+  liveTotal = 0,
+  soon = [],
+  soonTotal = 0,
+  soonHours = 4,
+  stalled = 0,
+}) => {
+  const liveEmpty = `${team.display_name} are not playing right now.`;
+  const soonEmpty = `${team.display_name} are not on in the next ${soonHours} hours.`;
+  return (
+    <Layout
+      title={team.display_name}
+      user={user}
+      canonical={href.participant(team.slug)}
+      feedUrl={`/feeds/team/${team.slug}.xml`}
+      feedTitle={`${team.display_name} fixtures`}
+    >
+      <ol class="crumbs" aria-label="Breadcrumb">
+        <li>
+          <a href={href.category()}>{Word.collections}</a>
+        </li>
+        {team.sport ? (
+          <li>
+            <a href={href.category(team.sport)}>{team.sport.replace(/-/g, ' ')}</a>
+          </li>
+        ) : null}
+        {team.league_slug ? (
+          <li>
+            <a href={href.collection(team.league_slug)}>{team.league_name}</a>
+          </li>
+        ) : null}
+        <li aria-current="page">{team.display_name}</li>
+      </ol>
+
+      <div class="page-head">
+        <h1>
+          {team.logo_url ? <img src={team.logo_url} alt="" width="36" height="36" /> : null}
+          {team.display_name}
+        </h1>
+        <FollowButton
+          user={user}
+          subjectType="team"
+          subjectId={team.id}
+          following={following}
+          next={href.participant(team.slug)}
+        />
+      </div>
+      <p class="muted small">
+        {following
+          ? "You'll get a reminder an hour before each of these, and again a minute out."
+          : 'Follow to get a reminder an hour before each game, and again a minute out.'}
+      </p>
+
+      <EventList events={events} emptyText="Nothing scheduled for this team yet." />
+
+      {/*
       What is on the reader's own line for this team.
 
       This page never asked before, which is the same gap the sibling brand had
@@ -745,23 +875,47 @@ export const TeamPage = ({ user, team, events, following, ownChannels = null }) 
       carries whatever that club is doing -- so this is worth showing even when
       nothing is scheduled.
     */}
-    {ownChannels?.hasList && (ownChannels.matches.length || ownChannels.competition?.length) ? (
-      <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
-        <h2>On your line</h2>
-        <p class="muted small">
-          Channels on your own list that name {team.display_name}
-          {team.league_name ? ` or ${team.league_name}` : ''}. Each is checked against your provider
-          before it is offered — a slot can be listed and still be empty.
-        </p>
-        <ul class="own-channels">
-          {[...ownChannels.matches, ...(ownChannels.competition ?? [])].map((ch) => (
-            <ChannelRow ch={ch} />
-          ))}
-        </ul>
-      </section>
-    ) : null}
-  </Layout>
-);
+      {ownChannels?.hasList && (ownChannels.matches.length || ownChannels.competition?.length) ? (
+        <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+          <h2>On your line</h2>
+          <p class="muted small">
+            Channels on your own list that name {team.display_name}
+            {team.league_name ? ` or ${team.league_name}` : ''}. Each is checked against your
+            provider before it is offered — a slot can be listed and still be empty.
+          </p>
+          <ul class="own-channels">
+            {[...ownChannels.matches, ...(ownChannels.competition ?? [])].map((ch) => (
+              <ChannelRow ch={ch} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* On now and about to be, for this team.
+
+        Below the fixture list and the reader's own line, because both of those
+        are why somebody opened a team page. This answers the narrower question
+        they may not have thought to ask: is this lot playing at this moment. */}
+      <LiveSection
+        title={brand.copy.liveTitle}
+        blurb={brand.copy.liveBlurb}
+        emptyText={liveEmpty}
+        events={live ?? []}
+        total={liveTotal}
+        stalled={stalled}
+      />
+      <LiveSection
+        title={brand.copy.soonTitle}
+        blurb={brand.copy.soonBlurb}
+        emptyText={soonEmpty}
+        events={soon ?? []}
+        total={soonTotal}
+        countTitle={`${soonTotal} in the next ${soonHours} hours`}
+        extraClass="starting-soon"
+      />
+    </Layout>
+  );
+};
 
 /**
  * "3 teams and 12 leagues", for the confirm text and for the receipt afterwards.

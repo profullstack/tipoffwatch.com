@@ -66,24 +66,80 @@ const USER_AGENT = 'curl/8.5.0 (+https://tipoffwatch.com)';
  *
  * ESPN blocks datacenter egress: the identical request that returns JSON from a
  * laptop returns 403 Access Denied from Railway, and it silently took production's
- * sync down for two hours. A fallback was tried first and was the wrong shape --
- * a block does not always arrive as a status, so the direct attempt could throw,
- * and every request paid a doomed round trip before the one that worked.
+ * sync down for two hours. So the proxy is the normal route and stays that way.
  *
- * Straight through the proxy is simpler and predictable. It costs metered
- * bandwidth, so if that ever matters the lever is SPORTS_PROXY_URL: unset it and
- * every request goes direct again, no code change.
+ * What is NOT the normal route is the proxy failing as a BILLING account. On
+ * 2026-08-24 the plan ran out of bandwidth mid-evening and every request started
+ * coming back `402 Bandwidth limit reached. Please upgrade to continue using the
+ * proxy.` -- for sixteen hours. Every score froze, and because a frozen score is
+ * still a score the site went on presenting yesterday's fixtures as in progress.
+ *
+ * A blanket direct-first fallback was tried once before and was rightly reverted:
+ * a block does not always arrive as a status, so the direct attempt could throw,
+ * and every request paid a doomed round trip before the one that worked. This is
+ * the narrow version of it, and the difference is which side is at fault:
+ *
+ *   - 402/407 is the PROXY refusing us, and says nothing about ESPN. Going direct
+ *     is strictly better than not going at all.
+ *   - 403/429 is ESPN refusing the proxy's exit IP. A datacenter IP fares worse,
+ *     so retrying direct would burn a round trip to be blocked again.
+ *
+ * And it is a circuit breaker rather than a per-request retry, so an exhausted
+ * plan costs exactly one doomed round trip per PROXY_COOLDOWN_MS instead of one
+ * per request. It re-arms itself: when the plan is topped up the next probe
+ * succeeds and the proxy is in use again with no deploy.
  */
-async function getJson(url, { timeoutMs = 20000 } = {}) {
-  const proxy = config.sports.proxyUrl;
+const PROXY_COOLDOWN_MS = 5 * 60_000;
 
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { accept: 'application/json', 'user-agent': USER_AGENT },
-    ...(proxy ? { proxy } : {}),
-  });
+/** Set while the proxy is known-unusable; the value is when to try it again. */
+let proxyBlockedUntil = 0;
 
-  if (!res.ok) throw new Error(`espn ${res.status}${proxy ? ' (via proxy)' : ' (direct)'} ${url}`);
+/** Statuses that mean the PROXY rejected us, not that ESPN did. */
+const PROXY_FAULT = new Set([402, 407]);
+
+/** Visible for tests, and for a caller that wants to force a re-probe. */
+export function resetProxyBreaker() {
+  proxyBlockedUntil = 0;
+}
+
+async function getJson(url, { timeoutMs = 20000, log = console.warn } = {}) {
+  const configured = config.sports.proxyUrl;
+  const useProxy = Boolean(configured) && Date.now() >= proxyBlockedUntil;
+
+  const attempt = (proxy) =>
+    fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { accept: 'application/json', 'user-agent': USER_AGENT },
+      ...(proxy ? { proxy } : {}),
+    });
+
+  let res;
+  try {
+    res = await attempt(useProxy ? configured : null);
+  } catch (err) {
+    // A proxy that will not even connect is the same class of problem as one that
+    // answers 402, and it arrives as a throw rather than a status.
+    if (!useProxy) throw err;
+    proxyBlockedUntil = Date.now() + PROXY_COOLDOWN_MS;
+    log(`[espn] proxy unreachable (${err?.message ?? err}); going direct for 5 minutes`);
+    return getJson(url, { timeoutMs, log });
+  }
+
+  if (useProxy && PROXY_FAULT.has(res.status)) {
+    /*
+     * Read the body before discarding it: this is the one message that says which
+     * account is out of what, and it is the difference between "top up Webshare"
+     * and sixteen hours of guessing.
+     */
+    const why = await res.text().catch(() => '');
+    proxyBlockedUntil = Date.now() + PROXY_COOLDOWN_MS;
+    log(`[espn] proxy ${res.status}: ${why.trim().slice(0, 160)} -- going direct for 5 minutes`);
+    return getJson(url, { timeoutMs, log });
+  }
+
+  if (!res.ok) {
+    throw new Error(`espn ${res.status}${useProxy ? ' (via proxy)' : ' (direct)'} ${url}`);
+  }
   return res.json();
 }
 

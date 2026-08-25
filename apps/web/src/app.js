@@ -183,10 +183,20 @@ app.get(`/${brand.paths.category}`, async (c) => {
    * a choice with no upside.
    */
   return cached(c, 'page:sports', 60, async () => {
-    const [sports, live, liveTotal, soon, soonTotal] = await Promise.all([
+    const [sports, live, liveTotal, stalled, soon, soonTotal] = await Promise.all([
       q.listSports(),
       q.liveNow({ viewerId: user?.id ?? null }),
       q.liveNowCount(),
+      /*
+       * Fixtures that still say "in progress" but stopped being refreshed.
+       *
+       * Only ever used to explain an empty list. Without it "nothing is on" and
+       * "we have no idea what is on" render identically, which is exactly what
+       * happened when the metered proxy hit its bandwidth cap: every ESPN request
+       * 402'd for sixteen hours and the page kept showing yesterday's fixtures at
+       * yesterday's minute.
+       */
+      q.stalledLiveCount(),
       /*
        * The same 60 seconds serves both lists, and the window is the reason it can.
        *
@@ -207,6 +217,7 @@ app.get(`/${brand.paths.category}`, async (c) => {
         upcoming={upcoming}
         live={live}
         liveTotal={liveTotal}
+        stalled={stalled}
         soon={soon}
         soonTotal={soonTotal}
         soonHours={config.sports.soonWindowHours}
@@ -258,7 +269,39 @@ app.get(`/${brand.paths.category}/:sport`, async (c) => {
   const sport = c.req.param('sport');
   const leagues = await q.leaguesForSport(sport, user?.id ?? null);
   if (leagues.length === 0) return c.html(await render(<NotFound user={user} />), 404);
-  return c.html(await render(<SportPage user={user} sport={sport} leagues={leagues} />));
+
+  /*
+   * The same "on now" and "about to start" pair the category page carries.
+   *
+   * Not cached, unlike the category index: this page is cheap, and every one of
+   * these lists is per-viewer (the `following` flag on each fixture). The live
+   * queries are scoped in SQL rather than filtered here so the league and start
+   * indexes still do the work.
+   */
+  const hours = config.sports.soonWindowHours;
+  const [live, liveTotal, stalled, soon, soonTotal] = await Promise.all([
+    q.liveNow({ viewerId: user?.id ?? null, sport }),
+    q.liveNowCount({ sport }),
+    q.stalledLiveCount(),
+    q.startingSoon({ hours, viewerId: user?.id ?? null, sport }),
+    q.startingSoonCount({ hours, sport }),
+  ]);
+
+  return c.html(
+    await render(
+      <SportPage
+        user={user}
+        sport={sport}
+        leagues={leagues}
+        live={live}
+        liveTotal={liveTotal}
+        stalled={stalled}
+        soon={soon}
+        soonTotal={soonTotal}
+        soonHours={hours}
+      />,
+    ),
+  );
 });
 
 app.get(`/${brand.paths.collection}/:slug`, async (c) => {
@@ -267,12 +310,26 @@ app.get(`/${brand.paths.collection}/:slug`, async (c) => {
   const league = await q.getLeagueBySlug(slug);
   if (!league) return c.html(await render(<NotFound user={user} />), 404);
 
+  /*
+   * The cache TTL is 60 seconds, which is what makes it safe to put a live
+   * scoreboard on a cached page: the same number the category index runs on, and
+   * chosen there for exactly this reason -- a five-minute-old score is a page
+   * telling somebody a match is on that finished four minutes ago.
+   */
+  const hours = config.sports.soonWindowHours;
   return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
-    const [teams, events, following] = await Promise.all([
-      q.teamsForLeague(league.id, user?.id ?? null),
-      q.upcomingForLeague(league.id, { viewerId: user?.id ?? null }),
-      q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
-    ]);
+    const [teams, events, following, live, liveTotal, stalled, soon, soonTotal] = await Promise.all(
+      [
+        q.teamsForLeague(league.id, user?.id ?? null),
+        q.upcomingForLeague(league.id, { viewerId: user?.id ?? null }),
+        q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
+        q.liveNow({ viewerId: user?.id ?? null, leagueId: league.id }),
+        q.liveNowCount({ leagueId: league.id }),
+        q.stalledLiveCount(),
+        q.startingSoon({ hours, viewerId: user?.id ?? null, leagueId: league.id }),
+        q.startingSoonCount({ hours, leagueId: league.id }),
+      ],
+    );
     return render(
       <LeaguePage
         user={user}
@@ -280,6 +337,12 @@ app.get(`/${brand.paths.collection}/:slug`, async (c) => {
         teams={teams}
         events={events}
         following={following}
+        live={live}
+        liveTotal={liveTotal}
+        stalled={stalled}
+        soon={soon}
+        soonTotal={soonTotal}
+        soonHours={hours}
       />,
     );
   });
@@ -289,9 +352,16 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
   const user = c.get('user');
   const team = await q.getTeamBySlug(c.req.param('slug'));
   if (!team) return c.html(await render(<NotFound user={user} />), 404);
-  const [events, following] = await Promise.all([
+  const hours = config.sports.soonWindowHours;
+  const [events, following, live, liveTotal, stalled, soon, soonTotal] = await Promise.all([
     q.upcomingForTeam(team.id, { viewerId: user?.id ?? null }),
     q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
+    // Either side of the fixture: "are they playing" does not care who is at home.
+    q.liveNow({ viewerId: user?.id ?? null, teamId: team.id }),
+    q.liveNowCount({ teamId: team.id }),
+    q.stalledLiveCount(),
+    q.startingSoon({ hours, viewerId: user?.id ?? null, teamId: team.id }),
+    q.startingSoonCount({ hours, teamId: team.id }),
   ]);
 
   /*
@@ -315,6 +385,12 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
         events={events}
         following={following}
         ownChannels={ownChannels}
+        live={live}
+        liveTotal={liveTotal}
+        stalled={stalled}
+        soon={soon}
+        soonTotal={soonTotal}
+        soonHours={hours}
       />,
     ),
   );

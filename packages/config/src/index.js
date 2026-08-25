@@ -96,7 +96,16 @@ export const config = {
      * returns 403 Access Denied from Railway. Residential bandwidth is metered, so
      * this is a fallback rather than the default route -- see packages/sports.
      */
-    proxyUrl: opt('SPORTS_PROXY_URL'),
+    /*
+     * A getter, not a snapshot, for the same reason the CoinPay block is one: the
+     * comment above calls this "the lever", and a value read once at import is not
+     * a lever -- it cannot be changed without a restart, and it cannot be exercised
+     * by a test at all, because whichever module imported config first decides it
+     * for the whole process.
+     */
+    get proxyUrl() {
+      return opt('SPORTS_PROXY_URL');
+    },
     /** How far ahead to keep the calendar populated. */
     horizonDays: num('SPORTS_HORIZON_DAYS', 14),
     /**

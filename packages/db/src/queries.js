@@ -1382,7 +1382,14 @@ export async function searchPeople(term, { limit = 6, viewerId = null } = {}) {
  * this one, and a fixture appearing in both reads as a duplicate rather than as
  * two facts.
  */
-export async function startingSoon({ hours = 4, limit = 30, viewerId = null } = {}) {
+export async function startingSoon({
+  hours = 4,
+  limit = 30,
+  viewerId = null,
+  sport = null,
+  leagueId = null,
+  teamId = null,
+} = {}) {
   return sql`
     select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
            exists (
@@ -1407,19 +1414,31 @@ export async function startingSoon({ hours = 4, limit = 30, viewerId = null } = 
       and e.time_known
       and e.starts_at > now()
       and e.starts_at <= now() + (${hours} * interval '1 hour')
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
     order by e.starts_at, l.priority
     limit ${limit}
   `;
 }
 
 /** How many start inside the window, whether or not they all fit in the list. */
-export async function startingSoonCount({ hours = 4 } = {}) {
+export async function startingSoonCount({
+  hours = 4,
+  sport = null,
+  leagueId = null,
+  teamId = null,
+} = {}) {
   const [row] = await sql`
-    select count(*)::int as n from events
-    where state = 'pre'
-      and time_known
-      and starts_at > now()
-      and starts_at <= now() + (${hours} * interval '1 hour')
+    select count(*)::int as n
+    from events e join leagues l on l.id = e.league_id
+    where e.state = 'pre'
+      and e.time_known
+      and e.starts_at > now()
+      and e.starts_at <= now() + (${hours} * interval '1 hour')
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
   `;
   return row?.n ?? 0;
 }
@@ -1738,7 +1757,49 @@ export async function scheduleForDay({ day, sport = null, limit = 300, viewerId 
  * in progress than anybody scrolls, and the tail of that list is where the
  * catalogue's least-followed leagues live.
  */
-export async function liveNow({ limit = 30, viewerId = null } = {}) {
+/**
+ * How old a fixture's last refresh may be before we stop calling it live.
+ *
+ * `state = 'in'` is not a claim that a game is on -- it only means nothing ever
+ * said otherwise. A fixture the provider stops returning keeps that state
+ * forever, and the same reasoning already governs which games the play poller
+ * reads. The score tick stamps updated_at every 60 seconds for any league with a
+ * game in progress, so a row it is still touching is genuinely live.
+ *
+ * Thirty minutes rather than a few, because the stamp only lands when a league is
+ * being polled at all and a single failed pass must not empty the scoreboard.
+ * What it does catch is the real failure: on 2026-08-24 the metered proxy hit its
+ * bandwidth cap and every ESPN request 402'd for sixteen hours, so twenty-five
+ * fixtures sat frozen at yesterday's minute and the site went on presenting them
+ * as in progress. Showing nothing would have been true; showing "43'" all night
+ * was not.
+ *
+ * The cost of this gate is honest: if the pipeline is down, "Live now" empties
+ * out instead of lying. That is the correct answer to a question we cannot
+ * currently answer.
+ */
+const LIVE_MAX_STALENESS = '30 minutes';
+
+/**
+ * The three drill-down levels, as one optional filter.
+ *
+ * `/sports` had a live list and `/sports/:sport`, a league and a team page each
+ * had none -- so the further a reader narrowed towards the thing they actually
+ * follow, the less the site would tell them about what was on. The scope is
+ * null-guarded rather than built by string concatenation so one query plan
+ * serves every level and the indexes (events_league_starts_idx, events_home_idx,
+ * events_away_idx) still apply.
+ *
+ * A team scope matches either side of the fixture: "is my team playing" does not
+ * care who is at home.
+ */
+export async function liveNow({
+  limit = 30,
+  viewerId = null,
+  sport = null,
+  leagueId = null,
+  teamId = null,
+} = {}) {
   return sql`
     select e.*, l.name as league_name, l.abbreviation as league_abbr, l.slug as league_slug, l.sport,
            exists (
@@ -1756,14 +1817,42 @@ export async function liveNow({ limit = 30, viewerId = null } = {}) {
     left join teams ht on ht.id = e.home_team_id
     left join teams at on at.id = e.away_team_id
     where e.state = 'in'
+      and e.updated_at > now() - ${LIVE_MAX_STALENESS}::interval
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
     order by l.priority, e.starts_at
     limit ${limit}
   `;
 }
 
 /** How many games are in progress, whether or not they all fit in the list. */
-export async function liveNowCount() {
-  const [row] = await sql`select count(*)::int as n from events where state = 'in'`;
+export async function liveNowCount({ sport = null, leagueId = null, teamId = null } = {}) {
+  const [row] = await sql`
+    select count(*)::int as n
+    from events e join leagues l on l.id = e.league_id
+    where e.state = 'in'
+      and e.updated_at > now() - ${LIVE_MAX_STALENESS}::interval
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
+  `;
+  return row?.n ?? 0;
+}
+
+/**
+ * Fixtures that still SAY they are in progress but stopped being refreshed.
+ *
+ * Not shown anywhere -- this is for the health endpoint and the log, because the
+ * gap between this and liveNowCount is the only cheap signal that the score
+ * pipeline has stopped. It is what sixteen hours of frozen scores looked like
+ * from the inside: nothing threw, nothing was empty, every number was just old.
+ */
+export async function stalledLiveCount() {
+  const [row] = await sql`
+    select count(*)::int as n from events
+    where state = 'in' and updated_at <= now() - ${LIVE_MAX_STALENESS}::interval
+  `;
   return row?.n ?? 0;
 }
 
