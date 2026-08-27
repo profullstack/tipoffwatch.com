@@ -301,6 +301,10 @@ export async function ownChannelsForEvent({ userId, event }) {
       eventName: event.name,
       leagueName: event.league_name,
       leagueAbbr: event.league_abbr,
+      // What sport this is, so a title naming a DIFFERENT one cannot be offered as
+      // a channel for this competition: "Major League Soccer" and "Major League
+      // Baseball" are separated by exactly one word, and this is that word.
+      sport: event.sport,
     },
   });
 }
@@ -326,6 +330,10 @@ export async function ownChannelsForTeam({ userId, team }) {
       eventName: team.display_name ?? team.name,
       leagueName: team.league_name,
       leagueAbbr: team.league_abbr,
+      // Same guard as the fixture pages: the competition tier is most of what a
+      // team page shows, so it is exactly where another sport's channels would be
+      // most visible.
+      sport: team.sport,
     },
   });
 }
@@ -363,6 +371,9 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
     eventName: event.name,
     leagueName: event.league_name,
     leagueAbbr: event.league_abbr,
+    // See the note in ownChannelsForEvent: the sport is what keeps one league's
+    // channels out of another league's tier when their names rhyme.
+    sport: event.sport,
   };
 
   /*

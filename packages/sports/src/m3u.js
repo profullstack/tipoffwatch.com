@@ -235,6 +235,190 @@ function hasWhole(normTitle, name) {
 }
 
 /**
+ * League words that name no league in particular.
+ *
+ * "Major League Baseball" and "EFL League One" share the word `league`, and that
+ * one word was enough to file every English football fixture under a baseball game
+ * as a channel "for this competition". The tier is supposed to answer "this
+ * carries the series"; `league` answers nothing, and neither do `major`, `cup`,
+ * `national` or the sport nouns -- a channel called "Soccer" is not a channel for
+ * Major League Soccer.
+ *
+ * Dropping them does not lose the competitions whose whole name is made of them
+ * ("Premier League", "US Open", "Liga MX"), because a contiguous PHRASE of the
+ * name is matched alongside its individual words. See leagueSignals.
+ */
+const GENERIC_LEAGUE = new Set([
+  'league',
+  'leagues',
+  'liga',
+  'ligue',
+  'lega',
+  'serie',
+  'division',
+  'divisions',
+  'conference',
+  'championship',
+  'championships',
+  'cup',
+  'trophy',
+  'series',
+  'major',
+  'minor',
+  'national',
+  'international',
+  'association',
+  'federation',
+  'premier',
+  'premiership',
+  'professional',
+  'pro',
+  'first',
+  'second',
+  'third',
+  'world',
+  'open',
+  'tour',
+  'classic',
+  'super',
+  // Sport nouns. They say what is being played, not which competition it is.
+  'football',
+  'soccer',
+  'basketball',
+  'baseball',
+  'hockey',
+  'cricket',
+  'rugby',
+  'tennis',
+  'golf',
+  'boxing',
+  'wrestling',
+  'volleyball',
+  'handball',
+  'darts',
+  'snooker',
+  'cycling',
+  'athletics',
+  'motorsport',
+  'racing',
+  'softball',
+  'lacrosse',
+  'badminton',
+  'netball',
+]);
+
+/**
+ * The sport nouns, on their own.
+ *
+ * Kept as a second set rather than inferred from GENERIC_LEAGUE because they do
+ * one extra job: they are the only words in a title that can positively
+ * CONTRADICT a competition. "Major League Soccer" and "Major League Baseball"
+ * share the phrase "major league", so the phrase rule alone would offer an MLS
+ * fixture under an MLB game; the sport each one names is what separates them.
+ *
+ * Soccer and football are one entry deliberately -- half the world writes the
+ * other word, and a provider titling a Premier League slot "Football" must not be
+ * read as naming a different sport from ours.
+ */
+const SPORT_WORDS = new Set([
+  'football',
+  'soccer',
+  'basketball',
+  'baseball',
+  'hockey',
+  'cricket',
+  'rugby',
+  'tennis',
+  'golf',
+  'boxing',
+  'wrestling',
+  'volleyball',
+  'handball',
+  'darts',
+  'snooker',
+  'cycling',
+  'athletics',
+  'motorsport',
+  'racing',
+  'softball',
+  'lacrosse',
+  'badminton',
+  'netball',
+]);
+
+/** Sport nouns in a name, with soccer folded into football. */
+function sportsIn(s) {
+  const out = new Set();
+  for (const w of normaliseTeam(s).split(' ')) {
+    if (SPORT_WORDS.has(w)) out.add(w === 'soccer' ? 'football' : w);
+  }
+  return out;
+}
+
+/**
+ * Does this title name a sport, and is it not ours?
+ *
+ * Only a title that names one at all can contradict: most channel names mention no
+ * sport, and silence is not a disagreement. Refusing on a clash is the same
+ * direction of error the rest of this file takes -- a channel not offered costs a
+ * click, a wrong one costs somebody the game they sat down to watch.
+ *
+ * @param {Set<string>} ours @param {Set<string>} titleWords
+ */
+function clashesOnSport(ours, titleWords) {
+  if (ours.size === 0) return false;
+  let named = false;
+  for (const w of titleWords) {
+    const s = w === 'soccer' ? 'football' : w;
+    if (!SPORT_WORDS.has(s)) continue;
+    if (ours.has(s)) return false;
+    named = true;
+  }
+  return named;
+}
+
+/**
+ * What identifies this competition: distinctive words, and phrases of its name.
+ *
+ * Exported so the candidate query and the ranker ask the same question of a
+ * league. Two mechanisms rather than one, because league names come in two kinds:
+ *
+ *   - Named ones ("Formula 1", "MLB", "Bundesliga") carry a word nothing else
+ *     uses, and one shared word is enough. That word is the abbreviation more
+ *     often than not, which is why a two-letter one is kept here even though
+ *     `tokens` drops it for being short.
+ *   - Generic ones ("Premier League", "US Open", "Liga MX") have no such word --
+ *     every word in them belongs to fifty other competitions. Those match on a
+ *     contiguous phrase of the name instead, which is what a provider writes
+ *     anyway: our "English Premier League" against their "PREMIER LEAGUE HD".
+ *
+ * Short words are kept in the phrases and only in the phrases. "us open" and
+ * "liga mx" are made entirely of words `tokens` throws away, so the phrase is the
+ * only thing left to match them on.
+ *
+ * @param {string|null} leagueName @param {string|null} leagueAbbr
+ */
+export function leagueSignals(leagueName, leagueAbbr) {
+  const words = new Set();
+  for (const t of [...tokens(leagueName ?? ''), ...tokens(leagueAbbr ?? '')]) {
+    if (!GENERIC_LEAGUE.has(t)) words.add(t);
+  }
+  const short = normaliseTeam(leagueAbbr ?? '').replace(/\s+/g, '');
+  if (short.length >= 2 && !GENERIC_LEAGUE.has(short)) words.add(short);
+
+  const phrases = new Set();
+  for (const name of [leagueName, leagueAbbr]) {
+    const w = normaliseTeam(name ?? '')
+      .split(' ')
+      .filter(Boolean);
+    for (let n = w.length; n >= 2; n--) {
+      for (let i = 0; i + n <= w.length; i++) phrases.add(w.slice(i, i + n).join(' '));
+    }
+  }
+  return { words: [...words], phrases: [...phrases] };
+}
+
+/**
  * The words worth asking the database about, for one fixture.
  *
  * Exported so the candidate query and the ranker agree on what "significant"
@@ -249,14 +433,25 @@ function hasWhole(normTitle, name) {
  */
 export function matchTerms({ home, away, eventName, leagueName, leagueAbbr } = {}) {
   const out = new Set();
-  for (const name of [home, away, eventName, leagueName, leagueAbbr]) {
+  for (const name of [home, away, eventName]) {
     if (!name) continue;
     for (const t of tokens(name)) out.add(t);
   }
-  // A league abbreviation is often two characters ("F1"), which tokens() drops for
-  // being short -- and it is the single most useful word there is for a race.
-  const short = normaliseTeam(leagueAbbr ?? '').replace(/\s+/g, '');
-  if (short.length >= 2) out.add(short);
+
+  /*
+   * The league contributes only the words that actually name it.
+   *
+   * It used to contribute every word of the name, and for "Major League Baseball"
+   * two of those are `major` and `league`. On a large list that is catastrophic
+   * here rather than merely noisy: the candidate query takes the first 3,000
+   * matching rows IN POSITION ORDER, and `%league%` matches every English,
+   * Spanish and Champions League fixture the provider carries. The window filled
+   * with other sports before it ever reached the row carrying this game -- so the
+   * fixture was in the reader's list, and still could not be handed to them,
+   * because it never got as far as the ranker.
+   */
+  const { words, phrases } = leagueSignals(leagueName, leagueAbbr);
+  for (const t of [...words, ...phrases]) out.add(t);
   return [...out];
 }
 
@@ -457,16 +652,16 @@ function contradicts(words, team, matched) {
  * @param {Array<{title:string,url:string}>} channels
  */
 export function rankChannelsForFixture(channels, fixture) {
-  const { home, away, eventName, leagueName, leagueAbbr } = fixture ?? {};
+  const { home, away, eventName, leagueName, leagueAbbr, sport } = fixture ?? {};
   const certain = [];
   const likely = [];
   const competition = [];
 
-  const leagueTokens = new Set([...tokens(leagueName ?? ''), ...tokens(leagueAbbr ?? '')]);
-  // A league abbreviation is often two characters ("F1"), which `tokens` drops for
-  // being short -- and it is the single most useful word there is for a race.
-  const shortAbbr = normaliseTeam(leagueAbbr ?? '').replace(/\s+/g, '');
-  if (shortAbbr.length >= 2) leagueTokens.add(shortAbbr);
+  const { words: leagueWords, phrases: leaguePhrases } = leagueSignals(leagueName, leagueAbbr);
+  // What sport this fixture is, in the title's own vocabulary. The league name
+  // usually says it ("Major League Baseball"); the sport column always does, and
+  // is the reason it is carried in.
+  const ourSports = sportsIn(`${leagueName ?? ''} ${sport ?? ''}`);
 
   for (const c of channels ?? []) {
     const norm = normaliseTeam(c.title);
@@ -501,15 +696,25 @@ export function rankChannelsForFixture(channels, fixture) {
       }
     }
 
-    // Competition level: the channel is for this series rather than this fixture.
-    // Placeholders are dropped rather than ranked, because a provider parks its
-    // unassigned slots as "NFL 03:" and "F1: BLANK" and there are hundreds of them
-    // -- offering one is offering a dead channel.
-    if (
-      !isPlaceholder(c.title) &&
-      leagueTokens.size &&
-      [...leagueTokens].some((t) => words.has(t))
-    ) {
+    /*
+     * Competition level: the channel is for this series rather than this fixture.
+     *
+     * The test is "does this title NAME our competition", not "does it share a
+     * word with its name". Sharing a word put every EFL fixture under a Major
+     * League Baseball game -- both names contain `league`, and that was the whole
+     * of the reasoning. A distinctive word ("mlb", "formula") or a contiguous
+     * phrase of the name ("premier league") is a claim about which competition
+     * this is; a lone generic word is not.
+     *
+     * Placeholders are dropped rather than ranked, because a provider parks its
+     * unassigned slots as "NFL 03:" and "F1: BLANK" and there are hundreds of them
+     * -- offering one is offering a dead channel.
+     */
+    if (isPlaceholder(c.title)) continue;
+    const namesLeague =
+      leagueWords.some((t) => words.has(t)) ||
+      leaguePhrases.some((p) => ` ${norm} `.includes(` ${p} `));
+    if (namesLeague && !clashesOnSport(ourSports, words)) {
       competition.push({ ...c, score: 1 });
     }
   }

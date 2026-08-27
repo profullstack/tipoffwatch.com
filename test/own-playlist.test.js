@@ -7,6 +7,7 @@ import {
   channelMatchesFixture,
   channelsForFixture,
   isPlaceholder,
+  matchTerms,
   oneChannelM3u,
   parseM3u,
   rankChannelsForFixture,
@@ -344,6 +345,79 @@ describe('matching what a provider actually writes', () => {
   test('the AFL fixture still finds nothing, on the looser rules too', () => {
     const r = rankChannelsForFixture(real, { home: 'Collingwood', away: 'Brisbane Lions' });
     expect([...r.certain, ...r.likely]).toEqual([]);
+  });
+
+  /*
+   * One shared generic word is not a competition.
+   *
+   * Reported from /events/266, a Baltimore Orioles at St. Louis Cardinals game:
+   * the page offered English football. "Major League Baseball" and "EFL League
+   * One" have the word `league` in common and nothing else, and that was the
+   * entire basis on which those channels were filed under a baseball fixture --
+   * and handed out as the .m3u download behind `?series=`.
+   */
+  const generic = [
+    { title: 'EFL LEAGUE ONE : Wigan Athletic vs Bolton Wanderers', url: 'efl1' },
+    { title: 'UEFA Champions League', url: 'ucl' },
+    { title: 'NBA League Pass 04', url: 'nbapass' },
+    { title: 'Major League Soccer : LA Galaxy vs Austin FC', url: 'mls' },
+    { title: 'MLB Network HD', url: 'mlbnet' },
+    { title: 'PREMIER LEAGUE : Arsenal vs Chelsea', url: 'epl' },
+  ];
+  const mlb = {
+    home: 'St. Louis Cardinals',
+    away: 'Baltimore Orioles',
+    eventName: 'Baltimore Orioles at St. Louis Cardinals',
+    leagueName: 'Major League Baseball',
+    leagueAbbr: 'MLB',
+    sport: 'baseball',
+  };
+
+  test('another sport is not a channel for this competition', () => {
+    const r = rankChannelsForFixture(generic, mlb);
+    expect(r.competition.map((c) => c.url)).toEqual(['mlbnet']);
+  });
+
+  test('the sport separates two leagues whose names rhyme', () => {
+    // "Major League Soccer" clears the phrase test on "major league" and is
+    // rejected on the only word that distinguishes the two.
+    const r = rankChannelsForFixture([{ title: 'Major League Soccer', url: 'mls' }], mlb);
+    expect(r.competition).toEqual([]);
+  });
+
+  test('a competition made entirely of generic words matches on the phrase', () => {
+    // Ours is "English Premier League" and the provider writes "PREMIER LEAGUE".
+    // Every word of that is generic, so the phrase is all there is to match on.
+    const r = rankChannelsForFixture([{ title: 'Sky: PREMIER LEAGUE HD', url: 'skyepl' }], {
+      leagueName: 'English Premier League',
+      leagueAbbr: 'ENG.1',
+      sport: 'soccer',
+    });
+    expect(r.competition.map((c) => c.url)).toEqual(['skyepl']);
+  });
+
+  test('a named competition still matches on its own word', () => {
+    const r = rankChannelsForFixture(real, {
+      eventName: 'Heineken Dutch Grand Prix',
+      leagueName: 'Formula 1',
+      leagueAbbr: 'F1',
+      sport: 'racing',
+    });
+    expect(r.competition.map((c) => c.url)).toContain('f1tv');
+  });
+
+  test('the database is never asked for a word that names no league', () => {
+    // The other half of the same bug, and the worse one: the candidate query takes
+    // the first 3,000 matching rows in position order, so `%league%` fills the
+    // window with other sports before the row carrying THIS game is reached. The
+    // fixture was in the reader's list and never got as far as the ranker.
+    const terms = matchTerms(mlb);
+    expect(terms).not.toContain('league');
+    expect(terms).not.toContain('major');
+    expect(terms).toContain('mlb');
+    expect(terms).toContain('orioles');
+    // The phrase survives, so a channel named for the league is still reachable.
+    expect(terms).toContain('major league baseball');
   });
 });
 
