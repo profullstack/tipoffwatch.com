@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { firstLiveChannel, probeStream } from '../packages/playlists/src/probe.js';
+import {
+  firstLiveChannel,
+  probeStream,
+  sniffBytes,
+  verdictToStore,
+} from '../packages/playlists/src/probe.js';
 
 /**
  * Checking a channel actually plays before anyone is handed it.
@@ -86,6 +91,141 @@ describe('what counts as a live stream', () => {
     for (const bad of ['', null, 'not a url', 'vlc://x']) {
       expect((await probeStream(bad)).live).toBe(false);
     }
+  });
+});
+
+/*
+ * What a NO is worth remembering.
+ *
+ * Reported from /events/266: the right game matched on title and then "failed the
+ * check", and sometimes stopped matching at all. Both are the same mechanism. A
+ * verdict is written to the row, and the candidate query drops a row marked dead
+ * for thirty minutes -- so a single timeout on the correct channel took it off
+ * the page and left the next-best thing, of a different sport, in its place.
+ *
+ * A timeout is a fact about the last six seconds. Only a fact about the SLOT is
+ * worth storing.
+ */
+describe('a no that is worth remembering, and a no that is not', () => {
+  test('an HTML apology is definite: that slot really is empty', async () => {
+    const s = serve({ '/dead': { type: 'text/html', body: '<html>no such stream</html>' } });
+    const got = await probeStream(`http://localhost:${s.port}/dead`);
+    s.stop(true);
+    expect(got.live).toBe(false);
+    expect(got.definitive).toBe(true);
+    expect(verdictToStore(got)).toBe(false);
+  });
+
+  test('a timeout is not, and must not be written down as one', async () => {
+    const s = serve({ '/hang': { hang: true } });
+    const got = await probeStream(`http://localhost:${s.port}/hang`);
+    s.stop(true);
+    expect(got.live).toBe(false);
+    expect(got.definitive).toBe(false);
+    // NULL, not false. The candidate query treats NULL as offerable, which is
+    // the whole point: one slow answer must not hide a working channel.
+    expect(verdictToStore(got)).toBe(null);
+  }, 15_000);
+
+  test('a reader closing the tab is not a verdict on the channel', async () => {
+    const s = serve({ '/hang': { hang: true } });
+    const ac = new AbortController();
+    const p = probeStream(`http://localhost:${s.port}/hang`, { signal: ac.signal });
+    ac.abort();
+    const got = await p;
+    s.stop(true);
+    expect(got.definitive).toBe(false);
+    expect(verdictToStore(got)).toBe(null);
+  });
+
+  test('a busy line answers 403, and that is not the channel being dead', async () => {
+    // An Xtream panel refuses the second connection. It therefore refuses exactly
+    // when the reader is already watching the channel it is refusing.
+    const s = serve({ '/busy': { status: 403, body: 'too many connections' } });
+    const got = await probeStream(`http://localhost:${s.port}/busy`);
+    s.stop(true);
+    expect(got.live).toBe(false);
+    expect(verdictToStore(got)).toBe(null);
+  });
+
+  test('a 404 is definite', async () => {
+    const s = serve({});
+    const got = await probeStream(`http://localhost:${s.port}/gone`);
+    s.stop(true);
+    expect(verdictToStore(got)).toBe(false);
+  });
+
+  test('a yes is always worth keeping', async () => {
+    const s = serve({ '/ts': { type: 'video/mp2t' } });
+    const got = await probeStream(`http://localhost:${s.port}/ts`);
+    s.stop(true);
+    expect(verdictToStore(got)).toBe(true);
+  });
+});
+
+/*
+ * The bytes outrank the header.
+ *
+ * These panels serve transport streams as text/plain, as application/dash+xml and
+ * with no content-type at all. Judging on the header alone called those dead --
+ * a working channel refused because its server was careless about a string.
+ */
+describe('judging a stream by what it sends', () => {
+  const TS = () => {
+    // Two transport-stream packets: sync byte, then 187 bytes of payload.
+    const b = new Uint8Array(376);
+    b[0] = 0x47;
+    b[188] = 0x47;
+    return b;
+  };
+
+  test('mpeg-ts served as text/plain is live', async () => {
+    const s = serve({ '/ts': { type: 'text/plain', body: TS() } });
+    const got = await probeStream(`http://localhost:${s.port}/ts`);
+    s.stop(true);
+    expect(got.live).toBe(true);
+  });
+
+  test('mpeg-ts served with no content-type at all is live', async () => {
+    const s = serve({ '/ts': { body: TS() } });
+    const got = await probeStream(`http://localhost:${s.port}/ts`);
+    s.stop(true);
+    expect(got.live).toBe(true);
+  });
+
+  test('an HTML page dressed as video is still a page', async () => {
+    const s = serve({ '/liar': { type: 'video/mp2t', body: '<html>offline</html>' } });
+    const got = await probeStream(`http://localhost:${s.port}/liar`);
+    s.stop(true);
+    expect(got.live).toBe(false);
+    expect(got.definitive).toBe(true);
+  });
+
+  test('a range the server refuses is retried whole, not called dead', async () => {
+    let asked = 0;
+    const s = Bun.serve({
+      port: 0,
+      fetch(req) {
+        asked++;
+        // A live stream is not a seekable resource, and some panels say so.
+        if (req.headers.get('range')) return new Response('', { status: 416 });
+        return new Response(TS(), { headers: { 'content-type': 'application/octet-stream' } });
+      },
+    });
+    const got = await probeStream(`http://localhost:${s.port}/ts`);
+    s.stop(true);
+    expect(asked).toBe(2);
+    expect(got.live).toBe(true);
+  });
+
+  test('an empty answer proves nothing either way', () => {
+    expect(sniffBytes(new Uint8Array(0))).toBe(null);
+  });
+
+  test('the sync byte is recognised, and a web page is not', () => {
+    expect(sniffBytes(TS())).toBe('stream');
+    expect(sniffBytes(new TextEncoder().encode('<!doctype html>'))).toBe('page');
+    expect(sniffBytes(new TextEncoder().encode('#EXTM3U\n'))).toBe('stream');
   });
 });
 

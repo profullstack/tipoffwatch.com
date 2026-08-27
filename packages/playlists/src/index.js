@@ -11,7 +11,7 @@ import {
   rankChannelsForFixture,
 } from '@tipoff/sports';
 
-export { firstLiveChannel, probeStream } from './probe.js';
+export { firstLiveChannel, probeStream, sniffBytes, verdictToStore } from './probe.js';
 export { claimStreamSlot, openStream, streamSlotsOpen } from './proxy.js';
 
 /**

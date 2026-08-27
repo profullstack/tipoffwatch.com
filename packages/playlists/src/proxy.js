@@ -35,9 +35,56 @@
  * is.
  */
 
-import { PLAYABLE_TYPE, probeStream } from './probe.js';
+import { PLAYABLE_TYPE, probeStream, sniffBytes } from './probe.js';
 
 export { probeStream };
+
+/**
+ * Look at the first chunk without spending it.
+ *
+ * The stream is handed on to a player afterwards, so the bytes examined here have
+ * to still be at the front of it -- a transport stream missing its first packet
+ * is a transport stream the demuxer cannot sync to. The reader stays attached and
+ * the rewound stream simply re-emits what was read before continuing.
+ *
+ * @param {Response} res
+ */
+async function sniffAndRewind(res) {
+  const reader = res.body?.getReader();
+  if (!reader) return { looks: null, body: null, release: async () => {} };
+
+  let first = null;
+  try {
+    const { value, done } = await reader.read();
+    if (!done) first = value;
+  } catch {
+    // Nothing read is nothing learned; the type check below still applies.
+  }
+
+  const body = new ReadableStream({
+    start(ctrl) {
+      if (first?.length) ctrl.enqueue(first);
+    },
+    async pull(ctrl) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) ctrl.close();
+        else ctrl.enqueue(value);
+      } catch (err) {
+        ctrl.error(err);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+
+  return {
+    looks: sniffBytes(first ?? new Uint8Array(0)),
+    body,
+    release: () => reader.cancel().catch(() => {}),
+  };
+}
 
 /** Long enough for a redirect to a token URL; short enough to fail a dead slot fast. */
 const CONNECT_TIMEOUT_MS = 8000;
@@ -128,7 +175,31 @@ export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEO
   if (/mpegurl/i.test(type)) return fail(415, 'that channel is an HLS playlist');
 
   if (!PLAYABLE_TYPE.some((re) => re.test(type))) {
-    return fail(502, type ? `unexpected type ${type}` : 'no content type');
+    /*
+     * The header is not one we know. Look at the bytes before refusing on it.
+     *
+     * These panels serve MPEG-TS as `text/plain`, as `application/dash+xml` and
+     * with no content-type at all, and this line was turning every one of those
+     * into "unexpected type" -- a working channel refused on the strength of a
+     * header its own video did not agree with. A transport stream says what it is
+     * in its first byte, and that outranks what the server wrote down.
+     */
+    const sniffed = await sniffAndRewind(res);
+    signal?.removeEventListener('abort', abort);
+
+    if (sniffed.looks === 'stream') {
+      return { ok: true, body: sniffed.body, contentType: 'video/mp2t', note: type || 'mpeg-ts' };
+    }
+
+    await sniffed.release();
+    if (sniffed.looks === 'page') {
+      return { ok: false, status: 502, note: 'returned a web page, not a stream' };
+    }
+    return {
+      ok: false,
+      status: 502,
+      note: type ? `unexpected type ${type}` : 'no content type',
+    };
   }
 
   return { ok: true, body: res.body, contentType: type, note: type };

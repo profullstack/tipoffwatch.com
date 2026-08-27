@@ -17,6 +17,7 @@ import {
   refreshPlaylist,
   sharedChannelsForEvent,
   streamSlotsOpen,
+  verdictToStore,
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import { oneChannelM3u, searchEverything } from '@tipoff/sports';
@@ -1068,7 +1069,11 @@ app.get('/shared/:channelId/check', async (c) => {
 
   const result = await probeStream(auth.open(row.stream_url), { signal: c.req.raw.signal });
   await q
-    .markSharedChannelChecked({ channelId: row.id, live: result.live, note: result.note })
+    .markSharedChannelChecked({
+      channelId: row.id,
+      live: verdictToStore(result),
+      note: result.note,
+    })
     .catch(() => {});
   return c.json(result);
 });
@@ -1143,7 +1148,11 @@ app.get('/events/:id/playlist.m3u', async (c) => {
         .markChannelChecked({
           userId: user.id,
           channelId: ch.id,
-          live: result.live,
+          // NULL, not false, when the probe proved nothing. A timeout on the
+          // right channel used to hide it from the candidate query for thirty
+          // minutes, which is how the reader ended up offered the next-best
+          // thing instead -- or nothing at all.
+          live: verdictToStore(result),
           note: result.note,
         })
         .catch(() => {});
@@ -1227,7 +1236,7 @@ app.get('/events/:id/channel-check', async (c) => {
       .markChannelChecked({
         userId: user.id,
         channelId: pick.id,
-        live: result.live,
+        live: verdictToStore(result),
         note: result.note,
       })
       .catch(() => {});
@@ -1401,7 +1410,12 @@ app.get('/my/channels/:channelId/check', async (c) => {
 
   const result = await probeStream(ch.url, { signal: c.req.raw.signal });
   await q
-    .markChannelChecked({ userId: user.id, channelId: ch.id, live: result.live, note: result.note })
+    .markChannelChecked({
+      userId: user.id,
+      channelId: ch.id,
+      live: verdictToStore(result),
+      note: result.note,
+    })
     .catch(() => {});
   return c.json(result);
 });
