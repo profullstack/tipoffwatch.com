@@ -311,8 +311,14 @@ export const Inbox = ({ user, threads }) => (
   </Layout>
 );
 
-/** One conversation. Oldest at the top, composer at the bottom. */
-export const Thread = ({ user, other, messages, blocked }) => (
+/**
+ * One conversation. Oldest at the top, composer at the bottom.
+ *
+ * `olderCount` is the only thing here that knows about the paid tier, and it is a
+ * number rather than a boolean on purpose: "there are 340 older messages" is a
+ * sentence somebody can decide about, and an empty space is not.
+ */
+export const Thread = ({ user, other, messages, blocked, historyDays = null, olderCount = 0 }) => (
   <Layout title={nameOf(other)} user={user}>
     <ol class="crumbs" aria-label="Breadcrumb">
       <li>
@@ -337,6 +343,15 @@ export const Thread = ({ user, other, messages, blocked }) => (
       <p class="feedback error">This conversation is closed. One of you has blocked the other.</p>
     ) : (
       <>
+        {olderCount > 0 ? (
+          <p class="feedback">
+            {olderCount.toLocaleString('en-US')} older{' '}
+            {olderCount === 1 ? 'message is' : 'messages are'} kept but not shown here — free
+            accounts see the last {historyDays} days. <a href="/premium?want=history">Premium</a>{' '}
+            opens the whole conversation. Nothing has been deleted.
+          </p>
+        ) : null}
+
         {messages.length === 0 ? (
           <p class="empty">Say something.</p>
         ) : (

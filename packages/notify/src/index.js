@@ -127,3 +127,42 @@ export async function sendLoginLink({ email, url }) {
   if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return true;
 }
+
+/**
+ * An invitation, sent on somebody else's behalf.
+ *
+ * The only mail here addressed to a stranger, and the reason invites are capped
+ * and rate-limited before they ever reach this function: our domain is on the
+ * envelope, and the cost of getting this wrong is paid in the deliverability of
+ * every reminder sent to everybody else.
+ *
+ * `from` is the inviter's chosen name or handle, never their email address. They
+ * gave us that to receive reminders, not to have it handed to whoever they
+ * recommend the site to.
+ */
+export async function sendInviteEmail({ email, url, from }) {
+  if (!config.mail.enabled) throw new Error('RESEND_API_KEY not configured');
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${config.mail.resendKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: config.mail.from,
+      to: email,
+      subject: `${from} thinks you should see TipoffWatch`,
+      text: [
+        `${from} uses TipoffWatch to keep track of when their teams play.`,
+        '',
+        `Have a look: ${url}`,
+        '',
+        'Following a team is free and there is no app to install.',
+        'If this is not something you want, ignore this email \u2014 there will be no others.',
+      ].join('\n'),
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`resend ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return true;
+}

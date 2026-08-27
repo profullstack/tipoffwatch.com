@@ -119,6 +119,22 @@ const BRANDS = {
         'Kicking off in the next four hours, soonest first. Enough warning to find it, ' +
         'close enough that you do not have to remember.',
       soonEmpty: 'Nothing kicks off in the next four hours.',
+
+      /*
+       * The paid tier, in this brand's own words.
+       *
+       * Copy only. What the tier actually unlocks is decided in code and is the
+       * same on every brand -- a feature list that a brand file could disagree
+       * with is a promise a reader can be sold and not given.
+       */
+      premiumTitle: 'Premium',
+      premiumBlurb:
+        'Following teams, reminders and calendar feeds stay free and always will. ' +
+        'Premium is for the parts that cost us something to run.',
+      premiumShare: 'Share your line with the people you choose, instead of the whole site.',
+      premiumHistory:
+        'Keep every message you have ever sent or received, not just the recent ones.',
+      premiumInvites: 'Earn a share of what the people you bring in spend.',
     },
     providers: ['espn'],
     elsewhere: {},
@@ -165,6 +181,15 @@ const BRANDS = {
         'Releases carrying only a date are not here -- they have no hour to count down to.',
       soonEmpty: 'Nothing with a start time lands in the next four hours.',
       notFound: 'Back to what is coming up',
+
+      premiumTitle: 'Premium',
+      premiumBlurb:
+        'Following names, reminders and calendar feeds stay free and always will. ' +
+        'Premium is for the parts that cost us something to run.',
+      premiumShare: 'Share your line with the people you choose, instead of the whole site.',
+      premiumHistory:
+        'Keep every message you have ever sent or received, not just the recent ones.',
+      premiumInvites: 'Earn a share of what the people you bring in spend.',
     },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],
     /*

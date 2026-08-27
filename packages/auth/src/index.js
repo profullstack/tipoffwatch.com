@@ -91,7 +91,15 @@ export async function consumeLoginLink(token, { userAgent } = {}) {
     ttlDays: config.session.ttlDays,
     userAgent,
   });
-  return { user, sessionId };
+  /*
+   * `created` is passed on rather than inferred later.
+   *
+   * The caller credits an invite with it, and an invite is worth money here -- so
+   * the one moment that genuinely knows whether this address had an account a
+   * second ago is the moment that must say so. Reconstructing it downstream from
+   * created_at is a guess with a race in it.
+   */
+  return { user, sessionId, created: Boolean(user.created) };
 }
 
 /* ---------------------------------------------------------------- passkey -- */
