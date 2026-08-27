@@ -378,6 +378,45 @@ function clashesOnSport(ours, titleWords) {
 }
 
 /**
+ * Is this word, or phrase, present in the title as a whole word?
+ *
+ * Markers arrive normalised already and some are two characters ("F1"), which is
+ * below what hasWhole will look at, so this does the padded test directly rather
+ * than going through it.
+ *
+ * @param {string} norm @param {Set<string>} words @param {string} marker
+ */
+function marksTitle(norm, words, marker) {
+  if (!marker) return false;
+  return marker.includes(' ') ? ` ${norm} `.includes(` ${marker} `) : words.has(marker);
+}
+
+/**
+ * Does this title say, in the provider's own tagging, that it is a different
+ * competition from ours?
+ *
+ * This is the guard the loose tier was missing, and the fixture that exposed it is
+ * the worst case there is: Baltimore Orioles at St. Louis Cardinals. Matching a
+ * word per side is enough for "NFL 07: Baltimore Ravens vs Arizona Cardinals" --
+ * `baltimore` for one side, `cardinals` for the other, both present, neither
+ * belonging to this game. Nothing in the names themselves can tell those apart,
+ * because the names really are shared. The tag can: the line says NFL.
+ *
+ * Ours wins ties. A title carrying our own marker is never refused on the strength
+ * of another one, because providers do write "MLB / NFL Sunday" style groupings,
+ * and a title that names our competition has already said what it is.
+ *
+ * @param {string} norm @param {Set<string>} words
+ * @param {string[]} foreign markers belonging to a different sport
+ * @param {string[]} ours markers belonging to this fixture
+ */
+function namesForeignCompetition(norm, words, foreign, ours) {
+  if (!foreign?.length) return false;
+  if (ours.some((m) => marksTitle(norm, words, m))) return false;
+  return foreign.some((m) => marksTitle(norm, words, m));
+}
+
+/**
  * What identifies this competition: distinctive words, and phrases of its name.
  *
  * Exported so the candidate query and the ranker ask the same question of a
@@ -652,7 +691,7 @@ function contradicts(words, team, matched) {
  * @param {Array<{title:string,url:string}>} channels
  */
 export function rankChannelsForFixture(channels, fixture) {
-  const { home, away, eventName, leagueName, leagueAbbr, sport } = fixture ?? {};
+  const { home, away, eventName, leagueName, leagueAbbr, sport, foreignMarkers } = fixture ?? {};
   const certain = [];
   const likely = [];
   const competition = [];
@@ -662,6 +701,14 @@ export function rankChannelsForFixture(channels, fixture) {
   // usually says it ("Major League Baseball"); the sport column always does, and
   // is the reason it is carried in.
   const ourSports = sportsIn(`${leagueName ?? ''} ${sport ?? ''}`);
+
+  // The tags that mean "not this competition". Supplied by the caller from the
+  // leagues table rather than kept as a list here, because the set of leagues is
+  // data that changes and a hardcoded copy of it goes stale silently.
+  const foreign = (foreignMarkers ?? []).map((m) => normaliseTeam(m)).filter((m) => m.length >= 2);
+  const ourMarkers = [normaliseTeam(leagueAbbr ?? ''), ...leagueWords, ...leaguePhrases].filter(
+    Boolean,
+  );
 
   for (const c of channels ?? []) {
     const norm = normaliseTeam(c.title);
@@ -681,7 +728,21 @@ export function rankChannelsForFixture(channels, fixture) {
       // halves and every fixture in that family matches every channel in it.
       const disjoint = h.some((t) => !a.includes(t)) && a.some((t) => !h.includes(t));
       const clean = !contradicts(words, home, h) && !contradicts(words, away, a);
-      if (h.length && a.length && disjoint && clean) {
+      /*
+       * And the title must not have said what it is, if what it said is not this.
+       *
+       * A word per side is a weak claim, and on shared names it is routinely a
+       * false one: Baltimore Orioles at St. Louis Cardinals matched "NFL 07:
+       * Baltimore Ravens vs Arizona Cardinals" on `baltimore` and `cardinals`.
+       * Both words are there and neither team is. The provider's own tag is the
+       * only thing on the line that knows, so it is asked -- but only here, in the
+       * loose tier. A title carrying BOTH full names is a match whatever it is
+       * tagged, and rejecting that would cost a real game to a provider's typo.
+       */
+      const ours =
+        !clashesOnSport(ourSports, words) &&
+        !namesForeignCompetition(norm, words, foreign, ourMarkers);
+      if (h.length && a.length && disjoint && clean && ours) {
         likely.push({ ...c, score: h.length + a.length });
         continue;
       }

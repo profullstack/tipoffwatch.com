@@ -197,6 +197,37 @@ export async function refreshDuePlaylists({ log = console.log, limit = 25 } = {}
 }
 
 /**
+ * The provider tags that mean "some other sport", cached for the process.
+ *
+ * Read from the leagues table rather than written down here: which abbreviation
+ * belongs to which sport is data, it changes as leagues are added, and a copy of
+ * it in code goes stale without anybody noticing. A few hundred rows of two short
+ * columns, so the cache is about not doing it per page view rather than about
+ * size.
+ *
+ * Empty on any failure, and empty is the safe direction: the guard is a veto, so
+ * losing it returns the matcher to the behaviour it had before, rather than
+ * refusing everything.
+ */
+let markerCache = { at: 0, rows: null };
+const MARKER_TTL_MS = 10 * 60_000;
+
+async function foreignMarkersFor(sport) {
+  // No sport on the fixture means nothing can be judged foreign to it. Returning
+  // every marker here would be the veto refusing the whole list.
+  if (!sport) return [];
+
+  if (!markerCache.rows || Date.now() - markerCache.at > MARKER_TTL_MS) {
+    try {
+      markerCache = { at: Date.now(), rows: await q.leagueSportMarkers() };
+    } catch {
+      markerCache = { at: Date.now(), rows: [] };
+    }
+  }
+  return (markerCache.rows ?? []).filter((r) => r.sport !== sport).map((r) => r.abbreviation);
+}
+
+/**
  * Which of this reader's channels is carrying this fixture.
  *
  * Titles are matched with both team names required, so a channel that merely
@@ -305,6 +336,8 @@ export async function ownChannelsForEvent({ userId, event }) {
       // a channel for this competition: "Major League Soccer" and "Major League
       // Baseball" are separated by exactly one word, and this is that word.
       sport: event.sport,
+      // What the provider's own tag would have to say for this NOT to be our game.
+      foreignMarkers: await foreignMarkersFor(event.sport),
     },
   });
 }
@@ -334,6 +367,7 @@ export async function ownChannelsForTeam({ userId, team }) {
       // team page shows, so it is exactly where another sport's channels would be
       // most visible.
       sport: team.sport,
+      foreignMarkers: await foreignMarkersFor(team.sport),
     },
   });
 }
@@ -374,6 +408,7 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
     // See the note in ownChannelsForEvent: the sport is what keeps one league's
     // channels out of another league's tier when their names rhyme.
     sport: event.sport,
+    foreignMarkers: await foreignMarkersFor(event.sport),
   };
 
   /*

@@ -1070,6 +1070,33 @@ export async function recomputeAbbrAmbiguity() {
 }
 
 /**
+ * Every abbreviation that identifies exactly one league, and the sport it plays.
+ *
+ * A provider tags what a slot is: "NFL 07:", "NCAAF 04:", "MLB 03:". That tag is
+ * the only thing on the line that says which sport a title belongs to, and the
+ * matcher needs it -- Baltimore is a Raven and an Oriole, and Cardinals play in
+ * Arizona, St. Louis and Louisville, so "Baltimore Ravens vs Arizona Cardinals"
+ * otherwise reads as a perfectly good Orioles-at-Cardinals match.
+ *
+ * Ambiguous abbreviations are excluded, and they are excluded by the flag that
+ * already exists for it: two leagues answering to "BFC" cannot tell anybody which
+ * sport a title is, and a guess here costs a real channel rather than a chip.
+ * Superseded and inactive rows go too, for the same reason they do there.
+ */
+export async function leagueSportMarkers() {
+  return sql`
+    select distinct upper(abbreviation) as abbreviation, sport
+    from leagues
+    where active
+      and superseded_by is null
+      and abbreviation is not null
+      and length(abbreviation) >= 2
+      and not abbr_ambiguous
+      and sport is not null
+  `;
+}
+
+/**
  * How many leagues are still named after their raw slug.
  *
  * A non-zero count means display names have never been backfilled from the

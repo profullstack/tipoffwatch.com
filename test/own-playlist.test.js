@@ -406,6 +406,52 @@ describe('matching what a provider actually writes', () => {
     expect(r.competition.map((c) => c.url)).toContain('f1tv');
   });
 
+  /*
+   * A word per side is a weak claim, and on shared names it is a false one.
+   *
+   * Reported against /events/266 again after the league-word fix: Baltimore
+   * Orioles at St. Louis Cardinals is the worst fixture in American sport for
+   * this. Baltimore is also a Raven, Cardinals also play in Arizona and
+   * Louisville, and "NFL 07: Baltimore Ravens vs Arizona Cardinals" therefore has
+   * a word for each side of a baseball game and not one of its teams in it.
+   */
+  const collisions = [
+    { title: 'MLB 03 : Baltimore Orioles @ St Louis Cardinals', url: 'mlb' },
+    { title: 'NFL 07: Baltimore Ravens vs Arizona Cardinals', url: 'nfl' },
+    { title: 'NCAAF 04: Louisville Cardinals vs Baltimore', url: 'ncaaf' },
+    { title: 'USA (ESPN 021) | Basketball: Arizona vs Baltimore Cardinals', url: 'hoops' },
+  ];
+  const withMarkers = { ...mlb, foreignMarkers: ['NFL', 'NCAAF', 'NBA', 'NHL', 'MLS'] };
+
+  test('a shared name tagged as another sport is not this game', () => {
+    const r = rankChannelsForFixture(collisions, withMarkers);
+    expect([...r.certain, ...r.likely].map((c) => c.url)).toEqual(['mlb']);
+  });
+
+  test('a sport named in the title is enough on its own', () => {
+    // No markers supplied, so only the sport noun in "Basketball:" can refuse it.
+    const r = rankChannelsForFixture(collisions, mlb);
+    expect(r.likely.map((c) => c.url)).not.toContain('hoops');
+  });
+
+  test('the tag is a veto, never a requirement', () => {
+    // Losing the markers -- an empty table, a failed query -- must return the
+    // matcher to what it did before, not make it refuse everything.
+    const r = rankChannelsForFixture(collisions, mlb);
+    expect(r.certain.map((c) => c.url)).toEqual(['mlb']);
+    expect(r.likely.map((c) => c.url)).toContain('nfl');
+  });
+
+  test('both full names win over any tag the provider put on the line', () => {
+    // A provider filing a baseball game under its football numbering is a typo,
+    // and refusing it would cost a game that is unambiguously right there.
+    const r = rankChannelsForFixture(
+      [{ title: 'NFL 09: Baltimore Orioles vs St. Louis Cardinals', url: 'typo' }],
+      withMarkers,
+    );
+    expect(r.certain.map((c) => c.url)).toEqual(['typo']);
+  });
+
   test('the database is never asked for a word that names no league', () => {
     // The other half of the same bug, and the worse one: the candidate query takes
     // the first 3,000 matching rows in position order, so `%league%` fills the
