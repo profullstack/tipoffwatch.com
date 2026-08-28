@@ -182,7 +182,7 @@ export const Layout = (props) => (
           {props.user ? (
             <a href="/settings">Settings</a>
           ) : (
-            <a class="cta" href="/login">
+            <a class="cta" rel="nofollow" href="/login">
               Sign in
             </a>
           )}
