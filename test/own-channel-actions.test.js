@@ -31,8 +31,13 @@ function fakeDom({ links }) {
 
   const actions = {
     dataset: {},
-    querySelectorAll: (sel) =>
-      sel.includes('playlist.m3u') ? links.filter((l) => l.href.includes('playlist.m3u')) : [],
+    querySelectorAll: (sel) => {
+      if (sel.includes('playlist.m3u')) return links.filter((l) => l.href.includes('playlist.m3u'));
+      if (sel.includes('vlc-x-callback')) {
+        return links.filter((l) => /^(vlc-x-callback|infuse):/.test(l.href));
+      }
+      return [];
+    },
     closest: () => section,
   };
   const section = {
@@ -80,6 +85,7 @@ const linkSet = () => {
     links: [
       { href: '/events/190/playlist.m3u?n=0', remove: () => removed.push('m3u') },
       { href: 'vlc-x-callback://x-callback-url/stream?url=x', remove: () => removed.push('vlc') },
+      { href: 'infuse://x-callback-url/play?url=x', remove: () => removed.push('infuse') },
     ],
   };
 };
@@ -118,12 +124,40 @@ describe('on a phone', () => {
   });
 });
 
+/**
+ * The mirror image, and the half that was missing.
+ *
+ * `vlc-x-callback://` and `infuse://` are the schemes the iOS and Android apps
+ * register. A desktop has no meaning for them: the app opens, is handed the whole
+ * scheme string as its MRL, and reports that it cannot open it -- so the button
+ * looked like it worked and then failed, next to a .m3u that plays fine.
+ */
 describe('on a desktop', () => {
-  test('nothing is touched, because the download works there', () => {
+  test('the .m3u download survives, because it is the one that works there', () => {
+    const { links, removed } = linkSet();
+    run(false, fakeDom({ links }));
+    expect(removed).not.toContain('m3u');
+  });
+
+  test('the app deep links are removed', () => {
+    const { links, removed } = linkSet();
+    run(false, fakeDom({ links }));
+    expect(removed).toEqual(['vlc', 'infuse']);
+  });
+
+  test('no phone hint is added', () => {
+    // "Get VLC if nothing happens when you tap" is advice for a phone.
+    const { links } = linkSet();
+    const dom = fakeDom({ links });
+    run(false, dom);
+    expect(dom.made).toHaveLength(0);
+  });
+
+  test('a second pass over the same row does nothing twice', () => {
     const { links, removed } = linkSet();
     const dom = fakeDom({ links });
     run(false, dom);
-    expect(removed).toEqual([]);
-    expect(dom.made).toHaveLength(0);
+    run(false, dom);
+    expect(removed).toEqual(['vlc', 'infuse']);
   });
 });
