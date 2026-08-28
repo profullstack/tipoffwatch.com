@@ -1760,7 +1760,7 @@ export const WatchPage = ({ user, event, entitlement }) => (
   </Layout>
 );
 
-export const SignIn = ({ mode, sent, next, passwordError }) => (
+export const SignIn = ({ mode, sent, next, passwordError, magicError }) => (
   <Layout title={mode === 'signup' ? 'Create your account' : 'Sign in'}>
     <section class="auth">
       <h1>{mode === 'signup' ? 'Create your account' : 'Sign in'}</h1>
@@ -1776,6 +1776,11 @@ export const SignIn = ({ mode, sent, next, passwordError }) => (
               ? 'Enter your email and we will send you a link. No password to choose.'
               : 'We will email you a link. No password to remember.'}
           </p>
+          {magicError ? (
+            <p class="feedback error" role="status">
+              {magicError}
+            </p>
+          ) : null}
           <form method="post" action="/api/auth/magic">
             <input type="hidden" name="next" value={next ?? '/following'} />
             <label>

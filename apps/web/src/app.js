@@ -24,6 +24,7 @@ import { oneChannelM3u, searchEverything } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
+import { attempt, callerAddress, forgive } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
 
 import { buildFeed } from './lib/rss.js';
@@ -1492,6 +1493,53 @@ app.get('/my/channels/:channelId/stream.ts', async (c) => {
 
 /* -------------------------------------------------------------------- auth -- */
 
+/**
+ * How long to wait, in words somebody can act on.
+ *
+ * "Retry in 3600 seconds" is a number a person has to do arithmetic on while
+ * already annoyed.
+ */
+function waitFor(seconds) {
+  if (seconds < 90) return `${Math.max(seconds, 1)} seconds`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours < 36 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * Escalating backoff in front of one auth route. See `lib/auth-throttle.js`.
+ *
+ * Each route gets its OWN bucket, which is the whole reason `bucket` is a
+ * parameter rather than derived from the path once. The throttled password form
+ * tells people to use a sign-in link instead, so the sign-in link must still be
+ * reachable when it does — sharing one counter across both would make that
+ * advice a lie, and lock somebody out of the account they were trying to reach.
+ *
+ * A caller with no forwarded address is let through untracked rather than
+ * bucketed under a placeholder: behind Railway there is always one, so this only
+ * fires for something reaching the app directly, and lumping those together
+ * would let the first eight of them lock out the rest.
+ */
+function authBackoff(bucket, refuse) {
+  return async (c, next) => {
+    const caller = callerAddress(c);
+    if (!caller) return next();
+
+    const verdict = attempt(`${bucket}:${caller}`);
+    if (verdict.ok) return next();
+
+    console.warn(
+      `[auth] ${bucket} backoff: ${caller} strike ${verdict.strikes}, ${verdict.retryAfter}s`,
+    );
+    c.header('retry-after', String(verdict.retryAfter));
+    // Nothing here is worth a cache entry, and a 429 that got cached would
+    // outlive the lock it was reporting.
+    c.header('cache-control', 'no-store');
+    return refuse(c, verdict.retryAfter);
+  };
+}
+
 app.get('/login', async (c) =>
   c.html(await render(<SignIn mode="login" next={c.req.query('next')} />)),
 );
@@ -1506,6 +1554,22 @@ app.get('/signup', async (c) =>
  * failure is reported as success too. Any difference here turns this endpoint into
  * a way to ask "is this person a user?".
  */
+app.post(
+  '/api/auth/magic',
+  authBackoff('magic', async (c, retryAfter) =>
+    c.req.header('accept')?.includes('application/json')
+      ? c.json({ error: `Too many requests. Try again in ${waitFor(retryAfter)}.` }, 429)
+      : c.html(
+          await render(
+            <SignIn
+              mode="login"
+              magicError={`Too many sign-in links requested from here. Try again in ${waitFor(retryAfter)}.`}
+            />,
+          ),
+          429,
+        ),
+  ),
+);
 app.post('/api/auth/magic', async (c) => {
   const body = await c.req.parseBody();
   const email = String(body.email ?? '')
@@ -1524,6 +1588,17 @@ app.post('/api/auth/magic', async (c) => {
   return c.html(await render(<SignIn mode="login" sent />));
 });
 
+/*
+ * Presenting a token is metered too. Guessing one is 2^256 work so this is not
+ * about the token, but it is the closest thing here to a failed login and it is
+ * a database round trip a stranger can ask for as often as it likes.
+ */
+app.get(
+  '/auth/magic',
+  authBackoff('token', (c, retryAfter) =>
+    c.text(`Too many attempts. Try again in ${waitFor(retryAfter)}.`, 429),
+  ),
+);
 app.get('/auth/magic', async (c) => {
   const token = c.req.query('t');
   if (!token) return c.redirect('/login', 303);
@@ -1543,6 +1618,11 @@ app.get('/auth/magic', async (c) => {
    * It never throws: an invite that cannot be credited must not cost somebody
    * their sign-in.
    */
+  // A link that worked is proof of a mailbox, which is the whole security model
+  // here — so the fumbled ones before it were not an attack.
+  const caller = callerAddress(c);
+  if (caller) forgive(`token:${caller}`);
+
   const code = getCookie(c, invites.INVITE_COOKIE);
   if (code) await invites.claimInvite({ code, user: result.user, created: result.created });
 
@@ -1612,12 +1692,25 @@ app.post('/api/auth/passkey/register/verify', async (c) => {
   return c.json({ ok }, ok ? 200 : 400);
 });
 
+/*
+ * Both halves of the passkey exchange, on one counter. Asking for options is
+ * unauthenticated and writes a challenge to Redis, so it is a free write anybody
+ * can ask for in a loop; the verify next to it is the failed-login equivalent.
+ * One bucket, because the pair is one flow and metering only half of it just
+ * moves the load to the other.
+ */
+const passkeyBackoff = authBackoff('passkey', (c, retryAfter) =>
+  c.json({ error: `Too many attempts. Try again in ${waitFor(retryAfter)}.` }, 429),
+);
+
+app.post('/api/auth/passkey/authenticate/options', passkeyBackoff);
 app.post('/api/auth/passkey/authenticate/options', async (c) => {
   const options = await auth.passkeyAuthenticationOptions();
   await stashChallenge(c, options.challenge);
   return c.json(options);
 });
 
+app.post('/api/auth/passkey/authenticate/verify', passkeyBackoff);
 app.post('/api/auth/passkey/authenticate/verify', async (c) => {
   const expectedChallenge = await takeChallenge(c);
   if (!expectedChallenge) return c.json({ error: 'challenge expired' }, 400);
@@ -1627,6 +1720,10 @@ app.post('/api/auth/passkey/authenticate/verify', async (c) => {
     userAgent: c.req.header('user-agent'),
   });
   if (!result) return c.json({ error: 'rejected' }, 400);
+
+  const caller = callerAddress(c);
+  if (caller) forgive(`passkey:${caller}`);
+
   c.header('set-cookie', auth.sessionCookie(result.sessionId));
   return c.json({ ok: true });
 });
@@ -1644,6 +1741,21 @@ app.post('/api/auth/passkey/authenticate/verify', async (c) => {
  * the emailed link -- which is unaffected by the counter, so guessing at somebody's
  * address can never lock them out of their own account.
  */
+/*
+ * The backoff goes in FRONT of the handler, which is the entire point: refusing
+ * here costs a map lookup, where letting it through costs an argon2id verify
+ * that was sized to be expensive. A limiter that runs after the hash meters the
+ * attack without stopping it paying for itself.
+ */
+app.post(
+  '/api/auth/password',
+  authBackoff('password', async (c, retryAfter) => {
+    const message = `Too many sign-in attempts from here. Try again in ${waitFor(retryAfter)}, or use a sign-in link — that still works.`;
+    return c.req.header('accept')?.includes('application/json')
+      ? c.json({ error: message }, 429)
+      : c.html(await render(<SignIn mode="login" passwordError={message} />), 429);
+  }),
+);
 app.post('/api/auth/password', async (c) => {
   const body = await c.req.parseBody();
   const email = String(body.email ?? '');
@@ -1667,6 +1779,10 @@ app.post('/api/auth/password', async (c) => {
       401,
     );
   }
+
+  // Whoever just proved they hold the password is not who the backoff is for.
+  const caller = callerAddress(c);
+  if (caller) forgive(`password:${caller}`);
 
   c.header('set-cookie', auth.sessionCookie(result.sessionId));
   return respond(c, { redirectTo: next });
