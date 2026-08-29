@@ -139,6 +139,47 @@ export const config = {
        * worth less than both. Ninety-five leaves five for a manual poke.
        */
       dailyBudget: num('LIVETENNIS_DAILY_BUDGET', 95),
+      /**
+       * The point-by-point log, which is metered separately and deliberately.
+       *
+       * `/history/matches/{id}` returns a match's whole tape -- every point, with
+       * the server and the running score -- and it answers for a match that is
+       * still being played. It is the play-by-play tennis was missing.
+       *
+       * It also costs ONE REQUEST PER MATCH, against a budget that buys 100 a day
+       * for everything. There were 14 tennis matches in progress at once on an
+       * ordinary Saturday; taping all of them once is a seventh of the day's
+       * allowance. So the tape gets a sub-budget of its own and cannot touch the
+       * scores': a log is worth having, and not at the price of the scoreboard
+       * that every fixture depends on.
+       *
+       * What this buys, and what it does not: the tape is COMPLETE up to the
+       * moment it is read, so one request gives the entire match so far rather
+       * than a slice. A log therefore lags by up to `tapeMinIntervalSeconds` while
+       * a match is on, and is complete and permanent once it ends. On this budget
+       * that is the honest trade -- a complete record slightly late, rather than a
+       * live ticker that cannot be afforded.
+       */
+      tapeBudget: num('LIVETENNIS_TAPE_BUDGET', 30),
+      /**
+       * Which tours get a log at all.
+       *
+       * ITF is most of the calendar by volume -- 16 of the 14-match sample -- and
+       * least of the interest, so taping it would spend the whole allowance on
+       * matches nobody opened. Widen this the moment the budget does.
+       */
+      tapeTours: opt('LIVETENNIS_TAPE_TOURS', 'atp,wta')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+      /**
+       * How long before the same match may be re-taped.
+       *
+       * The plays rail asks every two minutes, which at one request per match
+       * would empty the day's budget in an hour. Twenty minutes is the cooldown
+       * that makes the sub-budget above last a day across a handful of matches.
+       */
+      tapeMinIntervalSeconds: num('LIVETENNIS_TAPE_MIN_INTERVAL_SECONDS', 1200),
     },
     /**
      * Residential proxy, used only when the provider blocks us directly.
