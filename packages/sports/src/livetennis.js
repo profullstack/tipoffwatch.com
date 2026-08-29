@@ -122,24 +122,25 @@ export async function listLeagues() {
  */
 
 /** Requests spent today, reset when the UTC day rolls over -- as the provider counts it. */
-let spend = { day: '', calls: 0 };
+let spend = { day: '', calls: 0, tape: 0 };
 
 const utcDay = () => new Date().toISOString().slice(0, 10);
 
 function budgetRemaining() {
   const day = utcDay();
-  if (spend.day !== day) spend = { day, calls: 0 };
+  if (spend.day !== day) spend = { day, calls: 0, tape: 0 };
   return config.sports.livetennis.dailyBudget - spend.calls;
 }
 
 /** Visible for tests, and for a caller that wants to force a fresh read. */
 export function resetBudget() {
-  spend = { day: '', calls: 0 };
+  spend = { day: '', calls: 0, tape: 0 };
   snapshots.clear();
+  taped.clear();
 }
 
 /** What the adapter has spent today, for the sync log. */
-export const spentToday = () => ({ day: spend.day, calls: spend.calls });
+export const spentToday = () => ({ day: spend.day, calls: spend.calls, tape: spend.tape });
 
 class BudgetExhausted extends Error {
   constructor(budget) {
@@ -148,12 +149,13 @@ class BudgetExhausted extends Error {
   }
 }
 
-async function getJson(path, { timeoutMs = 20000 } = {}) {
+async function getJson(path, { timeoutMs = 20000, tape = false } = {}) {
   const key = config.sports.livetennis.apiKey;
   if (!key) throw new Error('LIVETENNIS_API_KEY is not set');
 
   if (budgetRemaining() <= 0) throw new BudgetExhausted(config.sports.livetennis.dailyBudget);
   spend.calls++;
+  if (tape) spend.tape++;
 
   const res = await fetch(`${BASE}${path}`, {
     signal: AbortSignal.timeout(timeoutMs),
@@ -569,4 +571,229 @@ export async function fetchSchedule({ providerKey, from, to, log = console.warn 
     league: meta ? { name: meta.name, abbreviation: meta.abbreviation, logoUrl: null } : null,
     events: matches,
   };
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * The point-by-point log
+ * ---------------------------------------------------------------------------
+ */
+
+/** match id -> when it was last taped, so the plays rail cannot re-ask every tick. */
+const taped = new Map();
+
+/** Ordered so "did the score go up" is a comparison rather than a special case. */
+const POINT_ORDER = new Map([
+  ['0', 0],
+  ['15', 1],
+  ['30', 2],
+  ['40', 3],
+  ['A', 4],
+  ['AD', 4],
+]);
+
+/**
+ * A tiebreak counts in plain numbers, a game counts 15/30/40/AD.
+ *
+ * Returns null rather than guessing: an unrecognised value must not read as a point
+ * going backwards, which is how a log ends up narrating a rally that never happened.
+ */
+function pointValue(raw, tiebreak) {
+  const v = String(raw ?? '').toUpperCase();
+  if (tiebreak) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return POINT_ORDER.has(v) ? POINT_ORDER.get(v) : null;
+}
+
+const gamesIn = (entry, side) => {
+  const g = entry?.games?.[side];
+  return Array.isArray(g) ? g.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) : 0;
+};
+
+const setsOf = (entry, side) => {
+  const s = entry?.sets?.[side];
+  return Number.isFinite(s) ? s : 0;
+};
+
+/** The set being played, which is how far the per-set list has reached. */
+const setNumber = (entry) => entry?.games?.[0]?.length ?? null;
+
+/**
+ * Two consecutive tape entries -> what happened between them, in words.
+ *
+ * The tape is a series of SNAPSHOTS, not a list of described events: each entry is
+ * the whole score at a moment. So the narrative is the difference between two of
+ * them, read in the order tennis resolves -- a set, else a game, else a point. Read
+ * in any other order, the game that wins a set is narrated as an ordinary point.
+ *
+ * Side 0 is p1, which this adapter renders as the AWAY side, and every score below
+ * is written away-home to match the rest of the site.
+ */
+function describe(prev, cur, names) {
+  const set = setNumber(cur);
+  const base = {
+    providerPlayId: String(cur.timestamp),
+    sequence: Number.isFinite(Date.parse(cur.timestamp)) ? Date.parse(cur.timestamp) : null,
+    awayScore: setsOf(cur, 0),
+    homeScore: setsOf(cur, 1),
+    periodNumber: set,
+    periodLabel: set ? `Set ${set}` : null,
+  };
+
+  // A set. Read first, because the game that won it also moved the game count.
+  for (const side of [0, 1]) {
+    if (setsOf(cur, side) > setsOf(prev, side)) {
+      const finished = prev.games?.[0]?.length ?? set;
+      /*
+       * The finished set's games are read from `cur`, not from `prev`.
+       *
+       * The game that wins a set and the set itself land in the SAME tape entry, so
+       * `prev` is one game short of the result -- it reported "takes set 1 6-5" for
+       * a set won 7-5, which is a wrong scoreline in a permanent record rather than
+       * merely a late one. `cur` keeps every completed set in its per-set list
+       * (games [[7,3],[5,2]] is 7-5 then 3-2), so the finished set is still there
+       * to read after the new one has been appended.
+       */
+      const a = cur.games?.[0]?.[finished - 1];
+      const b = cur.games?.[1]?.[finished - 1];
+      const line = Number.isFinite(a) && Number.isFinite(b) ? ` — ${a}-${b}` : '';
+      return {
+        ...base,
+        text: `${names[side]} takes set ${finished}${line}`,
+        scoring: true,
+        playType: 'set',
+      };
+    }
+  }
+
+  /*
+   * More than one game since the last entry, so nobody can be said to have held or
+   * broken anything.
+   *
+   * The tape is sampled rather than exhaustive -- its own meta calls the coverage
+   * "partial" -- so two entries can straddle several games. `server` belongs to the
+   * FIRST of those games, and spending it on a line that covers four is how a log
+   * ends up asserting a break that never happened. The score is still worth saying;
+   * the story is not ours to tell.
+   */
+  const gained = gamesIn(cur, 0) - gamesIn(prev, 0) + (gamesIn(cur, 1) - gamesIn(prev, 1));
+  if (gained > 1) {
+    const idx = (cur.games?.[0]?.length ?? 1) - 1;
+    const a = cur.games?.[0]?.[idx];
+    const b = cur.games?.[1]?.[idx];
+    return {
+      ...base,
+      text: Number.isFinite(a) && Number.isFinite(b) ? `Games — ${a}-${b}` : 'Games',
+      scoring: true,
+      playType: 'games',
+    };
+  }
+
+  // A game. Whoever was serving is the difference between a hold and a break, which
+  // is the single most-read fact in a tennis log.
+  for (const side of [0, 1]) {
+    if (gamesIn(cur, side) > gamesIn(prev, side)) {
+      const server = prev.server === 1 ? 0 : prev.server === 2 ? 1 : null;
+      const verb = server === null ? 'wins the game' : server === side ? 'holds' : 'breaks';
+      const idx = (cur.games?.[0]?.length ?? 1) - 1;
+      const a = cur.games?.[0]?.[idx];
+      const b = cur.games?.[1]?.[idx];
+      const line = Number.isFinite(a) && Number.isFinite(b) ? ` — ${a}-${b}` : '';
+      return {
+        ...base,
+        text: `${names[side]} ${verb}${line}`,
+        scoring: true,
+        playType: verb === 'breaks' ? 'break' : 'game',
+      };
+    }
+  }
+
+  // A point, attributed to whichever side's went up. Unreadable on both sides means
+  // the tape moved in a way this cannot describe, and saying nothing beats inventing
+  // it.
+  const tb = cur.is_tiebreak === true;
+  for (const side of [0, 1]) {
+    const before = pointValue(prev.points?.[side], prev.is_tiebreak === true);
+    const after = pointValue(cur.points?.[side], tb);
+    if (before === null || after === null) continue;
+    if (after > before) {
+      const pts = `${cur.points?.[0]}-${cur.points?.[1]}`;
+      return {
+        ...base,
+        text: `${names[side]} — ${tb ? `tiebreak ${pts}` : pts}`,
+        scoring: false,
+        playType: tb ? 'tiebreak-point' : 'point',
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The whole match so far, as a play-by-play log.
+ *
+ * `/history/matches/{id}` answers for a match that is still being played -- verified
+ * against a live Challenger match: 85 entries, the last one seconds old -- and it
+ * returns the tape from the FIRST point rather than a slice. That shape is the only
+ * reason a log is affordable here: one request is the complete match, so a low poll
+ * rate costs lateness rather than missing points, and the read after a match ends
+ * leaves a permanent, whole record.
+ *
+ * Three gates, cheapest first, because the point of each is to avoid a request:
+ *
+ *   1. The tour has to be one we tape at all. ITF is most of the calendar by volume
+ *      and the least of the interest; taping it would spend the day on matches
+ *      nobody opened.
+ *   2. The match must not have been taped recently. The plays rail asks every two
+ *      minutes, and at one request per match that alone is 700 a day.
+ *   3. The tape's own sub-budget must have something left, and it can never reach
+ *      into the scores' -- a log is worth having, and not at the price of the
+ *      scoreboard every fixture depends on.
+ *
+ * Returns [] rather than throwing on every refusal, upstream failures included: the
+ * caller stamps the row and moves on, which is right for something that is an
+ * addition to a fixture rather than the fixture itself.
+ */
+export async function fetchPlays(leagueKey, eventProviderKey, { log = console.warn } = {}) {
+  const cfg = config.sports.livetennis;
+  const tour = String(leagueKey ?? '').toLowerCase();
+  if (!cfg.tapeTours.includes(tour)) return [];
+
+  const id = String(eventProviderKey ?? '')
+    .split('/')
+    .pop();
+  if (!id) return [];
+
+  const last = taped.get(id) ?? 0;
+  if (Date.now() - last < cfg.tapeMinIntervalSeconds * 1000) return [];
+  if (spend.tape >= cfg.tapeBudget) return [];
+
+  let body;
+  try {
+    // Stamped BEFORE the await, not after: two overlapping ticks on one match would
+    // otherwise both clear the cooldown and both spend a request on it.
+    taped.set(id, Date.now());
+    body = await getJson(`/history/matches/${id}`, { tape: true });
+  } catch (err) {
+    log(`[livetennis] tape for ${id} unavailable (${err?.message ?? err})`);
+    return [];
+  }
+
+  const data = body?.data ?? body;
+  const tape = Array.isArray(data?.tape) ? data.tape : [];
+  if (tape.length < 2) return [];
+
+  const players = data?.match?.players ?? {};
+  const names = [players.p1?.name ?? 'Away', players.p2?.name ?? 'Home'];
+
+  const out = [];
+  for (let i = 1; i < tape.length; i++) {
+    if (!tape[i]?.timestamp) continue;
+    const play = describe(tape[i - 1], tape[i], names);
+    if (play) out.push(play);
+  }
+  return out;
 }
