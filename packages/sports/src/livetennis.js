@@ -392,8 +392,6 @@ function normaliseMatch(m) {
 
   return {
     providerKey: `${name}/${tour}/${m.id}`,
-    tour,
-    tournamentId: m.tournament_id ? String(m.tournament_id) : null,
     // Not persisted. Used to settle which copy of a fixture wins when it appears in
     // more than one snapshot -- see the merge in fetchSchedule.
     updatedAt: m.updated_at ? Date.parse(m.updated_at) : 0,
@@ -455,60 +453,32 @@ function wins(next, held) {
   return next.updatedAt >= held.updatedAt;
 }
 
-/**
- * The tournament as a fixture in its own right.
+/*
+ * No tournament rows, deliberately -- unlike the ESPN adapter.
  *
- * Same reasoning as the ESPN adapter: a draw is published a day or two out, so a
- * tournament that has not been drawn fans out to nothing and the US Open is
- * invisible until the week it starts. It is also the row somebody actually wants in
- * their calendar -- "Wimbledon", not "Alcaraz v Sinner, second round, Tuesday".
+ * ESPN stores the tournament itself alongside its matches, for a good reason: its
+ * scoreboard lists a fortnight well before the draw exists, so without that row the
+ * US Open is invisible until the week it starts, and "Wimbledon" is the thing
+ * somebody wants in a calendar rather than "Alcaraz v Sinner, second round".
  *
- * Synthesised from the matches rather than fetched: `/tournaments` has no date
- * filter and 10,222 rows, so asking for it would cost more of the daily budget than
- * the live scores do, to learn something the match rows already say.
+ * That reason does not survive here. This provider publishes matches about two days
+ * out and nothing beyond, so a tournament row synthesised from them cannot exist
+ * before the tournament does -- it fails at the one job it was for. What it does
+ * instead is three kinds of wrong, all confirmed against the live API:
+ *
+ *   - It duplicates. `tournament_id` is per DRAW, not per tournament, so
+ *     Winston-Salem arrives as t1216 and t1214 and lands twice in one calendar.
+ *   - Its start time drifts. The earliest match still inside the window moves
+ *     forward every day, so a fortnight-long event keeps announcing that it starts
+ *     today.
+ *   - It buries the fixtures. ITF returned 48 tournaments against 72 matches; the
+ *     calendar becomes mostly headers.
+ *
+ * Nothing is lost by leaving them out: the tournament name is on every match as its
+ * venue, which is where tennis puts it anyway. If a tournament row is wanted later
+ * it should come from the provider's own /tournaments endpoint with real dates, not
+ * be inferred from a two-day window.
  */
-function tournamentRow(tour, tournamentId, matches) {
-  const named = matches.find((m) => m.venue);
-  if (!named) return null;
-
-  const startsAt = matches.reduce(
-    (min, m) => (m.startsAt < min ? m.startsAt : min),
-    matches[0].startsAt,
-  );
-
-  // In progress if anything in the draw is; over only once nothing is left to play.
-  const state = matches.some((m) => m.state === 'in')
-    ? 'in'
-    : matches.every((m) => m.state === 'post')
-      ? 'post'
-      : 'pre';
-
-  const surface = matches.find((m) => m.venueCity)?.venueCity ?? null;
-
-  return {
-    providerKey: `${name}/${tour}/t${tournamentId}`,
-    startsAt,
-    state,
-    statusDetail: `${matches.length} match${matches.length === 1 ? '' : 'es'}`,
-    name: named.venue,
-    shortName: null,
-    venue: named.venue,
-    venueCity: surface,
-    venueRegion: null,
-    neutralSite: true,
-    broadcast: null,
-    broadcastNames: [],
-    attendance: null,
-    period: null,
-    displayClock: null,
-    home: null,
-    away: null,
-    homeScore: null,
-    awayScore: null,
-    homeRecord: null,
-    awayRecord: null,
-  };
-}
 
 /*
  * ---------------------------------------------------------------------------
@@ -549,21 +519,8 @@ export async function fetchSchedule({ providerKey, from, to, log = console.warn 
 
   const matches = [...byKey.values()];
 
-  // One row per tournament alongside the matches, so a draw is followable before it
-  // is drawn and a fortnight reads as one thing in a calendar.
-  const draws = new Map();
-  for (const m of matches) {
-    if (!m.tournamentId) continue;
-    const list = draws.get(m.tournamentId) ?? [];
-    list.push(m);
-    draws.set(m.tournamentId, list);
-  }
-  const tournaments = [...draws.entries()]
-    .map(([id, list]) => tournamentRow(tour, id, list))
-    .filter(Boolean);
-
   return {
     league: meta ? { name: meta.name, abbreviation: meta.abbreviation, logoUrl: null } : null,
-    events: [...tournaments, ...matches],
+    events: matches,
   };
 }

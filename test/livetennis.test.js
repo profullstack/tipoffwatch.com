@@ -283,26 +283,20 @@ describe('tours', () => {
   });
 });
 
-describe('the tournament as a fixture in its own right', () => {
-  test('a draw is followable as one thing', async () => {
+describe('what is deliberately not stored', () => {
+  test('no tournament rows are synthesised from a two-day window', async () => {
+    // The ESPN adapter does store the tournament itself, and should: its scoreboard
+    // lists a fortnight before the draw exists. This provider publishes about two
+    // days out, so a tournament inferred from its matches cannot exist before the
+    // tournament does -- and arrives duplicated (tournament_id is per DRAW:
+    // Winston-Salem is both t1216 and t1214) with a start time that moves forward
+    // every day. The name is on every match as its venue instead.
     mockProvider([liveDoubles, upcomingSingles]);
-    const { tournaments } = await schedule('atp');
+    const { tournaments, matches } = await schedule('atp');
 
-    expect(tournaments.length).toBe(1);
-    const [t] = tournaments;
-    expect(t.name).toBe('Winston-Salem');
-    expect(t.providerKey).toBe('livetennis/atp/t911');
-    // The earliest match in the draw, so the row sorts where the fortnight starts.
-    expect(t.startsAt.toISOString()).toBe('2026-08-29T09:00:00.000Z');
-    // In progress while anything in it is.
-    expect(t.state).toBe('in');
-    expect(t.home).toBe(null);
-  });
-
-  test('it is over only once nothing is left to play', async () => {
-    mockProvider([finishedSingles]);
-    const [t] = (await schedule('itf')).tournaments;
-    expect(t.state).toBe('post');
+    expect(tournaments).toEqual([]);
+    expect(matches.length).toBe(2);
+    expect(matches.map((m) => m.venue)).toEqual(['Winston-Salem', 'Winston-Salem']);
   });
 });
 
