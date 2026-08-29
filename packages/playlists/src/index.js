@@ -3,6 +3,7 @@ import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
+  channelMatchesName,
   MAX_CHANNELS,
   marketsWithOwnChannels,
   matchTerms,
@@ -440,8 +441,46 @@ export async function ownChannelsForTeam({ userId, team }) {
  *
  * @param {{viewerId: string|null, event: object}} args
  */
+/**
+ * Who a provider says is carrying this fixture, as a flat list of names.
+ *
+ * The view has its own parser for the same column, because it renders the markets
+ * as a picker and needs the countries; this wants only the names, and wants them
+ * without importing the view. `broadcast_markets` arrives as jsonb or as the
+ * string of it depending on the path, and the flat `broadcast` column is the
+ * fallback for a row written before the markets existed.
+ *
+ * @param {object} event
+ */
+export function broadcastersFor(event) {
+  const raw = event?.broadcast_markets;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (Array.isArray(parsed)) {
+    const names = parsed.flatMap((m) => (Array.isArray(m?.channels) ? m.channels : []));
+    if (names.length) return [...new Set(names.filter(Boolean))];
+  }
+  return [
+    ...new Set(
+      String(event?.broadcast ?? '')
+        .split(',')
+        .map((n) => n.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** How many stations of one network to offer. The same cap the owner's own page uses. */
+const SHARED_PER_NETWORK = 3;
+
 export async function sharedChannelsForEvent({ viewerId, event }) {
-  const none = { channels: [], owners: 0 };
+  const none = { channels: [], network: [], owners: 0 };
   if (!config.playlists.enabled || !viewerId) return none;
 
   const fixture = {
@@ -467,12 +506,26 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
    * which reads exactly like sharing being broken. The count comes back separately
    * so an empty result can say which kind of empty it is.
    */
+  /*
+   * The broadcaster is asked for by name as well, which is the whole point of the
+   * network tier below: a national game reaches a list as "IL | Chicago | NBC
+   * (WMAQ)" and nothing about that title says San José State. Its own words have to
+   * be in the query or the row is never fetched to be matched.
+   */
+  const broadcasters = broadcastersFor(event);
+  const terms = [
+    ...new Set([
+      ...matchTerms(fixture),
+      ...broadcasters.flatMap((name) => matchTerms({ eventName: name })),
+    ]),
+  ];
+
   const [channelCount, rows] = await Promise.all([
     q.sharedChannelCount({ viewerId }),
-    q.sharedPlaylistCandidates({ viewerId, terms: matchTerms(fixture) }),
+    q.sharedPlaylistCandidates({ viewerId, terms }),
   ]);
   if (channelCount === 0) return none;
-  if (rows.length === 0) return { channels: [], owners: 0, channelCount };
+  if (rows.length === 0) return { channels: [], network: [], owners: 0, channelCount };
 
   const ranked = rankChannelsForFixture(
     rows.map((r) => ({ id: r.id, title: r.title, url: r.stream_url })),
@@ -483,6 +536,39 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
   // The confident ones, then the likely ones, then the competition channels --
   // the same order the reader's own section uses, so the two read the same way.
   const flat = [...ranked.certain, ...ranked.likely, ...ranked.competition];
+  const claimed = new Set(flat.map((m) => m.id));
+
+  /*
+   * The network carrying it, which nothing above could ever have found.
+   *
+   * Everything else here matches a channel against the FIXTURE -- its teams, its
+   * league, its own name -- and a national broadcast has none of those in its
+   * title. This asks the other question instead: is this row the broadcaster the
+   * listing named? The owner's own page has answered it since the market picker
+   * learned to, and a shared list was the one place still matching on the matchup
+   * alone, so a game on NBC came back empty for everybody but the list's owner.
+   *
+   * Capped per network rather than overall, because one network is hundreds of
+   * local stations -- offering all 212 NBC affiliates is not an answer.
+   */
+  const network = broadcasters.flatMap((name) =>
+    rows
+      .filter((r) => !claimed.has(r.id) && channelMatchesName(r.title, name))
+      // The plainest title first, the same tiebreak the rest of this file uses: a
+      // provider gives the primary the shortest name.
+      .sort((a, b) => a.title.length - b.title.length)
+      .slice(0, SHARED_PER_NETWORK)
+      .map((r) => ({
+        id: r.id,
+        title: r.title,
+        group: r.group_title ?? null,
+        ownerId: r.owner_id,
+        ownerLabel: r.owner_label,
+        // Which listing this row answers, so the page can say "NBC" rather than
+        // leaving the reader to infer it from a call sign.
+        name,
+      })),
+  );
 
   const channels = flat
     .map((m) => {
@@ -502,7 +588,12 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
     .filter(Boolean)
     .slice(0, 10);
 
-  return { channels, owners: new Set(channels.map((c) => c.ownerId)).size, channelCount };
+  return {
+    channels,
+    network,
+    owners: new Set([...channels, ...network].map((c) => c.ownerId)).size,
+    channelCount,
+  };
 }
 
 /**

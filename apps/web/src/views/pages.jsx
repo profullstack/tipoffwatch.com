@@ -1753,7 +1753,7 @@ export const EventPage = ({
       {sharedChannels?.channelCount > 0 ? (
         <section class="own-line shared-line" data-player-src={assetUrl('vendor-mpegts.js')}>
           <h2>Shared with you</h2>
-          {sharedChannels.channels.length > 0 ? (
+          {sharedChannels.channels.length > 0 || sharedChannels.network?.length ? (
             <>
               <p class="muted small">
                 From {sharedChannels.owners === 1 ? 'a list' : `${sharedChannels.owners} lists`}{' '}
@@ -1761,11 +1761,35 @@ export const EventPage = ({
                 you never get the address — and one person at a time, because that is what a
                 provider line allows. See <a href="/shared">whose lists are open</a>.
               </p>
-              <ul class="own-channels">
-                {sharedChannels.channels.map((ch) => (
-                  <SharedChannelRow ch={ch} />
-                ))}
-              </ul>
+              {sharedChannels.channels.length > 0 ? (
+                <ul class="own-channels">
+                  {sharedChannels.channels.map((ch) => (
+                    <SharedChannelRow ch={ch} />
+                  ))}
+                </ul>
+              ) : null}
+
+              {/* The network carrying it, which is a different claim from a channel
+                  that names the fixture and is worded as one. A local NBC station
+                  is showing this game at kickoff and something else either side of
+                  it, so it is not "here is your game" the way an event slot is. */}
+              {sharedChannels.network?.length ? (
+                <>
+                  <p class="muted small">
+                    {sharedChannels.channels.length ? 'Also on ' : 'On '}
+                    {[...new Set(sharedChannels.network.map((ch) => ch.name))].join(' · ')} — the
+                    network carrying it
+                    {event.broadcast_country ? ` in ${event.broadcast_country}` : ''}. These are its
+                    local stations on a shared list, so they have this game at kickoff rather than
+                    all day.
+                  </p>
+                  <ul class="own-channels">
+                    {sharedChannels.network.map((ch) => (
+                      <SharedChannelRow ch={ch} />
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </>
           ) : (
             /*
