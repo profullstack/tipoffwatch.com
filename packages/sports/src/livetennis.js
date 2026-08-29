@@ -124,23 +124,54 @@ export async function listLeagues() {
 /** Requests spent today, reset when the UTC day rolls over -- as the provider counts it. */
 let spend = { day: '', calls: 0, tape: 0 };
 
+/**
+ * What the provider says the ceiling is, learned rather than assumed.
+ *
+ * Null until `/usage` has been read. Used to clamp our own configured budget: a
+ * `LIVETENNIS_DAILY_BUDGET` above the plan's real allowance is not a budget, it is
+ * a promise nobody is keeping.
+ */
+let providerPerDay = null;
+
+/** Whether today's count has been seeded from the provider, and the read in flight. */
+let seeded = { day: '', inflight: null };
+
 const utcDay = () => new Date().toISOString().slice(0, 10);
 
-function budgetRemaining() {
+/** The lower of what we asked for and what the plan actually allows. */
+function effectiveBudget() {
+  const configured = config.sports.livetennis.dailyBudget;
+  return providerPerDay === null ? configured : Math.min(configured, providerPerDay);
+}
+
+function rollDay() {
   const day = utcDay();
   if (spend.day !== day) spend = { day, calls: 0, tape: 0 };
-  return config.sports.livetennis.dailyBudget - spend.calls;
+  return day;
+}
+
+function budgetRemaining() {
+  rollDay();
+  return effectiveBudget() - spend.calls;
 }
 
 /** Visible for tests, and for a caller that wants to force a fresh read. */
 export function resetBudget() {
   spend = { day: '', calls: 0, tape: 0 };
+  providerPerDay = null;
+  seeded = { day: '', inflight: null };
   snapshots.clear();
   taped.clear();
 }
 
 /** What the adapter has spent today, for the sync log. */
-export const spentToday = () => ({ day: spend.day, calls: spend.calls, tape: spend.tape });
+export const spentToday = () => ({
+  day: spend.day,
+  calls: spend.calls,
+  tape: spend.tape,
+  budget: effectiveBudget(),
+  seeded: seeded.day === spend.day,
+});
 
 class BudgetExhausted extends Error {
   constructor(budget) {
@@ -149,13 +180,10 @@ class BudgetExhausted extends Error {
   }
 }
 
-async function getJson(path, { timeoutMs = 20000, tape = false } = {}) {
+/** The HTTP call itself, with no budget accounting -- see getJson for that. */
+async function rawGet(path, { timeoutMs = 20000 } = {}) {
   const key = config.sports.livetennis.apiKey;
   if (!key) throw new Error('LIVETENNIS_API_KEY is not set');
-
-  if (budgetRemaining() <= 0) throw new BudgetExhausted(config.sports.livetennis.dailyBudget);
-  spend.calls++;
-  if (tape) spend.tape++;
 
   const res = await fetch(`${BASE}${path}`, {
     signal: AbortSignal.timeout(timeoutMs),
@@ -176,6 +204,65 @@ async function getJson(path, { timeoutMs = 20000, tape = false } = {}) {
     throw err;
   }
   return res.json();
+}
+
+/**
+ * Ask the provider what we have already spent today, once per process per day.
+ *
+ * The counter above lives in memory, and that was a real hole rather than a
+ * theoretical one: every deploy restarts the process, so the count went back to
+ * zero while the provider kept counting. On a day with four deploys the adapter
+ * believed it had spent nothing while the provider had it at 65 of 100 -- so the
+ * guard could not have stopped us crossing the real limit, which is 429s and
+ * frozen scores rather than a graceful stop.
+ *
+ * `/usage` reports `today.calls` and `limits.per_day`, so the truth is one request
+ * away. That request is worth it exactly once per boot: it converts a guess into
+ * the provider's own number, and it also teaches us the plan's real ceiling, so
+ * upgrading the key needs no redeploy to be believed.
+ *
+ * Deliberately not fatal. If `/usage` fails we fall back to counting locally from
+ * zero, which is the old behaviour -- being unable to ASK how much is left is no
+ * reason to stop working, and a provider that is down is not a budget problem.
+ */
+async function ensureSeeded() {
+  const day = rollDay();
+  if (seeded.day === day) return;
+  if (seeded.inflight) return seeded.inflight;
+
+  seeded.inflight = (async () => {
+    try {
+      const body = await rawGet('/usage');
+      const used = body?.today?.calls;
+      const perDay = body?.limits?.per_day;
+      if (Number.isFinite(perDay) && perDay > 0) providerPerDay = perDay;
+      if (Number.isFinite(used)) {
+        // +1 for this very request, and never downward: a snapshot the provider
+        // took a moment ago must not erase spending we know about since.
+        spend.calls = Math.max(spend.calls, used + 1);
+      } else {
+        spend.calls += 1;
+      }
+      seeded = { day, inflight: null };
+    } catch {
+      // Leave `seeded.day` unset so a later call tries again -- but clear the
+      // in-flight promise, or every subsequent request would await a settled
+      // failure for the rest of the day.
+      seeded = { day: '', inflight: null };
+    }
+  })();
+
+  return seeded.inflight;
+}
+
+async function getJson(path, { timeoutMs = 20000, tape = false } = {}) {
+  await ensureSeeded();
+
+  if (budgetRemaining() <= 0) throw new BudgetExhausted(effectiveBudget());
+  spend.calls++;
+  if (tape) spend.tape++;
+
+  return rawGet(path, { timeoutMs });
 }
 
 /**

@@ -67,9 +67,22 @@ afterAll(() => {
   globalThis.fetch = realFetch;
 });
 
+/**
+ * `requests` counts TAPE reads only.
+ *
+ * The adapter seeds its day's count from /usage once per process, so that call is
+ * answered here and kept out of the tally -- otherwise every assertion about what
+ * the budget paid for is off by one for a reason that has nothing to do with tapes.
+ */
 const mock = (payload = body, { status = 200 } = {}) => {
   globalThis.fetch = async (url) => {
-    requests.push(String(url).split('/api/public/v1')[1]);
+    const path = String(url).split('/api/public/v1')[1];
+    if (path.startsWith('/usage')) {
+      return new Response(JSON.stringify({ today: { calls: 0 }, limits: { per_day: 100 } }), {
+        status: 200,
+      });
+    }
+    requests.push(path);
     return new Response(JSON.stringify(payload), { status });
   };
 };
