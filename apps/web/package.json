@@ -9,6 +9,7 @@
     "build:client": "bun build-client.js"
   },
   "dependencies": {
+    "@profullstack/player": "0.3.1",
     "@simplewebauthn/browser": "^13.2.0",
     "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
