@@ -135,9 +135,16 @@ const realFetch = globalThis.fetch;
  * `status` decides which list a row belongs to, the same way the provider does, so
  * a fixture only has to be written once to appear in the right place.
  */
-function mockProvider(rows, { fail = null } = {}) {
+function mockProvider(rows, { fail = null, used = 0, perDay = 100 } = {}) {
   globalThis.fetch = async (url) => {
     const path = String(url).replace('https://api.livetennisapi.com/api/public/v1', '');
+    // Seeded once per process from the provider's own count; not a list read, and
+    // deliberately not counted as one.
+    if (path.startsWith('/usage')) {
+      return new Response(JSON.stringify({ today: { calls: used }, limits: { per_day: perDay } }), {
+        status: 200,
+      });
+    }
     calls.push(path);
     if (fail?.(path)) return new Response('{"error":"upgrade_required"}', { status: 403 });
 
@@ -327,7 +334,11 @@ describe('the request budget, which shapes everything', () => {
 
     // live, upcoming and recent -- once each, not once per tour.
     expect(calls.length).toBe(3);
-    expect(livetennis.spentToday().calls).toBe(3);
+    // Four against the budget, not three: seeding the day's count from /usage is
+    // itself a request the provider charges for. Once per process, and the price of
+    // a guard that survives a deploy.
+    expect(livetennis.spentToday().calls).toBe(4);
+    expect(livetennis.spentToday().seeded).toBe(true);
   });
 
   test('a snapshot is not refreshed inside its TTL', async () => {
