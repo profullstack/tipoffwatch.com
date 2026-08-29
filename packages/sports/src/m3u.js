@@ -542,6 +542,44 @@ function nameTokens(s) {
 }
 
 /**
+ * The channel's own name, with the group label its provider filed it under removed.
+ *
+ * A real list is organised by pipes, colons and spaced dashes -- "USA| NBC HD",
+ * "US: NBC EAST", "Sports - TNT" -- and everything before the last separator names
+ * the SECTION rather than the channel. isPlaceholder already reads a title this
+ * way, for the same reason.
+ *
+ * This matters most for the country prefix. Nearly every US list files its channels
+ * under "USA|", so a broadcaster named "USA" would otherwise match every one of
+ * them, which is the worst false positive available here.
+ */
+function channelName(title) {
+  const parts = String(title ?? '')
+    .trim()
+    .split(/\s*[|:]\s*|\s+-\s+/);
+  const last = parts[parts.length - 1].trim();
+  return last || String(title ?? '').trim();
+}
+
+/**
+ * Words that name another feed of the SAME network, rather than another network.
+ *
+ * "NBC East" and "NBC West" are one broadcaster on two satellites, and a reader
+ * looking for a national game is right to be offered either. "Fox Sports 1" is not
+ * Fox and "TNT Sports 1" is not TNT, which is why this is a closed list of timezone
+ * words and not a general licence to ignore whatever trails the name.
+ */
+const FEED_VARIANT = new Set([
+  'east',
+  'west',
+  'central',
+  'mountain',
+  'pacific',
+  'atlantic',
+  'national',
+]);
+
+/**
  * Does this channel appear to BE a named broadcaster?
  *
  * A different question from channelMatchesFixture, which asks whether a channel
@@ -554,8 +592,16 @@ function nameTokens(s) {
  * that matches far too much: a list with forty Sky channels would offer all of
  * them for a game on one, and the reader is no better off than with plain text.
  *
- * A short name is required whole. "TNT" as a substring appears inside a dozen
- * unrelated titles, so below four characters the normalised title has to equal it.
+ * A short name has to BE the channel, not merely appear in it. "TNT" as a substring
+ * turns up inside a dozen unrelated titles, so below four characters the channel's
+ * own name -- after its group prefix, its quality tags and any timezone feed word
+ * -- has to be exactly that name and nothing else.
+ *
+ * That used to be a comparison against the whole title, which was too blunt to ever
+ * be reached: it demanded a row called precisely "NBC", and a provider writes "USA|
+ * NBC HD". Every three-letter US network -- NBC, CBS, ABC, FOX, TNT, TBS -- was
+ * unmatchable in practice while ESPN worked, purely because ESPN has four letters.
+ * A reader with NBC on their line was told the game was on NBC and offered nothing.
  *
  * @param {string} channelTitle a title from the reader's own list
  * @param {string} broadcaster  the name a provider gave for this market
@@ -565,7 +611,10 @@ export function channelMatchesName(channelTitle, broadcaster) {
   const needle = normaliseTeam(broadcaster);
   if (!hay || !needle) return false;
   if (isPlaceholder(channelTitle)) return false;
-  if (needle.length < 4) return hay === needle;
+  if (needle.length < 4) {
+    const own = nameTokens(channelName(channelTitle)).filter((t) => !FEED_VARIANT.has(t));
+    return own.length === 1 && own[0] === needle;
+  }
 
   const words = new Set(nameTokens(channelTitle));
   const own = nameTokens(broadcaster);
