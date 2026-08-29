@@ -1,0 +1,33 @@
+-- The part of a score that two numbers cannot hold.
+--
+-- `home_score`/`away_score` are one integer each, which is the whole score in most
+-- sports and a summary in a few. Tennis is the case that forced this: 1-1 is true
+-- and says almost nothing. The score a tennis follower is actually reading is games
+-- per set (7-6 4-6 5-1), who is serving, and the points in the game being played
+-- (40-AD) -- and the Live Tennis API sends all three on every poll.
+--
+-- Until now they were thrown away at the adapter boundary. The site had the richer
+-- provider and still showed an ESPN-shaped scoreboard, which is the complaint that
+-- prompted this: "I don't see any live tennis data, just match meta info."
+--
+-- jsonb rather than columns, and deliberately not tennis-shaped in the schema:
+--
+--   * Per-set games is a variable-length list per side. Modelled as columns it is
+--     either five nullable integer pairs or a second table joined on every read of
+--     the hot page (/events/:id is the one route with no cache in front of it).
+--   * Every sport's version of "the detail" is a different shape -- innings, sets,
+--     legs, rounds, frames. A `score_detail jsonb` carrying its own `kind` lets the
+--     next one land without a migration, and lets a renderer decide by reading the
+--     payload rather than by inferring from the league.
+--
+-- The shape livetennis writes (see packages/sports/src/livetennis.js):
+--
+--   {"kind":"tennis",
+--    "games":[[7,4,5],[6,6,1]],   -- [away, home]; index 0 is p1, who renders left
+--    "points":["40","AD"],        -- live only; already in tennis notation
+--    "tiebreak":false,
+--    "serving":"away"}            -- live only; null when the provider does not say
+--
+-- Nullable, and null for every row that has no such detail -- which is every row
+-- from ESPN. Nothing reading it may assume it is present.
+alter table events add column if not exists score_detail jsonb;

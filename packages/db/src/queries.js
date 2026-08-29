@@ -1370,6 +1370,7 @@ export async function upsertEvents(events) {
       attendance = coalesce(excluded.attendance, events.attendance),
       period = excluded.period,
       display_clock = excluded.display_clock,
+      score_detail = excluded.score_detail,
       home_record = coalesce(excluded.home_record, events.home_record),
       away_record = coalesce(excluded.away_record, events.away_record),
       updated_at = now()
@@ -2636,6 +2637,11 @@ export async function updateEventScores(rows) {
       away_score = v.away_score,
       period = v.period,
       display_clock = v.display_clock,
+      -- Not coalesced: null is a real answer here. A match that has ended sheds its
+      -- points and its server (see scoreDetail in the livetennis adapter), and
+      -- keeping the previous tick's value would leave a finished match showing a
+      -- server on a court nobody is standing on.
+      score_detail = v.score_detail::jsonb,
       attendance = coalesce(v.attendance, e.attendance),
       -- Same rule as the sweep. This tick is where a US listing usually appears:
       -- ESPN assigns most of them close to kickoff, so the live pass is the one
@@ -2656,11 +2662,12 @@ export async function updateEventScores(rows) {
         ${pgArray(rows.map((r) => r.away_score ?? null))}::int[],
         ${pgArray(rows.map((r) => r.period ?? null))}::int[],
         ${pgArray(rows.map((r) => r.display_clock ?? null))}::text[],
+        ${pgArray(rows.map((r) => (r.score_detail ? JSON.stringify(r.score_detail) : null)))}::text[],
         ${pgArray(rows.map((r) => r.attendance ?? null))}::int[],
         ${pgArray(rows.map((r) => r.broadcast ?? null))}::text[],
         ${pgArray(rows.map((r) => (r.broadcast ? JSON.stringify(r.markets ?? []) : null)))}::text[]
       ) as t(provider, provider_key, state, status_detail, home_score, away_score,
-             period, display_clock, attendance, broadcast, markets)
+             period, display_clock, score_detail, attendance, broadcast, markets)
     ) v
     where e.provider = v.provider and e.provider_key = v.provider_key
     returning e.id

@@ -1,6 +1,13 @@
 import { brand, href, Word } from '@tipoff/config';
 import { assetUrl } from '../lib/asset-version.js';
-import { EventList, FollowButton, KickoffTime, LocalTime, TeamRow } from './components.jsx';
+import {
+  EventList,
+  FollowButton,
+  KickoffTime,
+  LocalTime,
+  setScoreOf,
+  TeamRow,
+} from './components.jsx';
 import { Layout } from './Layout.jsx';
 
 /**
@@ -141,6 +148,69 @@ export const ChannelRow = ({ ch }) => {
         ) : null}
       </span>
     </li>
+  );
+};
+
+/**
+ * The full set-by-set board, for the fixture's own page.
+ *
+ * The scoreboard above it has room for one number per side, which for tennis is
+ * sets won -- true, and not the score. This is the grid: games in every set, a dot
+ * against whoever is serving, and the points in the game being played. It is the
+ * whole reason tennis has its own provider rather than being read off a generic
+ * scoreboard, and until this existed none of it reached the page.
+ *
+ * Renders nothing at all for every other sport, and for a tennis match that has not
+ * started. It is an addition to the scoreboard, never a replacement, so a row with
+ * no detail looks exactly as it did before.
+ */
+const SetBySet = ({ event }) => {
+  const d = setScoreOf(event);
+  if (!d) return null;
+
+  const sets = Math.max(d.games[0].length, d.games[1].length);
+  const columns = Array.from({ length: sets }, (_, i) => i);
+  const sides = [
+    { key: 'away', name: event.away_name ?? 'Away', games: d.games[0], point: d.points?.[0] },
+    { key: 'home', name: event.home_name ?? 'Home', games: d.games[1], point: d.points?.[1] },
+  ];
+
+  return (
+    <table class="setboard">
+      <caption class="sr-only">Games won in each set</caption>
+      <thead>
+        <tr>
+          <th scope="col">Player</th>
+          {columns.map((i) => (
+            <th key={`s${i}`} scope="col">
+              {`S${i + 1}`}
+            </th>
+          ))}
+          {d.points ? <th scope="col">{d.tiebreak ? 'TB' : 'Pts'}</th> : null}
+        </tr>
+      </thead>
+      <tbody>
+        {sides.map((s) => (
+          <tr key={s.key}>
+            <th scope="row">
+              {s.name}
+              {/* The convention every tennis scoreboard uses, and the one piece of
+                  live state that is not a number. Labelled for anyone not seeing
+                  the dot. */}
+              {d.serving === s.key ? (
+                <span class="serving" role="img" aria-label="Serving" title="Serving">
+                  {' ●'}
+                </span>
+              ) : null}
+            </th>
+            {columns.map((i) => (
+              <td key={`${s.key}-${i}`}>{Number.isFinite(s.games[i]) ? s.games[i] : '–'}</td>
+            ))}
+            {d.points ? <td class="pts">{s.point ?? '–'}</td> : null}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 };
 
@@ -1310,6 +1380,11 @@ export const EventPage = ({
           />
         ) : null}
       </section>
+
+      {/* Directly under the scoreboard it belongs to, and above the kickoff line,
+          because for a match in progress this IS the score and the kickoff time is
+          the least interesting thing on the page. */}
+      <SetBySet event={event} />
 
       {/* Under the matchup rather than between the teams. The middle column is
           narrow, and stacking a time, a date and a zone into it put three lines
