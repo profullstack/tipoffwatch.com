@@ -65,6 +65,15 @@ beforeAll(async () => {
   // over the 5s default once the whole suite is competing for the machine.
 }, 120_000);
 
+/*
+ * Every test below queries those 25,000 rows, and bun's per-test default is five
+ * seconds. The setup above already had to say so; the tests did not, and inherited
+ * the default -- which held only while this file was cheap to schedule. Adding one
+ * more file to the suite was enough to push two of them past it on a loaded
+ * machine, failing on the clock rather than on anything they assert.
+ */
+const SLOW = 60_000;
+
 /** The OLD read: first N by position, unfiltered. */
 const byPosition = async (viewerId, limit = 20000) =>
   (
@@ -91,28 +100,40 @@ const byTerms = async (viewerId, terms) =>
   ).rows.map((r) => r.title);
 
 describe('a follower reading a large shared list', () => {
-  test('the old position-capped read never reaches the match', async () => {
-    const seen = await byPosition(ids.follower);
-    expect(seen).toHaveLength(20000);
-    expect(seen).not.toContain('Blue Jays at Yankees');
-  });
+  test(
+    'the old position-capped read never reaches the match',
+    async () => {
+      const seen = await byPosition(ids.follower);
+      expect(seen).toHaveLength(20000);
+      expect(seen).not.toContain('Blue Jays at Yankees');
+    },
+    SLOW,
+  );
 
-  test('the narrowed read finds it wherever it sits', async () => {
-    expect(await byTerms(ids.follower, ['jays'])).toEqual(['Blue Jays at Yankees']);
-  });
+  test(
+    'the narrowed read finds it wherever it sits',
+    async () => {
+      expect(await byTerms(ids.follower, ['jays'])).toEqual(['Blue Jays at Yankees']);
+    },
+    SLOW,
+  );
 
   /* The owner was never affected — their own page always narrowed in SQL. */
-  test('which is why the owner saw it and the follower did not', async () => {
-    const ownerSaw = (
-      await db.query(
-        `select c.title from user_playlist_channels c
+  test(
+    'which is why the owner saw it and the follower did not',
+    async () => {
+      const ownerSaw = (
+        await db.query(
+          `select c.title from user_playlist_channels c
          join user_playlists p on p.id = c.playlist_id
          where p.user_id = $1 and c.norm_title like '%jays%'`,
-        [ids.owner],
-      )
-    ).rows.map((r) => r.title);
-    expect(ownerSaw).toEqual(['Blue Jays at Yankees']);
-  });
+          [ids.owner],
+        )
+      ).rows.map((r) => r.title);
+      expect(ownerSaw).toEqual(['Blue Jays at Yankees']);
+    },
+    SLOW,
+  );
 });
 
 describe('following is not sharing', () => {
@@ -134,17 +155,21 @@ describe('following is not sharing', () => {
     }
   });
 
-  test('an unshared list is invisible however many people follow its owner', async () => {
-    await db.query(
-      "update user_playlists set shared = false, share_audience = 'none' where user_id = $1",
-      [ids.owner],
-    );
-    expect(await byTerms(ids.follower, ['jays'])).toEqual([]);
-    await db.query(
-      "update user_playlists set shared = true, share_audience = 'everyone' where user_id = $1",
-      [ids.owner],
-    );
-  });
+  test(
+    'an unshared list is invisible however many people follow its owner',
+    async () => {
+      await db.query(
+        "update user_playlists set shared = false, share_audience = 'none' where user_id = $1",
+        [ids.owner],
+      );
+      expect(await byTerms(ids.follower, ['jays'])).toEqual([]);
+      await db.query(
+        "update user_playlists set shared = true, share_audience = 'everyone' where user_id = $1",
+        [ids.owner],
+      );
+    },
+    SLOW,
+  );
 });
 
 describe('saying which kind of empty it is', () => {
