@@ -91,6 +91,30 @@ describe('one market, and the reader has that channel', () => {
   });
 });
 
+/*
+ * The two sections answer different questions, and one of them used to contradict
+ * the other. "On your line" asks whether a channel NAMES this fixture; "Where to
+ * watch" asks whether the reader has the network carrying it. For a national game
+ * on NBC the first fails and the second succeeds, which printed "your provider does
+ * not have it, which is on NBC" directly beneath three NBC stations from that very
+ * list.
+ */
+describe('the two sections do not contradict each other', () => {
+  const noNameMatch = { hasList: true, channelCount: 7059, matches: [], competition: [] };
+
+  test('a fixture nothing names still says the network is on the line', async () => {
+    const out = await html({ marketChannels: MINE, ownChannels: noNameMatch });
+    expect(out).toContain('None of your 7,059 channels name this fixture');
+    expect(out).not.toContain('your provider does not have it');
+    expect(out).toContain('is on your line');
+  });
+
+  test('and says the old thing when there is genuinely nothing', async () => {
+    const out = await html({ marketChannels: null, ownChannels: noNameMatch });
+    expect(out).toContain('your provider does not have it');
+  });
+});
+
 describe('one market, and nothing of the reader’s matched', () => {
   test('the page is exactly what it always was', async () => {
     const out = await html({ marketChannels: null });

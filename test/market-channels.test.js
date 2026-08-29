@@ -69,12 +69,51 @@ describe('matching a broadcaster to a channel on your line', () => {
     expect(channelMatchesName('Sports - FOX', 'FOX')).toBe(true);
   });
 
+  /*
+   * A US network reaches a list as its local affiliates and essentially never as
+   * the bare network. Every title here is a real row from the 7,059-entry list this
+   * was measured against, which contains 212 NBC stations and not one called "NBC".
+   * Requiring the name whole matched none of them.
+   */
+  test('a local affiliate of the network is the network', () => {
+    expect(channelMatchesName('IL | Chicago | NBC (WMAQ)', 'NBC')).toBe(true);
+    expect(channelMatchesName('USA: NBC 4 LA (KNBC)', 'NBC')).toBe(true);
+    expect(channelMatchesName('OH | Lima | NBC 8 (WLIO)', 'NBC')).toBe(true);
+    // A subchannel: the dash is gone by the time the title is tokenised.
+    expect(channelMatchesName('IN | Lafayette | NBC 16 (WPBI-LD2)', 'NBC')).toBe(true);
+    expect(channelMatchesName('AK | Fairbanks | Fox 2 (KATN-DT2)', 'FOX')).toBe(true);
+    // A country shorthand with no separator behind it to strip, and a trailing
+    // city that only the call sign vouches for.
+    expect(channelMatchesName('US CBS (WGCL) Atlanta', 'CBS')).toBe(true);
+    expect(channelMatchesName('AK | Fairbanks | ABC (KATNDT)', 'ABC')).toBe(true);
+  });
+
+  /*
+   * And the other half of the same list: the sub-brands that share the network's
+   * name and carry something else entirely. All real rows, all correctly refused.
+   */
+  test('a sibling brand of the network is not the network', () => {
+    expect(channelMatchesName('PC: NBC Sports', 'NBC')).toBe(false);
+    expect(channelMatchesName('SPORTS: NBC Sports Washington', 'NBC')).toBe(false);
+    expect(channelMatchesName('USA: NBC News Now', 'NBC')).toBe(false);
+    expect(channelMatchesName('USA: NBC Universo', 'NBC')).toBe(false);
+    expect(channelMatchesName('PC: NBC Golf Pass', 'NBC')).toBe(false);
+    expect(channelMatchesName('CBS Reality', 'CBS')).toBe(false);
+    expect(channelMatchesName('SPORTS: CBS Sports Network', 'CBS')).toBe(false);
+    expect(channelMatchesName('USA: ABC News Live', 'ABC')).toBe(false);
+    expect(channelMatchesName('USA: FOX News', 'FOX')).toBe(false);
+    // The UK TNT, which is not the US TNT a national listing means.
+    expect(channelMatchesName('TNT Sport 3 FHD (50FPS)', 'TNT')).toBe(false);
+  });
+
   test('a longer name that merely begins with it is a different channel', () => {
     expect(channelMatchesName('TNT Sports 1', 'TNT')).toBe(false);
     expect(channelMatchesName('NBC Sports', 'NBC')).toBe(false);
     expect(channelMatchesName('Fox Sports 1', 'FOX')).toBe(false);
-    // A word boundary, not a substring: CNBC is not NBC.
+    // A word boundary, not a substring: CNBC and MSNBC are not NBC.
     expect(channelMatchesName('CNBC', 'NBC')).toBe(false);
+    expect(channelMatchesName('CA: MSNBC', 'NBC')).toBe(false);
+    expect(channelMatchesName('USA: CNBC World', 'NBC')).toBe(false);
   });
 
   /*

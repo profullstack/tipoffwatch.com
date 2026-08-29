@@ -1682,11 +1682,19 @@ export const EventPage = ({
             <p class="muted">
               None of your {ownChannels.channelCount.toLocaleString('en-US')} channels name this
               fixture
-              {ownChannels.competition?.length
-                ? '.'
-                : `. That usually means your provider does not have it${
-                    event.broadcast ? `, which is on ${event.broadcast}` : ''
-                  }${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`}
+              {/* "Your provider does not have it" is flatly wrong when the section
+                  above is offering the very network the game is on, out of this
+                  same list. Naming a fixture and carrying a network are different
+                  things, and only the first one failed here. */}
+              {marketChannels
+                ? `. The network it is on${
+                    event.broadcast ? ` — ${event.broadcast}` : ''
+                  } is on your line: see “Where to watch” above.`
+                : ownChannels.competition?.length
+                  ? '.'
+                  : `. That usually means your provider does not have it${
+                      event.broadcast ? `, which is on ${event.broadcast}` : ''
+                    }${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`}
             </p>
           ) : (
             <>
