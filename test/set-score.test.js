@@ -60,6 +60,16 @@ describe('the compact score on a list row', () => {
     expect(out).toContain('40-AD');
   });
 
+  test('the sets and the points are separated by more than a margin', async () => {
+    // Only CSS held these apart, so with a stale or blocked stylesheet the row
+    // read "5-140-AD". The text has to survive on its own.
+    const text = (await render(SetScore({ event: event(live) })))
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    expect(text).toBe('7-6 4-6 5-1 40-AD');
+  });
+
   test('a finished match shows the result and no points', async () => {
     const done = { ...live, points: null, serving: null };
     const out = await render(SetScore({ event: event(done) }));

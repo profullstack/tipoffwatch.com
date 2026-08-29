@@ -268,6 +268,9 @@ export const SetScore = ({ event }) => {
       {played.join(' ')}
       {d.points ? (
         <span class="pts">
+          {/* A real space, not only the margin. Without one the two run together
+              as "5-430-0" the moment the stylesheet does not reach the page --
+              which it does not for anyone holding a cached copy of the old one. */}{' '}
           {d.tiebreak ? 'TB ' : ''}
           {d.points[0]}-{d.points[1]}
         </span>
