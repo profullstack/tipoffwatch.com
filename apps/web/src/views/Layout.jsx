@@ -196,12 +196,19 @@ export const Layout = (props) => (
           TipoffWatch is free. Times are shown in your own time zone (
           <span data-tz-label>your device</span>).
         </p>
+        {/* Two sources now, so the credit names both. Tennis moved off ESPN when it
+            got its own provider, and a footer still crediting ESPN for it is wrong
+            about where the fixture in front of the reader actually came from. */}
         <p class="muted">
           Schedule data from{' '}
           <a href="https://www.espn.com" rel="noopener nofollow">
             ESPN
           </a>
-          's public API. Not affiliated with ESPN.
+          's public API, and tennis from the{' '}
+          <a href="https://livetennisapi.com" rel="noopener nofollow">
+            Live Tennis API
+          </a>
+          . Not affiliated with either.
         </p>
         <p class="muted">
           <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
