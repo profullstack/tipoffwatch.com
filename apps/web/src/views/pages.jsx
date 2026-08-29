@@ -241,7 +241,24 @@ export function marketsOf(event) {
  */
 const BroadcastMarkets = ({ event, marketChannels }) => {
   const markets = marketsOf(event);
-  if (markets.length < 2) return null;
+  if (markets.length === 0) return null;
+
+  /*
+   * One market used to stop here, and that is the whole reason a reader could open
+   * a game listed on NBC and be shown no channel at all.
+   *
+   * The reasoning was right about the picker -- one country needs no tab strip --
+   * but it threw the offer away along with the tabs, and one market is the shape of
+   * very nearly every US fixture there is. The page rendered "NBC · Watch on TV ·
+   * United States" as a stat tile and stopped, while the reader's own line sat
+   * there with NBC on it and nothing on the page said so.
+   *
+   * So a single market renders too, but only when there is something of theirs to
+   * put in it: with no list, or nothing matched, this section would say exactly
+   * what the tile above it already says, and the tile is the better place for it.
+   */
+  const single = markets.length < 2;
+  if (single && !marketChannels) return null;
 
   /*
    * The reader's own entries, keyed by country and then by broadcaster name.
@@ -267,10 +284,17 @@ const BroadcastMarkets = ({ event, marketChannels }) => {
     >
       <h2>Where to watch</h2>
       <p class="muted small">
-        This game is carried in {markets.length} countries. Pick yours — we open on it automatically
-        where we can tell.
+        {/* One market names itself rather than counting to one: "carried in 1
+            countries" is wrong twice over and "pick yours" offers a choice that is
+            not there. The country is still named, because a listing is only true
+            somewhere -- ESPN's are US rights holders. */}
+        {single
+          ? `This game is on ${markets[0].channels.join(' · ')} in ${markets[0].country}.`
+          : `This game is carried in ${markets.length} countries. Pick yours — we open on it automatically where we can tell.`}
         {marketChannels
-          ? ` ${marketChannels.matched} of these ${marketChannels.matched === 1 ? 'is' : 'are'} on your own line, and can be opened from here.`
+          ? single && markets[0].channels.length === 1
+            ? ' It is on your own line, and can be opened from here.'
+            : ` ${marketChannels.matched} of these ${marketChannels.matched === 1 ? 'is' : 'are'} on your own line, and can be opened from here.`
           : ''}
       </p>
       <ul class="market-list">
@@ -1411,8 +1435,10 @@ export const EventPage = ({
           </li>
         ) : null}
         {/* One market stays a stat tile; more than one gets the picker below, so
-            the tile does not claim a single answer the fixture does not have. */}
-        {event.broadcast && marketsOf(event).length < 2 ? (
+            the tile does not claim a single answer the fixture does not have. It
+            also stands down when the section below has the reader's own copy of
+            that channel to offer, rather than naming NBC twice on one page. */}
+        {event.broadcast && marketsOf(event).length < 2 && !marketChannels ? (
           <li>
             <strong>{event.broadcast}</strong>
             {/* Named market, because a listing is only true somewhere. ESPN's are
@@ -1767,10 +1793,12 @@ export const EventPage = ({
                 this sentence contradicted it -- a reader in London saw the UK tab
                 selected and then "It is on CBS, Paramount+ in United States"
                 underneath, asserting one market as though it were the answer. */}
-            {event.broadcast && marketsOf(event).length < 2
+            {event.broadcast && marketsOf(event).length < 2 && !marketChannels
               ? ` It is on ${event.broadcast}${event.broadcast_country ? ` in ${event.broadcast_country}` : ''}.`
               : ''}
-            {marketsOf(event).length > 1 ? ' See “Where to watch” above for TV listings.' : ''}
+            {marketsOf(event).length > 1 || marketChannels
+              ? ' See “Where to watch” above for TV listings.'
+              : ''}
           </p>
         ) : (
           <ul class="offers">

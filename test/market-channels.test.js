@@ -52,9 +52,41 @@ describe('matching a broadcaster to a channel on your line', () => {
     expect(channelMatchesName('NFL 03:', 'NFL')).toBe(false);
   });
 
-  test('a short name has to be the whole title', () => {
+  /*
+   * The report that produced this: "we're not showing channels ie: NBC".
+   *
+   * A short name used to be compared against the WHOLE title, which demanded a row
+   * called precisely "NBC" -- and a provider writes "USA| NBC HD". Every
+   * three-letter US network was unmatchable while ESPN worked, purely because ESPN
+   * has four letters. What a short name has to equal now is the channel's own name:
+   * after the group prefix, the quality tags and any timezone feed word.
+   */
+  test('a short name has to be the channel, not the whole title', () => {
     expect(channelMatchesName('TNT', 'TNT')).toBe(true);
+    expect(channelMatchesName('NBC HD', 'NBC')).toBe(true);
+    expect(channelMatchesName('USA| NBC HD', 'NBC')).toBe(true);
+    expect(channelMatchesName('US: NBC EAST', 'NBC')).toBe(true);
+    expect(channelMatchesName('Sports - FOX', 'FOX')).toBe(true);
+  });
+
+  test('a longer name that merely begins with it is a different channel', () => {
     expect(channelMatchesName('TNT Sports 1', 'TNT')).toBe(false);
+    expect(channelMatchesName('NBC Sports', 'NBC')).toBe(false);
+    expect(channelMatchesName('Fox Sports 1', 'FOX')).toBe(false);
+    // A word boundary, not a substring: CNBC is not NBC.
+    expect(channelMatchesName('CNBC', 'NBC')).toBe(false);
+  });
+
+  /*
+   * The false positive that makes the group prefix worth removing at all. Nearly
+   * every US list files its rows under "USA|", so a broadcaster named "USA" matched
+   * against the whole title would offer the reader their entire catalogue.
+   */
+  test('a country prefix is a section, not the channel', () => {
+    expect(channelMatchesName('USA| ESPN HD', 'USA')).toBe(false);
+    expect(channelMatchesName('USA| NBC HD', 'USA')).toBe(false);
+    // And the prefix does not stop the real broadcaster being found behind it.
+    expect(channelMatchesName('USA| ESPN HD', 'ESPN')).toBe(true);
   });
 });
 
