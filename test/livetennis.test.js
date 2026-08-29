@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 
 process.env.DATABASE_URL ??= 'postgres://localhost:5432/unused';
 
@@ -125,6 +125,9 @@ const finishedSingles = {
 /** Requests the mock saw, so a test can assert on cost rather than on behaviour alone. */
 let calls = [];
 
+/** Captured before any test can replace it. Restored in afterAll below. */
+const realFetch = globalThis.fetch;
+
 /**
  * Answer each list endpoint from a fixed set of rows.
  *
@@ -160,6 +163,20 @@ const schedule = async (tour) => {
     matches: r.events.filter((e) => e.home && e.away),
   };
 };
+
+/**
+ * The real fetch, put back when this file is done.
+ *
+ * mockProvider replaces `globalThis.fetch`, and `bun test` runs every file in one
+ * process -- so without this the mock outlives the file and answers for whoever
+ * runs next. "livetennis" sorts before "stream-", and stream-proxy.test.js and
+ * stream-probe.test.js fetch a real localhost server: they were being handed a
+ * tennis API mock instead, which failed 19 tests that pass perfectly well on
+ * their own. A file that reaches for a global owes it back.
+ */
+afterAll(() => {
+  globalThis.fetch = realFetch;
+});
 
 beforeEach(() => {
   livetennis.resetBudget();
