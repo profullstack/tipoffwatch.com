@@ -1139,6 +1139,31 @@ export async function upsertLeague(league) {
 }
 
 /**
+ * Retire every league in a sport that does not belong to the provider claiming it.
+ *
+ * The counterpart to a `claimsSports` declaration (see packages/sports). Tennis is
+ * the case it was written for: ESPN carries it as a fortnight-shaped scoreboard and
+ * livetennis carries it match by match, and if both stay active every fixture is
+ * stored twice under two league rows with two unrelated sets of players.
+ *
+ * Deactivates rather than deletes. The rows carry finished fixtures and whatever
+ * anyone already follows, and a claim is a routing decision that a config change
+ * can reverse -- so this has to be something the next catalogue pass can undo, not
+ * a hole in the history.
+ */
+export async function deactivateUnclaimedLeagues({ sport, provider }) {
+  const rows = await sql`
+    update leagues
+       set active = false
+     where sport = ${sport}
+       and provider <> ${provider}
+       and active
+    returning id
+  `;
+  return rows.length;
+}
+
+/**
  * Leagues we have never resolved a region for, oldest first.
  *
  * Bounded, and the bound is the point. The region lives on a per-league endpoint

@@ -90,6 +90,57 @@ export const config = {
      */
     sportsDbKey: opt('SPORTSDB_API_KEY', '3'),
     /**
+     * Live Tennis API, which owns tennis outright when it is in SPORTS_PROVIDERS.
+     *
+     * Everything here exists to fit inside a request quota. The free key allows
+     * **100 requests a day**, which is less than the 60-second live tick would
+     * spend before lunch, so the adapter shares one snapshot across every tour and
+     * refuses to refresh it more often than the TTLs below. The defaults spend
+     * roughly 60 requests a day: 48 live refreshes at half-hourly, plus a fixture
+     * and a results read every six hours.
+     *
+     * The tiers, so the knobs can be turned with the numbers in view:
+     *
+     *   Free    30/min      100/day    live TTL 1800 (the defaults here)
+     *   Basic   60/min      1k/day     live TTL 120 -- $9.99/mo, adds match history
+     *   Pro     300/min     10k/day    live TTL 60  -- adds odds and timelines
+     *   Ultra   600/min     500k/day   adds WebSocket push, so no polling at all
+     *
+     * On a paid key set LIVETENNIS_DAILY_BUDGET to the tier's daily allowance less
+     * a small margin, and LIVETENNIS_LIVE_TTL_SECONDS to the cadence you actually
+     * want. Nothing else changes.
+     */
+    livetennis: {
+      apiKey: opt('LIVETENNIS_API_KEY'),
+      /**
+       * How stale a live score may be before the provider is asked again.
+       *
+       * This is the one number a reader feels. Half an hour is the free tier's
+       * honest answer -- 48 refreshes a day is already half the whole allowance --
+       * and it is why the live tick running every 60 seconds does not mean tennis
+       * scores update every 60 seconds. Two minutes is affordable on Basic.
+       */
+      liveTtlSeconds: num('LIVETENNIS_LIVE_TTL_SECONDS', 1800),
+      /**
+       * How often the fixture list and the just-finished list are re-read.
+       *
+       * Far less urgent than the scores: a tennis draw is published a day or two
+       * ahead and does not churn, so six hours costs eight requests a day and
+       * never leaves a fixture unwritten inside the horizon.
+       */
+      fixturesTtlSeconds: num('LIVETENNIS_FIXTURES_TTL_SECONDS', 21600),
+      /**
+       * A hard ceiling on requests per UTC day, counted the way the provider does.
+       *
+       * The TTLs above are the plan; this is what happens when the plan is wrong --
+       * a redeploy loop, a backfill, a retry storm. At the ceiling the adapter
+       * stops spending and serves the last snapshot it holds rather than throwing,
+       * because a score half an hour old beats an empty league page and a 429 is
+       * worth less than both. Ninety-five leaves five for a manual poke.
+       */
+      dailyBudget: num('LIVETENNIS_DAILY_BUDGET', 95),
+    },
+    /**
      * Residential proxy, used only when the provider blocks us directly.
      *
      * ESPN blocks datacenter egress: the same request that works from a laptop

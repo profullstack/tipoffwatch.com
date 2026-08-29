@@ -2,6 +2,7 @@ import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { CATALOG_ADAPTERS, ingest } from './catalog.js';
 import * as espn from './espn.js';
+import * as livetennis from './livetennis.js';
 import { regionFor } from './regions.js';
 import { normaliseTitle } from './slug.js';
 import * as sportsdb from './sportsdb.js';
@@ -82,7 +83,37 @@ export async function searchEverything(term, { userId = null, sport = null, limi
   };
 }
 
-const ADAPTERS = { espn };
+const ADAPTERS = { espn, livetennis };
+
+/**
+ * Which provider owns which sport, among the ones actually enabled.
+ *
+ * A provider declares `claimsSports` when it is not one source among several but
+ * THE source for something -- livetennis for tennis, where ESPN's fortnight-shaped
+ * scoreboard is a far thinner read of the same fixtures. The claim is exclusive:
+ * two providers writing one sport is not redundancy, it is every match stored twice
+ * under two league rows with two sets of players, and a follow that only sees half
+ * its fixtures depending on which copy it landed on.
+ *
+ * Enabling order does not matter, but a second claim on the same sport does: it is
+ * a configuration mistake with no sensible resolution, so it throws at boot rather
+ * than letting whichever adapter happens to run last take the sport.
+ */
+export function sportClaims() {
+  const claims = new Map();
+  for (const adapter of adapters()) {
+    for (const sport of adapter.claimsSports ?? []) {
+      const held = claims.get(sport);
+      if (held && held !== adapter.name) {
+        throw new Error(
+          `Both "${held}" and "${adapter.name}" claim ${sport}. A sport can have only one provider.`,
+        );
+      }
+      claims.set(sport, adapter.name);
+    }
+  }
+  return claims;
+}
 
 export function adapters() {
   return config.sports.providers.map((n) => {
@@ -95,14 +126,39 @@ export function adapters() {
 
 /** Refresh the league catalogue. Cheap, and how new competitions appear without a deploy. */
 export async function syncCatalogue({ log = console.log } = {}) {
+  const claims = sportClaims();
   let n = 0;
   for (const adapter of adapters()) {
     const leagues = await adapter.listLeagues();
+    let skipped = 0;
     for (const league of leagues) {
+      // A sport somebody else owns is not this adapter's to write. Skipping the
+      // upsert is half the job -- the rows it wrote on previous runs are still
+      // there, and `upsertLeague` sets active = true on conflict, so they would
+      // otherwise come back to life on the next catalogue pass no matter what a
+      // migration did to them once.
+      const owner = claims.get(league.sport);
+      if (owner && owner !== adapter.name) {
+        skipped++;
+        continue;
+      }
       await q.upsertLeague(league);
       n++;
     }
-    log(`[sync] ${adapter.name}: ${leagues.length} leagues`);
+    log(
+      `[sync] ${adapter.name}: ${leagues.length} leagues` +
+        (skipped ? `, ${skipped} skipped (claimed by another provider)` : ''),
+    );
+  }
+
+  // The other half: retire what the previous configuration wrote. Idempotent, and
+  // cheap enough to run every pass -- which is the point, because it is also what
+  // makes turning a claim OFF safe. Drop livetennis from SPORTS_PROVIDERS and the
+  // claim disappears, nothing is deactivated, and ESPN's tennis is upserted back to
+  // active on the same pass.
+  for (const [sport, owner] of claims) {
+    const retired = await q.deactivateUnclaimedLeagues({ sport, provider: owner });
+    if (retired > 0) log(`[sync] ${sport}: ${retired} league(s) retired, ${owner} owns it now`);
   }
 
   const regions = await backfillLeagueRegions({ log });
