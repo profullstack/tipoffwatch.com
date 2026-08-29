@@ -580,6 +580,46 @@ const FEED_VARIANT = new Set([
 ]);
 
 /**
+ * A US broadcast call sign: K west of the Mississippi, W east of it, three to six
+ * letters -- WMAQ, KNBC, KPRC, WTVJ, KATNDT. Nothing but a licensed station is
+ * shaped like this, which is what makes it worth trusting on its own below.
+ */
+function isCallSign(t) {
+  return /^[kw][a-z]{2,5}$/.test(t);
+}
+
+/**
+ * Does this word identify a STATION rather than name a different channel?
+ *
+ * A US network reaches a list as its local affiliates, essentially never as the
+ * bare network: the 7,059-entry list this was measured against carries "IL |
+ * Chicago | NBC (WMAQ)", "USA: NBC 4 LA (KNBC)" and two dozen more, and no row
+ * called simply "NBC". What trails the network name in those is the station --
+ * its channel number, its call sign, its city or state -- and all of them are
+ * still NBC, so all of them carry a national game.
+ *
+ * What must NOT survive this test is a sub-brand. The same list carries NBC
+ * Sports, NBC News Now, NBC Universo, NBC Golf Pass, NBC Dateline and NBC MakeIt,
+ * and none of those is NBC. So this is an allowlist of station shapes rather than
+ * a blocklist of brand words: an unrecognised word means "not this network", and
+ * a missed affiliate costs a channel while a wrong one sends somebody to the
+ * wrong programme.
+ *
+ * Two characters or fewer is a state or city short form ("LA", "NY", "TX"), which
+ * cannot be a brand.
+ */
+function isStationMark(t) {
+  return (
+    /^\d{1,3}$/.test(t) ||
+    isCallSign(t) ||
+    // A subchannel: WPBI-LD2, WGBC-DT3, WOHL-CD2. The dash is gone by the time a
+    // title reaches here, so these arrive as their own word.
+    /^(ld|dt|cd)\d*$/.test(t) ||
+    t.length <= 2
+  );
+}
+
+/**
  * Does this channel appear to BE a named broadcaster?
  *
  * A different question from channelMatchesFixture, which asks whether a channel
@@ -592,10 +632,11 @@ const FEED_VARIANT = new Set([
  * that matches far too much: a list with forty Sky channels would offer all of
  * them for a game on one, and the reader is no better off than with plain text.
  *
- * A short name has to BE the channel, not merely appear in it. "TNT" as a substring
- * turns up inside a dozen unrelated titles, so below four characters the channel's
- * own name -- after its group prefix, its quality tags and any timezone feed word
- * -- has to be exactly that name and nothing else.
+ * A short name has to LEAD the channel's own name, and be followed by nothing but
+ * that station's own identity. Below four characters the title is read as: group
+ * prefix (discarded), then the network, then a channel number, call sign or city
+ * -- and anything else at all means this is a sibling brand rather than the
+ * network, which is the distinction between "NBC (WMAQ)" and "NBC Sports".
  *
  * That used to be a comparison against the whole title, which was too blunt to ever
  * be reached: it demanded a row called precisely "NBC", and a provider writes "USA|
@@ -613,7 +654,30 @@ export function channelMatchesName(channelTitle, broadcaster) {
   if (isPlaceholder(channelTitle)) return false;
   if (needle.length < 4) {
     const own = nameTokens(channelName(channelTitle)).filter((t) => !FEED_VARIANT.has(t));
-    return own.length === 1 && own[0] === needle;
+
+    // A country shorthand can lead without a separator behind it to strip -- "US
+    // CBS (WGCL) Atlanta" -- so a two-character word ahead of the network is
+    // skipped. Never the network itself, or a two-letter one like CW would be
+    // skipped past and never found.
+    let i = 0;
+    while (i < own.length && own[i] !== needle && own[i].length <= 2) i++;
+
+    // The network has to LEAD what is left. "CNBC" and "MSNBC" are their own first
+    // word and are not NBC.
+    if (own[i] !== needle) return false;
+    const rest = own.slice(i + 1);
+
+    /*
+     * What follows has to be the station rather than a brand -- or, failing that,
+     * has to be vouched for by a call sign.
+     *
+     * The call sign is the escape hatch and it earns its place: "US CBS (WGCL)
+     * Atlanta" and "AK | Fairbanks | ABC (KATNDT)" trail a city we have no list of
+     * and cannot recognise, but a four-letter K or W word is a licensed station and
+     * essentially nothing else. Sub-brands never carry one, which is why NBC Sports
+     * Washington and CBS Sports Golazo Network still fail here.
+     */
+    return rest.every(isStationMark) || rest.some(isCallSign);
   }
 
   const words = new Set(nameTokens(channelTitle));
