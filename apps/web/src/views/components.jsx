@@ -209,6 +209,76 @@ export const LeagueTag = ({ event }) => {
   );
 };
 
+/**
+ * The set-by-set score, when the provider sends one.
+ *
+ * `score_detail` is jsonb and arrives either parsed or as a string depending on the
+ * driver, so this is the single place that decides what "no detail" looks like,
+ * rather than three call sites each guessing. It also carries its own `kind`: the
+ * column is not tennis-shaped, and a renderer has to read the payload rather than
+ * infer from the league it came from.
+ *
+ * An empty grid is rejected on purpose. A match that has not started sends two
+ * empty per-set arrays, and a scoreboard of dashes reads as broken rather than as
+ * "not yet".
+ */
+export function setScoreOf(event) {
+  const raw = event?.score_detail;
+  if (!raw) return null;
+  let parsed = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed?.kind !== 'tennis') return null;
+  const games = parsed.games;
+  if (!Array.isArray(games) || games.length !== 2) return null;
+  if (!Array.isArray(games[0]) || !Array.isArray(games[1])) return null;
+  if (games[0].length === 0) return null;
+  return parsed;
+}
+
+/**
+ * The compact form, for a row in a list.
+ *
+ * The row already shows sets won, which for tennis is a summary rather than the
+ * score. This is the thing anyone actually quotes -- 7-6 4-6 5-1 -- in the space of
+ * a few characters. The points in the game being played go on the end only while
+ * the match is live, because a finished match's last points read "0-0".
+ */
+export const SetScore = ({ event }) => {
+  const d = setScoreOf(event);
+  if (!d) return null;
+
+  const sets = Math.max(d.games[0].length, d.games[1].length);
+  const played = [];
+  for (let i = 0; i < sets; i++) {
+    const a = d.games[0][i];
+    const b = d.games[1][i];
+    // A set only one side has a number for is mid-write, not a scoreline.
+    if (Number.isFinite(a) && Number.isFinite(b)) played.push(`${a}-${b}`);
+  }
+  if (played.length === 0) return null;
+
+  return (
+    <span class="setscore" title="Games in each set">
+      {played.join(' ')}
+      {d.points ? (
+        <span class="pts">
+          {/* A real space, not only the margin. Without one the two run together
+              as "5-430-0" the moment the stylesheet does not reach the page --
+              which it does not for anyone holding a cached copy of the old one. */}{' '}
+          {d.tiebreak ? 'TB ' : ''}
+          {d.points[0]}-{d.points[1]}
+        </span>
+      ) : null}
+    </span>
+  );
+};
+
 export const EventRow = ({ event, showBroadcast = false }) => (
   <li class={`event ${event.state}${event.following ? ' followed' : ''}`}>
     <RowTime event={event} />
@@ -278,6 +348,9 @@ export const EventRow = ({ event, showBroadcast = false }) => (
     {(event.state === 'in' || event.state === 'post') && event.home_score !== null ? (
       <span class={`score${event.state === 'in' ? ' live' : ''}`}>
         {event.away_score}–{event.home_score}
+        {/* Sets alone is a summary, not a score: 1–1 is true and says almost
+            nothing to somebody deciding whether to watch. */}
+        <SetScore event={event} />
       </span>
     ) : null}
   </li>

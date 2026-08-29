@@ -365,6 +365,9 @@ export async function syncLeague(
     attendance: f.attendance,
     period: f.period,
     display_clock: f.displayClock,
+    // Serialised here rather than in the query: upsertEvents builds its column list
+    // from the object's keys, and a bare JS object lands as "[object Object]".
+    score_detail: f.scoreDetail ? JSON.stringify(f.scoreDetail) : null,
     home_record: f.homeRecord,
     away_record: f.awayRecord,
     home_team_id: f.home ? (teamId.get(f.home.providerKey) ?? null) : null,
@@ -414,6 +417,10 @@ export async function syncLeagueScores(league) {
       away_score: f.awayScore,
       period: f.period,
       display_clock: f.displayClock,
+      // The live tick is the ONLY thing that refreshes this between sweeps, which
+      // for tennis is the whole point -- games per set and the points in the
+      // current game change every rally, not every six hours.
+      score_detail: f.scoreDetail ?? null,
       attendance: f.attendance,
       broadcast: f.broadcast,
       markets: f.broadcastNames?.length

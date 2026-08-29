@@ -367,6 +367,51 @@ function displayClock(m) {
 }
 
 /**
+ * The score that two integers cannot hold.
+ *
+ * `home_score`/`away_score` carry sets won, which for tennis is a summary and not
+ * the score: 1-1 is true and says almost nothing. What a tennis follower reads is
+ * games per set, who is serving, and the points in the game being played -- and the
+ * provider sends all three on every poll. They used to stop here, at the adapter
+ * boundary, which is how the site ended up with the better provider and an
+ * ESPN-shaped scoreboard.
+ *
+ * Two rules about what survives the end of a match:
+ *
+ *   * `games` is kept whatever the state. Per-set games IS the result of a tennis
+ *     match -- "6-4 4-6 7-5" is the thing anyone quotes afterwards -- so a finished
+ *     row keeps it.
+ *   * `points` and `serving` are kept only while it is being played. A finished
+ *     match's last points reads "0-0", and a server on a court nobody is standing
+ *     on is worse than nothing.
+ *
+ * The array order is [away, home] = [p1, p2], the same mapping the rest of this
+ * file uses, so a renderer can zip it against the two sides without knowing which
+ * provider it came from.
+ */
+function scoreDetail(m) {
+  const s = m.score;
+  const games = Array.isArray(s?.games) ? s.games : null;
+  // Two sides or it is not a scoreline this can describe.
+  if (!games || games.length !== 2) return null;
+  if (!Array.isArray(games[0]) || !Array.isArray(games[1])) return null;
+  // A match that has not started sends empty per-set arrays; there is no score to
+  // describe yet and an empty grid on a fixture card reads as broken.
+  if (games[0].length === 0) return null;
+
+  const live = stateOf(m) === 'in';
+  const pts = Array.isArray(s.points) && s.points.length === 2 ? s.points.map(String) : null;
+
+  return {
+    kind: 'tennis',
+    games,
+    points: live ? pts : null,
+    tiebreak: live ? s.is_tiebreak === true : false,
+    serving: live && (s.server === 1 || s.server === 2) ? (s.server === 1 ? 'away' : 'home') : null,
+  };
+}
+
+/**
  * A match -> a fixture row.
  *
  * `p1` becomes the AWAY side and `p2` the home side, because the fixture list
@@ -419,6 +464,7 @@ function normaliseMatch(m) {
     // Which set is being played, which is the tennis reading of a period.
     period: m.score?.games?.[0]?.length ?? null,
     displayClock: displayClock(m),
+    scoreDetail: scoreDetail(m),
     home,
     away,
     homeScore,

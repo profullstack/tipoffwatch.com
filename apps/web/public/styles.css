@@ -800,6 +800,67 @@ body[data-loading]::before {
   color: var(--live);
 }
 
+/* Tennis, where one number per side is a summary rather than a score.
+   ------------------------------------------------------------------
+   The compact form rides under the sets figure in a list row: small, muted and
+   tabular, so a column of them lines up and none of it competes with the score
+   above it. Block display because the row's score cell is a fixed column and
+   "7-6 4-6 5-1" beside "1–1" would widen every row in the list. */
+.score .setscore {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.score .setscore .pts {
+  margin-left: 0.4rem;
+  color: var(--live);
+}
+
+/* The full board on a fixture's own page. Auto-width so it hugs its columns
+   rather than stretching to the page: a three-set match is a small table and a
+   full-width one reads as a data dump. */
+table.setboard {
+  margin: 0.6rem auto 0;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+table.setboard th,
+table.setboard td {
+  padding: 0.2rem 0.55rem;
+  text-align: center;
+}
+table.setboard thead th {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The names are the only left-aligned thing here; the numbers are a grid. */
+table.setboard tbody th {
+  text-align: left;
+  font-weight: 500;
+  white-space: nowrap;
+}
+table.setboard tbody tr + tr th,
+table.setboard tbody tr + tr td {
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+table.setboard .serving {
+  color: var(--live);
+}
+table.setboard td.pts {
+  font-family: var(--mono);
+  color: var(--live);
+}
+
 /* A live game's clock replaces its kickoff time in the row. Sized down from the
    time it replaces: "Bot 6th" is wider than "19:00" and must not reflow the row. */
 li.event time .t.live-clock {

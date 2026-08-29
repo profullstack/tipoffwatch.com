@@ -49,8 +49,9 @@ const liveSingles = {
       [7, 4, 5],
       [6, 6, 1],
     ],
-    points: ['0', '0'],
+    points: ['40', 'AD'],
     is_tiebreak: false,
+    server: 2,
   },
 };
 
@@ -195,7 +196,7 @@ describe('normalising a match', () => {
     expect({ away: m.awayScore, home: m.homeScore }).toEqual({ away: 1, home: 1 });
     expect(m.period).toBe(3);
     expect(m.statusDetail).toBe('Set 3');
-    expect(m.displayClock).toBe('0-0');
+    expect(m.displayClock).toBe('40-AD');
   });
 
   test('p1 becomes the away side, because the fixture list renders away first', async () => {
@@ -372,6 +373,86 @@ describe('the request budget, which shapes everything', () => {
     const [m] = (await schedule('itf')).matches;
     expect(m.state).toBe('post');
     expect({ away: m.awayScore, home: m.homeScore }).toEqual({ away: 2, home: 1 });
+  });
+});
+
+describe('the score two integers cannot hold', () => {
+  test('games per set, the server and the points all survive the adapter', async () => {
+    // The whole reason tennis has its own provider. Sets won is 1-1, which is true
+    // and says almost nothing; this is the score anyone actually reads.
+    mockProvider([liveSingles]);
+    const [m] = (await schedule('itf')).matches;
+
+    expect(m.scoreDetail).toEqual({
+      kind: 'tennis',
+      games: [
+        [7, 4, 5],
+        [6, 6, 1],
+      ],
+      points: ['40', 'AD'],
+      tiebreak: false,
+      // server 2 is p2, and p2 renders as the home side.
+      serving: 'home',
+    });
+  });
+
+  test('the array order is [away, home], so a renderer can zip it against the sides', async () => {
+    mockProvider([liveSingles]);
+    const [m] = (await schedule('itf')).matches;
+    // p1 is away and won the first set 7-6.
+    expect(m.away.name).toBe('Riko Kikawada');
+    expect(m.scoreDetail.games[0][0]).toBe(7);
+    expect(m.scoreDetail.games[1][0]).toBe(6);
+  });
+
+  test('a finished match keeps its games and sheds its points and server', async () => {
+    // Per-set games IS the result -- "6-4 4-6 7-5" is what gets quoted afterwards.
+    // The last points read "0-0" and a server on a court nobody is standing on is
+    // worse than nothing.
+    mockProvider([finishedSingles]);
+    const [m] = (await schedule('itf')).matches;
+
+    expect(m.scoreDetail.games).toEqual([
+      [7, 4, 6],
+      [6, 6, 3],
+    ]);
+    expect(m.scoreDetail.points).toBe(null);
+    expect(m.scoreDetail.serving).toBe(null);
+    expect(m.scoreDetail.tiebreak).toBe(false);
+  });
+
+  test('a tiebreak says so, because 6-5 there is not 40-30 in a game', async () => {
+    mockProvider([
+      {
+        ...liveSingles,
+        score: { ...liveSingles.score, points: ['6', '5'], is_tiebreak: true },
+      },
+    ]);
+    const [m] = (await schedule('itf')).matches;
+    expect(m.scoreDetail.tiebreak).toBe(true);
+    expect(m.scoreDetail.points).toEqual(['6', '5']);
+  });
+
+  test('a match that has not started has no board, rather than a grid of dashes', async () => {
+    mockProvider([upcomingSingles]);
+    const [m] = (await schedule('atp')).matches;
+    expect(m.scoreDetail).toBe(null);
+  });
+
+  test('an empty per-set list is not a scoreline', async () => {
+    mockProvider([
+      { ...liveSingles, score: { sets: [0, 0], games: [[], []], points: ['0', '0'] } },
+    ]);
+    const [m] = (await schedule('itf')).matches;
+    expect(m.scoreDetail).toBe(null);
+  });
+
+  test('a provider that says nothing about the server leaves it null', async () => {
+    const { server, ...noServer } = liveSingles.score;
+    mockProvider([{ ...liveSingles, score: noServer }]);
+    const [m] = (await schedule('itf')).matches;
+    expect(m.scoreDetail.serving).toBe(null);
+    expect(m.scoreDetail.points).toEqual(['40', 'AD']);
   });
 });
 
