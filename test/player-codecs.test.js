@@ -279,12 +279,51 @@ describe('the buffering profile follows the screen', () => {
     expect(tv.liveBufferLatencyChasing).toBe(false);
   });
 
-  test('everything else keeps the settings it already had', () => {
-    // Changing the desktop profile was not the point and would be a regression.
+  test('a desktop reads ahead too, just less of it', () => {
+    // It used to run with no stash at all, on the theory that a laptop has
+    // bandwidth to spare. A transport stream arrives through the proxy in bursts
+    // whatever the bandwidth is, and with nothing in front of the demuxer each
+    // gap between bursts was an underrun.
     const desktop = playerConfig(false);
-    expect(desktop.enableStashBuffer).toBe(false);
-    expect(desktop.liveBufferLatencyChasing).toBe(true);
-    expect(desktop.liveBufferLatencyMaxLatency).toBe(6);
+    const tv = playerConfig(true);
+    expect(desktop.enableStashBuffer).toBe(true);
+    expect(desktop.stashInitialSize).toBeGreaterThan(64 * 1024);
+    expect(desktop.stashInitialSize).toBeLessThan(tv.stashInitialSize);
+  });
+
+  test('neither screen closes drift by seeking', () => {
+    /*
+     * This is the bug the desktop profile actually had, and it is worth stating
+     * as a rule rather than as a number.
+     *
+     * liveBufferLatencyChasing assigns to currentTime. That is a hard seek, it is
+     * evaluated on every appended fragment, and it leaves only liveBufferLatency-
+     * MinRemain seconds of buffer behind -- one second, as it was configured. One
+     * second is a single jitter spike from an underrun; the underrun refills past
+     * the six second ceiling; it seeks again. The picture hitches on every one of
+     * those seeks, which is what a viewer reports as choppy.
+     */
+    for (const config of [playerConfig(true), playerConfig(false)]) {
+      expect(config.liveBufferLatencyChasing).toBe(false);
+    }
+  });
+
+  test('the desktop closes drift by playing slightly fast instead', () => {
+    // liveSync is the same correction without the seek: over the ceiling it plays
+    // at 1.1x until it is back to target, then returns to 1x. Nothing is
+    // discarded and nothing rebuffers.
+    const desktop = playerConfig(false);
+    expect(desktop.liveSync).toBe(true);
+    expect(desktop.liveSyncTargetLatency).toBeLessThan(desktop.liveSyncMaxLatency);
+    // Above 1 or it never catches up; 1.2 is the library default and is audible.
+    expect(desktop.liveSyncPlaybackRate).toBeGreaterThan(1);
+    expect(desktop.liveSyncPlaybackRate).toBeLessThan(1.2);
+  });
+
+  test('a television is allowed to run late rather than hurried', () => {
+    // Asking a CPU that is barely keeping up to decode faster is how a slow
+    // stream becomes a stopped one, so the stick gets no liveSync either.
+    expect(playerConfig(true).liveSync).toBeFalsy();
   });
 
   test('both profiles still drop what has been watched', () => {
