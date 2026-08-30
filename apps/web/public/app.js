@@ -1166,10 +1166,23 @@ async function checkOwnChannels(section, onLive, signal) {
 /**
  * Fill the screen, because that is what pressing Play on a match means.
  *
- * Requested on the stage rather than the <video> so the element keeps its own
- * controls and anything else the stage holds stays with it; a bare
- * `video.requestFullscreen()` hands the browser its native chrome instead and
- * loses the surrounding markup.
+ * The <video> itself, NOT the .player-stage wrapper around it, and that
+ * distinction is the whole of this function.
+ *
+ * Fullscreening the stage looks equivalent -- the stage holds nothing but the
+ * video -- but it breaks the control bar's own minimise button. That button is
+ * a toggle on the VIDEO's fullscreen state: with the stage as the fullscreen
+ * element the video does not consider itself fullscreen, so the button offers
+ * to enter rather than to leave, and pressing it appears to do nothing. Escape
+ * still worked, because Escape exits whatever is fullscreen regardless, which
+ * is exactly the shape of "the minimise button does nothing, I have to hit
+ * Esc".
+ *
+ * The stage is also actively the wrong box to blow up: `.player-stage` carries
+ * `aspect-ratio: 16 / 9` and `overflow: hidden` so the page does not jump
+ * before the first frame, and neither of those is something you want fighting a
+ * fullscreen element for the shape of the screen. The video letterboxes itself
+ * with `object-fit: contain` and needs no help.
  *
  * Every part of this is allowed to fail without consequence. Fullscreen needs
  * transient activation, and by the time we get here the player bundle may have
@@ -1178,16 +1191,16 @@ async function checkOwnChannels(section, onLive, signal) {
  * A rejection is a Promise rejection in modern browsers and a synchronous throw
  * in older ones, hence both guards.
  *
- * `webkitEnterFullscreen` is the iOS spelling and only exists on the video
+ * `webkitEnterFullscreen` is the iOS spelling and exists only on a media
  * element. iPhone Safari has no Media Source Extensions so it never reaches
- * this player at all, but an iPad that does should not be the one device where
- * the button quietly does nothing.
+ * this player, but an iPad that does should not be the one device where the
+ * button quietly does nothing.
  */
-function goFullscreen(stage, video) {
+function goFullscreen(video) {
   try {
-    const request = stage.requestFullscreen ?? stage.webkitRequestFullscreen;
+    const request = video.requestFullscreen ?? video.webkitRequestFullscreen;
     if (request) {
-      request.call(stage)?.catch?.(() => {});
+      request.call(video)?.catch?.(() => {});
       return;
     }
     video.webkitEnterFullscreen?.();
@@ -1462,7 +1475,7 @@ function initPlayerSection(section) {
       button.closest('li')?.after(stage);
 
       stop = player.attach(video, button.dataset.play, fail, notice);
-      goFullscreen(stage, video);
+      goFullscreen(video);
       button.dataset.playing = '1';
       button.textContent = 'Stop';
     });
