@@ -82,14 +82,32 @@ export function isTvBrowser(userAgent) {
 export function playerConfig(_isTv) {
   return {
     /*
-     * Demux on a worker thread.
+     * NOT on a worker thread, and this one is a trap worth the paragraph.
      *
-     * A transport stream at broadcast bitrate is real work, and on the main
-     * thread it competes with rendering the page it is playing on -- which
-     * shows up as dropped frames rather than as an error. mpegts.js builds the
-     * worker from a blob URL; we serve no CSP, so there is nothing to allow.
+     * Demuxing a broadcast-bitrate transport stream on the main thread competes
+     * with rendering the page it is playing on, so `enableWorker: true` looks
+     * like free performance, and media-streamer's live TV player does set it.
+     * It cannot be copied here.
+     *
+     * mpegts.js builds its worker by STRINGIFYING `__webpack_modules__` --
+     * webpack's internal module registry -- in `utils/webworkify-webpack.js`.
+     * That global exists in media-streamer, which is Next.js and therefore
+     * webpack. This bundle is built by Bun, where there is no such global, so
+     * the worker it assembles is broken.
+     *
+     * And it fails in the worst available way. `Transmuxer` wraps the worker
+     * setup in a try/catch and falls back to inline transmuxing -- but only a
+     * SYNCHRONOUS throw reaches that catch. A Worker that constructs from a
+     * blob whose body then fails is an asynchronous failure: nothing throws,
+     * nothing falls back, the init segment never arrives, and the player sits
+     * there having reported no error at all. That is not a dropped frame, it is
+     * "the stream does not play", which is what shipping this caused.
+     *
+     * Everything else in this profile came over from the television's, which
+     * had been running in production for weeks. This was the one line that had
+     * never run anywhere but under webpack.
      */
-    enableWorker: true,
+    enableWorker: false,
 
     /*
      * Read ahead, on every screen.

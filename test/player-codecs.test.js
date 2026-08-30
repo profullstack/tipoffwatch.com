@@ -307,11 +307,25 @@ describe('the buffering profile follows the screen', () => {
     expect(config.stashInitialSize).toBe(384 * 1024);
   });
 
-  test('the demuxer runs off the main thread', () => {
-    // Broadcast-bitrate demuxing competes with rendering the page it plays on,
-    // and loses as dropped frames rather than as an error. We serve no CSP, so
-    // mpegts.js can build its blob worker unimpeded.
-    expect(playerConfig(false).enableWorker).toBe(true);
+  test('the demuxer does NOT run off the main thread', () => {
+    /*
+     * A regression test with a real outage behind it.
+     *
+     * `enableWorker: true` reads like free performance and media-streamer's
+     * live TV player does set it, so it was copied over -- and every stream
+     * stopped playing. mpegts.js builds its worker by stringifying
+     * `__webpack_modules__`, webpack's internal module registry. media-streamer
+     * is Next.js, so that global is there. This bundle is built by Bun, so it
+     * is not, and the worker is broken.
+     *
+     * The failure is silent: Transmuxer's try/catch only sees a SYNCHRONOUS
+     * throw, and a Worker that constructs from a bad blob fails asynchronously.
+     * Nothing throws, nothing falls back to inline transmuxing, no init segment
+     * ever arrives, and the player reports no error at all.
+     *
+     * Do not turn this on again without changing how this file is bundled.
+     */
+    expect(playerConfig(false).enableWorker).toBe(false);
   });
 
   test('both profiles still drop what has been watched, and never idle', () => {
