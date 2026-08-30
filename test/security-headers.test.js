@@ -2,15 +2,24 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
-// A real VAPID public key shape, set before config is imported: the CSP hash is
-// computed once at import from whatever this process was given.
-process.env.VAPID_PUBLIC_KEY =
-  'BDU8swQUlpZBiNRdnbaSMwmSuLhWzJXTX8QAJ0lSpNzPnnFsmwZbXpSTFqLrJDLPzYgIeUuMTQCzYtDcqLRqUCQ';
 
-const { SECURITY_HEADERS, vapidScript } = await import('../apps/web/src/lib/security-headers.js');
+const { buildPolicy, SECURITY_HEADERS, vapidScript } = await import(
+  '../apps/web/src/lib/security-headers.js'
+);
 const { Layout } = await import('../apps/web/src/views/Layout.jsx');
 
-const csp = SECURITY_HEADERS['content-security-policy'];
+/** A real VAPID public key shape: 65 bytes, base64url. */
+const KEY =
+  'BDU8swQUlpZBiNRdnbaSMwmSuLhWzJXTX8QAJ0lSpNzPnnFsmwZbXpSTFqLrJDLPzYgIeUuMTQCzYtDcqLRqUCQ';
+
+/*
+ * Built for a known key rather than read off the shipped header. `bun test`
+ * shares one module registry across files, so whichever file imports config first
+ * decides what VAPID_PUBLIC_KEY was -- and a test that reads the live policy
+ * passes alone and fails in a full run for reasons that have nothing to do with
+ * the policy.
+ */
+const csp = buildPolicy(KEY);
 
 describe('security headers', () => {
   test.each([
@@ -46,14 +55,23 @@ describe('the CSP matches the page it is protecting', () => {
    * matching takes push notifications down with it. So: hash what actually renders.
    */
   test('the hash in script-src is the hash of the inline script on the page', async () => {
-    const key = process.env.VAPID_PUBLIC_KEY;
-    const out = (await Layout({ user: null, vapidKey: key, children: 'x' }).toString()).toString();
+    const out = (await Layout({ user: null, vapidKey: KEY, children: 'x' }).toString()).toString();
 
     const inline = out.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-    expect(inline).toBe(vapidScript(key));
+    expect(inline).toBe(vapidScript(KEY));
 
     const hash = `'sha256-${createHash('sha256').update(inline, 'utf8').digest('base64')}'`;
     expect(csp).toContain(hash);
+  });
+
+  test('and the header the site actually sends is built the same way', () => {
+    expect(SECURITY_HEADERS['content-security-policy']).toStartWith("default-src 'self';");
+  });
+
+  test('with push unconfigured there is no hash rather than a broken one', () => {
+    const bare = buildPolicy(null);
+    expect(bare).not.toContain('sha256-');
+    expect(bare).not.toContain('unsafe-inline');
   });
 
   test('and nothing else may go inline', () => {

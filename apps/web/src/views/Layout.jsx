@@ -1,6 +1,7 @@
 import { brand, config, href, Word } from '@tipoff/config';
 import { html, raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
+import { serialise, siteGraph } from '../lib/jsonld.js';
 import { vapidScript } from '../lib/security-headers.js';
 
 /**
@@ -75,6 +76,27 @@ export const Layout = (props) => (
       <meta property="og:type" content="website" />
       <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
       <meta name="twitter:card" content="summary" />
+
+      {/*
+        Structured data.
+
+        The site graph goes on every page -- it is what lets an answer engine
+        resolve the NAME to an entity rather than paraphrasing whatever prose it
+        scraped -- and props.jsonld carries whatever the page itself is about.
+
+        These are data blocks, not code: `type="application/ld+json"` is never
+        executed, so the strict script-src in lib/security-headers.js does not
+        apply to them and they need no hash. The raw write is safe because
+        serialise() escapes `<` in every value -- a team name of `</script>`
+        would otherwise end the element and drop the page into the document.
+      */}
+      {[...siteGraph(), ...(props.jsonld ?? [])].map((node) => (
+        <script
+          key={node['@id'] ?? node['@type']}
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: serialise(node) }}
+        />
+      ))}
 
       {/*
         Traffic counting, when a site id is configured.

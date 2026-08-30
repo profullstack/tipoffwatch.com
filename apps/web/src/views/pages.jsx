@@ -1,5 +1,6 @@
 import { brand, href, Word } from '@tipoff/config';
 import { assetUrl } from '../lib/asset-version.js';
+import { breadcrumbNode, eventNode, faqNode } from '../lib/jsonld.js';
 import {
   EventList,
   FollowButton,
@@ -1332,7 +1333,23 @@ export const EventPage = ({
   const recentPlays = plays.slice(0, 15);
 
   return (
-    <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
+    <Layout
+      title={event.name}
+      user={user}
+      canonical={`/events/${event.id}`}
+      /* The fixture, and the trail rendered just below, said in the vocabulary an
+         answer engine reads. Neither adds a fact the page does not already show --
+         they say which visible fact is the kickoff and which is the venue. */
+      jsonld={[
+        eventNode(event),
+        breadcrumbNode([
+          [Word.collections, href.category()],
+          ...(event.sport ? [[event.sport.replace(/-/g, ' '), href.category(event.sport)]] : []),
+          ...(event.league_slug ? [[event.league_name, href.collection(event.league_slug)]] : []),
+          [event.short_name ?? event.name, null],
+        ]),
+      ]}
+    >
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>
           <a href={href.category()}>{Word.collections}</a>
@@ -2629,8 +2646,50 @@ export const Settings = ({
   </Layout>
 );
 
+/*
+ * The About page's own question headings, paired with the answers under them.
+ *
+ * Written out rather than derived from the JSX because the answers below carry
+ * links and emphasis, and an FAQ answer is plain text. The pairing is asserted by
+ * a test so an edited heading cannot leave the markup answering a question the
+ * page no longer asks.
+ */
+export const ABOUT_FAQ = [
+  [
+    'Is TipoffWatch really free?',
+    'Following teams, the calendar and the reminders are free and stay free. The only thing ' +
+      'anyone pays for is a live stream, when someone is sharing one.',
+  ],
+  [
+    'Where does the schedule data come from?',
+    "Schedules, teams and scores come from ESPN's public JSON API, and tennis from the Live " +
+      'Tennis API. We are not affiliated with either. Every response is normalised and stored ' +
+      'here, so the calendar keeps working when the upstream is slow or unavailable.',
+  ],
+  [
+    'What time zone are games shown in?',
+    "All times are stored in UTC and shown in your browser's own time zone. Emailed reminders " +
+      'use the zone set in your settings, since an email has no browser to ask.',
+  ],
+  [
+    'When will I be reminded about a game?',
+    'An hour before kickoff, and again a minute out -- by web notification, email, or both. ' +
+      'It also works as a calendar feed if you would rather not be notified at all.',
+  ],
+  [
+    'Is there an API?',
+    'Yes. The schedule is public data, so the API at /api/v1 is open and needs no key.',
+  ],
+];
+
 export const About = ({ user, stats }) => (
-  <Layout title="About" user={user} canonical="/about">
+  <Layout
+    title="About"
+    user={user}
+    canonical="/about"
+    description="What TipoffWatch is, where the schedule data comes from, how reminders work, and why it is free."
+    jsonld={[faqNode(ABOUT_FAQ)]}
+  >
     <h1>About TipoffWatch</h1>
     <p>
       A calendar for people who keep missing the start of games. Follow any team or competition and
@@ -2675,7 +2734,7 @@ export const About = ({ user, stats }) => (
       <a href="/settings">settings</a>, since an email has no browser to ask.
     </p>
 
-    <h2>Is it really free?</h2>
+    <h2>Is TipoffWatch really free?</h2>
     <p>
       Following teams, the calendar and the reminders are free and stay free. The only thing anyone
       pays for is a live stream, when someone is sharing one.

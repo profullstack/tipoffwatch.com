@@ -52,6 +52,17 @@ export const config = {
   siteUrl: opt('SITE_URL', 'http://localhost:3000').replace(/\/$/, ''),
 
   /**
+   * Where a reader writes to, and where a security researcher reports to.
+   *
+   * NO default, on purpose. Inventing `hello@<domain>` and publishing it in the
+   * footer, in security.txt and in the Organization markup would put an address
+   * nobody reads in front of everyone who has something to say -- which is worse
+   * than saying nothing, because it looks like a working contact. Unset, the
+   * contact page says how to reach us another way and the markup omits the field.
+   */
+  contactEmail: opt('CONTACT_EMAIL') || null,
+
+  /**
    * No fallback, deliberately.
    *
    * Giving `req` a default defeats the only thing it does. A service deployed

@@ -19,15 +19,6 @@ export const vapidScript = (key) => `window.__VAPID = "${key}";`;
 /** CSP source expression for an inline script's contents. */
 const sha256 = (src) => `'sha256-${createHash('sha256').update(src, 'utf8').digest('base64')}'`;
 
-/**
- * Computed once at import, from the key this process was actually given.
- *
- * Every page that carries the script carries `config.push.publicKey`, so one hash
- * covers all of them. With push unconfigured there is no inline script and no
- * hash -- and the policy is stricter, not broken.
- */
-const inlineScriptHash = config.push.publicKey ? sha256(vapidScript(config.push.publicKey)) : null;
-
 /*
  * What each directive is here to permit, so the next person to add a resource
  * knows which line to widen and why it was narrow.
@@ -50,21 +41,34 @@ const inlineScriptHash = config.push.publicKey ? sha256(vapidScript(config.push.
  *   form-action  every control on the site is a plain form posting to us, so a
  *                form that posts anywhere else is an injection.
  */
-const POLICY = [
-  "default-src 'self'",
-  `script-src 'self' https://crawlproof.com${inlineScriptHash ? ` ${inlineScriptHash}` : ''}`,
-  "style-src 'self' https://fonts.googleapis.com",
-  'font-src https://fonts.gstatic.com',
-  'img-src https: data:',
-  "media-src 'self' blob:",
-  "connect-src 'self' https://crawlproof.com",
-  "worker-src 'self'",
-  "manifest-src 'self'",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
+/**
+ * The policy, as a function of the one key that varies.
+ *
+ * A parameter rather than a read of `config` inside, so a test can build the
+ * policy for a known key instead of depending on whether it happened to set the
+ * environment before something else imported config -- which in a shared module
+ * registry is decided by test file ordering.
+ *
+ * Every page that carries the inline script carries `config.push.publicKey`, so
+ * one hash covers all of them. With push unconfigured there is no inline script
+ * and no hash, and the policy is stricter rather than broken.
+ */
+export const buildPolicy = (publicKey) =>
+  [
+    "default-src 'self'",
+    `script-src 'self' https://crawlproof.com${publicKey ? ` ${sha256(vapidScript(publicKey))}` : ''}`,
+    "style-src 'self' https://fonts.googleapis.com",
+    'font-src https://fonts.gstatic.com',
+    'img-src https: data:',
+    "media-src 'self' blob:",
+    "connect-src 'self' https://crawlproof.com",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
 
 /**
  * Response headers every page and asset carries.
@@ -78,7 +82,7 @@ const POLICY = [
  * discourage submitting to it, and getting off it takes months.
  */
 export const SECURITY_HEADERS = {
-  'content-security-policy': POLICY,
+  'content-security-policy': buildPolicy(config.push.publicKey),
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'x-content-type-options': 'nosniff',
   // Redundant with frame-ancestors for anything modern, and the whole policy for
