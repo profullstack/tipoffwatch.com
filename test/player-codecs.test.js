@@ -379,8 +379,26 @@ describe('what pressing Play does to the screen', () => {
   const app = readFileSync(new URL('../apps/web/public/app.js', import.meta.url).pathname, 'utf8');
 
   test('it goes fullscreen', () => {
-    expect(app).toContain('goFullscreen(stage, video)');
-    expect(app).toMatch(/stage\.requestFullscreen \?\? stage\.webkitRequestFullscreen/);
+    expect(app).toContain('goFullscreen(video)');
+  });
+
+  test('it fullscreens the video, not the stage around it', () => {
+    /*
+     * The stage holds nothing but the video, so the two look equivalent. They
+     * are not: the control bar's minimise button is a toggle on the VIDEO's
+     * fullscreen state, so with the stage as the fullscreen element the video
+     * does not consider itself fullscreen, the button offers to enter rather
+     * than leave, and pressing it appears to do nothing. Escape still worked,
+     * because Escape exits whatever is fullscreen -- which is exactly what
+     * "the minimise button does nothing, I have to hit Esc" is.
+     *
+     * The stage is the wrong box to blow up anyway: it carries
+     * `aspect-ratio: 16 / 9` and `overflow: hidden` so the page does not jump
+     * before the first frame, neither of which should be fighting a fullscreen
+     * element for the shape of the screen.
+     */
+    expect(app).toMatch(/video\.requestFullscreen \?\? video\.webkitRequestFullscreen/);
+    expect(app).not.toContain('stage.requestFullscreen');
   });
 
   test('it still starts muted, and unmutes only once there is a picture', () => {
