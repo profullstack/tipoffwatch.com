@@ -87,6 +87,20 @@ describe('the CSP matches the page it is protecting', () => {
     expect(csp.match(/connect-src[^;]*/)[0]).toContain('https://crawlproof.com');
   });
 
+  test.each(['img-src', 'font-src', 'style-src', 'media-src', 'connect-src'])(
+    "%s allows the site's own files",
+    (directive) => {
+      /*
+       * `img-src https: data:` looks complete and is not: the site is https, so
+       * https: covers its own icons in production while refusing every one of
+       * them over http -- which is every developer's localhost. Found by loading
+       * a real page under this policy in a browser, not by a test, which is why
+       * there is now a test.
+       */
+      expect(csp.match(new RegExp(`${directive}[^;]*`))[0]).toContain("'self'");
+    },
+  );
+
   test('hotlinked crests still load', () => {
     // Crests come from whichever CDN the upstream provider currently uses, so the
     // policy names the scheme rather than the hosts.

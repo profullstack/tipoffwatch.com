@@ -58,8 +58,18 @@ export const buildPolicy = (publicKey) =>
     "default-src 'self'",
     `script-src 'self' https://crawlproof.com${publicKey ? ` ${sha256(vapidScript(publicKey))}` : ''}`,
     "style-src 'self' https://fonts.googleapis.com",
-    'font-src https://fonts.gstatic.com',
-    'img-src https: data:',
+    "font-src 'self' https://fonts.gstatic.com",
+    /*
+     * 'self' is NOT redundant with https: here.
+     *
+     * It reads as though it were -- the site is https, so https: already covers
+     * its own icons. It does not cover them over http, which is every
+     * developer's localhost: without 'self' every favicon and the header logo
+     * were refused on a local run while the deployed site looked fine. Found by
+     * loading a real page under this policy in a browser. No unit test would
+     * have caught it, because the string is exactly what it was meant to say.
+     */
+    "img-src 'self' https: data:",
     "media-src 'self' blob:",
     "connect-src 'self' https://crawlproof.com",
     "worker-src 'self'",
