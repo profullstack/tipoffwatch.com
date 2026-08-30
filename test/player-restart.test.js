@@ -231,29 +231,32 @@ describe('an MSE failure is a reason to reconnect', () => {
     // Nothing reconnects instantly: that is a second connection on a line that
     // counts them, and the first has to be seen to close.
     expect(built).toHaveLength(1);
-    clock.advance(1500);
+    clock.advance(2000);
     expect(built).toHaveLength(2);
     expect(latest().destroyed).toBe(false);
   });
 
-  test('the waits double, and the whole sequence is over in about eleven seconds', () => {
+  test('the waits double from two seconds', () => {
     const { errors, latest } = play();
 
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-    clock.advance(1500);
+    clock.advance(2000);
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-    clock.advance(3000);
+    clock.advance(4000);
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-    clock.advance(6000);
+    clock.advance(8000);
 
     expect(built).toHaveLength(4);
     expect(errors).toEqual([]);
   });
 
-  test('a fourth failure is the reader being told, in the original words', () => {
+  test('a sixth failure is the reader being told, in the original words', () => {
     const { errors, latest } = play();
 
-    for (const wait of [0, 1500, 3000, 6000]) {
+    // Six, not four: the allowance went 3 -> 5 to match media-streamer's live
+    // TV player. None of these is separated by a picture, so none of them
+    // refills it -- which is the only way to reach the end of the budget now.
+    for (const wait of [0, 2000, 4000, 8000, 16_000, 32_000]) {
       clock.advance(wait);
       latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
     }
@@ -271,7 +274,7 @@ describe('an MSE failure is a reason to reconnect', () => {
   test('a dropped connection reconnects too', () => {
     const { errors, latest } = play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', {});
-    clock.advance(1500);
+    clock.advance(2000);
     expect(built).toHaveLength(2);
     expect(errors).toEqual([]);
   });
@@ -364,36 +367,63 @@ describe('a stream that stops sending without ever erroring', () => {
 });
 
 describe('the reconnect budget', () => {
-  test('half a minute of real playback earns it back', () => {
-    // Otherwise a channel that hiccups once an hour spends its three restarts
-    // over an afternoon and then fails for good on a stream that is basically
-    // healthy.
+  /*
+   * When the allowance comes back, which is what "the stream dies after a
+   * minute or two" turned out to mean.
+   *
+   * It used to take thirty unbroken seconds, measured from the last restart and
+   * checked only from inside the stall watcher. So three hiccups inside half a
+   * minute spent the whole budget and the channel was given up on for good --
+   * even though all three restarts had worked and the picture was back within
+   * seconds each time. On a provider line that drops a connection now and then,
+   * which is all of them, that is a hard ceiling of three recoveries per stream
+   * and about a minute of watching.
+   */
+  test('a picture earns it back, immediately', () => {
     const { video, latest, errors } = play();
 
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-    clock.advance(1500);
+    clock.advance(2000);
     expect(built).toHaveLength(2);
 
-    for (let i = 0; i < 8; i += 1) {
-      video.currentTime += 5;
-      clock.advance(5000);
-    }
+    // Not thirty seconds of it. The event means the media element genuinely
+    // resumed, and that is the whole of what "recovered" needs to mean.
+    video.fire('playing');
 
-    // Budget restored, so this is a reconnect and not the reader being told.
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-    clock.advance(1500);
+    clock.advance(2000);
     expect(built).toHaveLength(3);
     expect(errors).toEqual([]);
   });
 
-  test('a second of playback between two failures does not', () => {
+  test('a channel that recovers every time is never given up on', () => {
+    // The point of the change. Under the old rule this stream was dead on the
+    // fourth hiccup however well it played in between.
     const { video, latest, errors } = play();
-    for (let i = 0; i < 4; i += 1) {
+
+    for (let i = 0; i < 12; i += 1) {
       latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
-      clock.advance(1500 * 2 ** i);
-      video.currentTime += 1;
-      clock.advance(5000);
+      clock.advance(2000);
+      video.fire('playing');
     }
+
+    expect(errors).toEqual([]);
+  });
+
+  test('a clock that moves is not the same as a picture', () => {
+    /*
+     * The budget refills on `playing`, not on the stall watcher seeing progress.
+     * That distinction is what keeps the bound real: a channel that never
+     * actually resumes never fires `playing`, so it still runs out.
+     */
+    const { video, latest, errors } = play();
+
+    for (const wait of [0, 2000, 4000, 8000, 16_000, 32_000]) {
+      clock.advance(wait);
+      latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
+      video.currentTime += 1;
+    }
+
     expect(errors).toHaveLength(1);
   });
 

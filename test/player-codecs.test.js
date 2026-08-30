@@ -272,28 +272,119 @@ describe('the buffering profile follows the screen', () => {
     expect(isTvBrowser(undefined)).toBe(false);
   });
 
-  test('a television reads ahead and does not chase the live edge', () => {
-    const tv = playerConfig(true);
-    expect(tv.enableStashBuffer).toBe(true);
-    expect(tv.stashInitialSize).toBeGreaterThan(100 * 1024);
-    expect(tv.liveBufferLatencyChasing).toBe(false);
+  test('every screen gets the same profile now', () => {
+    /*
+     * The split was the bug, so this is the rule worth pinning.
+     *
+     * A television was given a read-ahead buffer and no latency chasing, and it
+     * worked. A desktop was given the exact opposite on the theory that a laptop
+     * has bandwidth to spare -- and bandwidth was never what was wrong. These
+     * are media-streamer's live TV numbers, which survive an evening on the same
+     * provider lines this player was dying on.
+     */
+    expect(playerConfig(false)).toEqual(playerConfig(true));
   });
 
-  test('everything else keeps the settings it already had', () => {
-    // Changing the desktop profile was not the point and would be a regression.
-    const desktop = playerConfig(false);
-    expect(desktop.enableStashBuffer).toBe(false);
-    expect(desktop.liveBufferLatencyChasing).toBe(true);
-    expect(desktop.liveBufferLatencyMaxLatency).toBe(6);
+  test('nothing closes drift by seeking', () => {
+    /*
+     * liveBufferLatencyChasing assigns to currentTime. That is a hard seek, MSE
+     * rebuilds the decode pipeline on every one, it is evaluated on every
+     * appended fragment, and it leaves only liveBufferLatencyMinRemain seconds
+     * of buffer behind -- one second, as it was set. One second is a single
+     * jitter spike from an underrun; the underrun refills past the ceiling; it
+     * seeks again. Each hitch was also a chance to spend a restart, which is how
+     * a stutter turned into a stream that ended.
+     */
+    expect(playerConfig(false).liveBufferLatencyChasing).toBe(false);
   });
 
-  test('both profiles still drop what has been watched', () => {
-    // Without this a three hour match fills the source buffer and the tab is
-    // killed -- soonest on exactly the device this is all for.
+  test('every screen reads ahead rather than demuxing whatever just landed', () => {
+    // A transport stream arrives in bursts regardless of the viewer's
+    // bandwidth, so with nothing in front of the demuxer every gap between
+    // bursts is an underrun. On a desktop this was 128 *bytes*.
+    const config = playerConfig(false);
+    expect(config.enableStashBuffer).toBe(true);
+    expect(config.stashInitialSize).toBe(384 * 1024);
+  });
+
+  test('the demuxer runs off the main thread', () => {
+    // Broadcast-bitrate demuxing competes with rendering the page it plays on,
+    // and loses as dropped frames rather than as an error. We serve no CSP, so
+    // mpegts.js can build its blob worker unimpeded.
+    expect(playerConfig(false).enableWorker).toBe(true);
+  });
+
+  test('both profiles still drop what has been watched, and never idle', () => {
+    // Without the cleanup a three hour match fills the source buffer and the tab
+    // is killed -- soonest on exactly the device this is all for. lazyLoad would
+    // drop the provider connection mid-match, on a line that permits one.
     for (const config of [playerConfig(true), playerConfig(false)]) {
       expect(config.autoCleanupSourceBuffer).toBe(true);
       expect(config.lazyLoad).toBe(false);
     }
+  });
+});
+
+/**
+ * When the restart budget comes back, which is what "the stream dies after a
+ * minute or two" turned out to mean.
+ */
+describe('the restart budget', () => {
+  const entry = readFileSync(
+    new URL('../apps/web/src/client/player-entry.js', import.meta.url).pathname,
+    'utf8',
+  );
+
+  test('a picture refills it', () => {
+    /*
+     * It used to refill only after thirty unbroken seconds, measured from the
+     * last restart and checked solely from inside the stall watcher. Three
+     * hiccups inside half a minute therefore spent the whole allowance and the
+     * channel was given up on for good -- even though all three restarts had
+     * worked and the picture was back within seconds each time. On a provider
+     * line that drops a connection now and then, that is a hard ceiling of
+     * three recoveries per stream, about a minute's worth.
+     */
+    expect(entry).toMatch(/const onPlaying = \(\) => \{\s*restarts = 0;/);
+    expect(entry).not.toContain('RECOVERED_AFTER_MS');
+  });
+
+  test('a channel that never plays is still given up on', () => {
+    // The budget is spent by failures to RECOVER, not by failures. Nothing ever
+    // fires `playing` for a channel that never starts, so the bound still holds.
+    expect(entry).toMatch(/const MAX_RESTARTS = 5;/);
+    expect(entry).toContain('if (restarts >= MAX_RESTARTS) return giveUp(finalMessage);');
+  });
+});
+
+/**
+ * Pressing Play means "show me the match", which is a full screen with the
+ * sound on rather than a muted rectangle in a list.
+ */
+describe('what pressing Play does to the screen', () => {
+  const app = readFileSync(new URL('../apps/web/public/app.js', import.meta.url).pathname, 'utf8');
+
+  test('it goes fullscreen', () => {
+    expect(app).toContain('goFullscreen(stage, video)');
+    expect(app).toMatch(/stage\.requestFullscreen \?\? stage\.webkitRequestFullscreen/);
+  });
+
+  test('it still starts muted, and unmutes only once there is a picture', () => {
+    /*
+     * Autoplay policy refuses audible video without a gesture, and the refusal
+     * is a rejected play() that leaves a black rectangle -- which reads as a
+     * broken stream. The click IS a gesture, but the handler awaits the player
+     * bundle first and a cold fetch can outlast the activation, so the sound
+     * goes up on the first `playing` instead.
+     */
+    expect(app).toContain('video.muted = true');
+    expect(app).toMatch(/video\.volume = 1;\s*video\.muted = false;/);
+  });
+
+  test('a browser that refuses the sound keeps the picture', () => {
+    // Chrome answers an unwanted unmute by pausing, not by throwing, so the
+    // paused element is the only signal there is.
+    expect(app).toMatch(/if \(video\.paused\) \{\s*video\.muted = true;/);
   });
 });
 

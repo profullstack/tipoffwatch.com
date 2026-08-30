@@ -41,23 +41,17 @@ function supported() {
 /**
  * How many times a stream is rebuilt before the reader is told it failed.
  *
- * Three, with the wait doubling, so the whole sequence is over in about eleven
- * seconds. It has to be bounded and it has to be short: every restart is a fresh
- * connection to the provider, and the line permits one.
+ * Five, doubling from two seconds, which is what media-streamer's live TV
+ * player uses on these same provider lines. It still has to be bounded --
+ * every restart is a fresh connection and the line permits one -- but the
+ * number matters far less than when the budget refills; see `onPlaying`.
  */
-const MAX_RESTARTS = 3;
-const RESTART_BASE_MS = 1500;
+const MAX_RESTARTS = 5;
+const RESTART_BASE_MS = 2000;
 
 /** How a stall is noticed: the clock is read this often, this many times. */
 const STALL_CHECK_MS = 5000;
 const STALL_LIMIT = 3;
-
-/**
- * Playback this long since the last restart means the trouble is over, and the
- * budget goes back to full. Without it a channel that breaks once an hour spends
- * its three restarts over an afternoon and then fails for good.
- */
-const RECOVERED_AFTER_MS = 30_000;
 
 /**
  * Attach a stream to a <video> and start it.
@@ -78,7 +72,6 @@ function attach(video, url, onError, onNotice = () => {}) {
   let restarts = 0;
   let restartTimer = null;
   let stallTimer = null;
-  let startedAt = 0;
   let lastTime = -1;
   let stalls = 0;
 
@@ -171,20 +164,14 @@ function attach(video, url, onError, onNotice = () => {}) {
         }
         return;
       }
-      // It is moving. If it has been moving for a while, the earlier trouble is
-      // over and this counts as a healthy stream again.
+      // It is moving, so nothing is wrong right now. The restart budget is not
+      // touched here -- that is `onPlaying`'s job, for the reason given there.
       lastTime = video.currentTime;
       stalls = 0;
-      if (restarts > 0 && Date.now() - startedAt > RECOVERED_AFTER_MS) {
-        restarts = 0;
-        onNotice(null);
-      }
     }, STALL_CHECK_MS);
   };
 
   function start() {
-    startedAt = Date.now();
-
     /*
      * The buffering profile is picked per screen, not once for the site.
      *
@@ -292,15 +279,32 @@ function attach(video, url, onError, onNotice = () => {}) {
   }
 
   /*
-   * A picture is the only proof worth acting on.
+   * A picture is the only proof worth acting on -- and it refills the budget.
    *
-   * "Reconnecting…" has to come off the page the moment the stream is back, and
-   * the event that means it is back is this one -- not the absence of another
-   * error, which is also what a permanently frozen player looks like. The restart
-   * budget is NOT cleared here: a second of playback between two failures is not
-   * a recovery, and thirty are (see the stall watcher).
+   * "Reconnecting…" comes off the page the moment the stream is back, and the
+   * event that means it is back is this one, not the absence of another error,
+   * which is also what a permanently frozen player looks like.
+   *
+   * The budget used to be deliberately NOT cleared here, on the reasoning that
+   * a second of playback between two failures is not a recovery and thirty are.
+   * That reasoning is what killed streams. Thirty unbroken seconds, measured
+   * from the last restart and checked only from inside the stall watcher, meant
+   * three hiccups inside half a minute spent the entire allowance -- and the
+   * channel was given up on for good, even though all three restarts had worked
+   * and the picture was back within seconds each time. On a provider line that
+   * drops a connection now and then, which is all of them, that is a hard
+   * ceiling of three recoveries per stream, and reaching it takes about a
+   * minute. "It dies after a minute or two" was this line.
+   *
+   * media-streamer's live TV player resets on every `playing`, and it is right:
+   * the budget should be spent by failures to RECOVER, not by failures. A
+   * channel that never plays still gives up after MAX_RESTARTS, because nothing
+   * ever fires this.
    */
-  const onPlaying = () => onNotice(null);
+  const onPlaying = () => {
+    restarts = 0;
+    onNotice(null);
+  };
   video.addEventListener('playing', onPlaying);
 
   start();

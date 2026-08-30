@@ -1163,6 +1163,40 @@ async function checkOwnChannels(section, onLive, signal) {
  * because the line permits one connection and two <video> elements pulling at
  * once is exactly what the ceiling exists to prevent.
  */
+/**
+ * Fill the screen, because that is what pressing Play on a match means.
+ *
+ * Requested on the stage rather than the <video> so the element keeps its own
+ * controls and anything else the stage holds stays with it; a bare
+ * `video.requestFullscreen()` hands the browser its native chrome instead and
+ * loses the surrounding markup.
+ *
+ * Every part of this is allowed to fail without consequence. Fullscreen needs
+ * transient activation, and by the time we get here the player bundle may have
+ * been fetched over a slow link and spent it -- so the request is rejected and
+ * the reader simply watches in the page, which is what used to happen anyway.
+ * A rejection is a Promise rejection in modern browsers and a synchronous throw
+ * in older ones, hence both guards.
+ *
+ * `webkitEnterFullscreen` is the iOS spelling and only exists on the video
+ * element. iPhone Safari has no Media Source Extensions so it never reaches
+ * this player at all, but an iPad that does should not be the one device where
+ * the button quietly does nothing.
+ */
+function goFullscreen(stage, video) {
+  try {
+    const request = stage.requestFullscreen ?? stage.webkitRequestFullscreen;
+    if (request) {
+      request.call(stage)?.catch?.(() => {});
+      return;
+    }
+    video.webkitEnterFullscreen?.();
+  } catch {
+    // Denied, unsupported, or no longer in a gesture. The stream plays in the
+    // page regardless, so there is nothing to tell the reader about.
+  }
+}
+
 function initInlinePlayer(root = document) {
   const sections = [...root.querySelectorAll('[data-player-src]')].filter(
     (el) => !el.dataset.player,
@@ -1386,15 +1420,49 @@ function initPlayerSection(section) {
       video.controls = true;
       video.autoplay = true;
       video.playsInline = true;
-      // Muted, and not as a preference. Every browser refuses to autoplay audible
-      // video without a gesture, and the refusal arrives as a rejected play() that
-      // leaves a black rectangle -- which reads as a broken stream rather than a
-      // blocked one. The reader unmutes with the control.
+
+      /*
+       * Starts muted, ends audible, and the order is the whole trick.
+       *
+       * Every browser refuses to autoplay audible video without a user gesture,
+       * and the refusal arrives as a rejected play() that leaves a black
+       * rectangle -- which reads as a broken stream rather than a blocked one.
+       * Pressing Play IS a gesture, but this handler has already awaited the
+       * player bundle by now, and on a cold cache that download can outlast the
+       * activation the click granted. Starting muted is the one way to be sure
+       * a picture appears.
+       *
+       * So the sound is turned up on the first `playing` instead, when there is
+       * demonstrably a stream to turn up, and `volume` is set before `muted` is
+       * lifted so nobody gets a frame of full-volume broadcast before the
+       * element knows what level to use.
+       */
       video.muted = true;
+      video.volume = 1;
+      video.addEventListener(
+        'playing',
+        () => {
+          video.volume = 1;
+          video.muted = false;
+          /*
+           * If the browser disagrees it says so by pausing rather than by
+           * throwing, so the paused element is the only signal there is. Going
+           * back to muted keeps a picture on the screen, which is strictly
+           * better than being correct about the audio and showing nothing.
+           */
+          if (video.paused) {
+            video.muted = true;
+            video.play().catch(() => {});
+          }
+        },
+        { once: true },
+      );
+
       stage.append(video);
       button.closest('li')?.after(stage);
 
       stop = player.attach(video, button.dataset.play, fail, notice);
+      goFullscreen(stage, video);
       button.dataset.playing = '1';
       button.textContent = 'Stop';
     });
