@@ -2743,10 +2743,31 @@ app.get('/feeds/all.xml', async (c) => {
 });
 
 /**
+ * What a feed is called, or null if nobody publishes under that name.
+ *
+ * The name is resolved from the catalogue rather than from the fixtures, so a
+ * subject that is real but out of season still has a feed. See the route below.
+ */
+const feedSubjectName = async (scope, key) => {
+  if (scope === 'league') return (await q.getLeagueBySlug(key))?.name ?? null;
+  if (scope === 'team') return (await q.getTeamBySlug(key))?.display_name ?? null;
+  return (await q.sportExists(key)) ? key.replace(/-/g, ' ') : null;
+};
+
+/**
  * One route for sport, league and team feeds.
  *
  * Separate routes would be three near-identical handlers; the scope is validated
  * against a fixed set so the path cannot select an arbitrary column.
+ *
+ * The subject is resolved BEFORE its fixtures, the way /calendar/league does, and
+ * only an unknown name is a 404. Deciding on the fixtures instead -- no upcoming
+ * events, therefore not found -- reads as the same rule but is not: most of the
+ * catalogue is out of season most of the year, so it 404'd real sports for months
+ * at a time. That broke the /feeds directory and the feed sitemap, which link every
+ * sport in the catalogue, and it breaks any reader already subscribed, which sees a
+ * dead feed rather than a quiet one. An empty channel is valid RSS and is the honest
+ * answer: nothing is scheduled yet.
  */
 app.get('/feeds/:scope/:file', async (c) => {
   const scope = c.req.param('scope');
@@ -2754,21 +2775,15 @@ app.get('/feeds/:scope/:file', async (c) => {
   if (!m || !['sport', 'league', 'team'].includes(scope)) return c.notFound();
   const key = m[1];
 
+  const label = await feedSubjectName(scope, key);
+  if (!label) return c.notFound();
+
   const events = await q.feedEvents({
     sport: scope === 'sport' ? key : null,
     leagueSlug: scope === 'league' ? key : null,
     teamSlug: scope === 'team' ? key : null,
     limit: 150,
   });
-  // An empty feed for a name nobody publishes is a 404, not a valid empty channel.
-  if (events.length === 0) return c.notFound();
-
-  const label =
-    scope === 'league'
-      ? (events[0].league_name ?? key)
-      : scope === 'team'
-        ? key.replace(/-/g, ' ')
-        : key.replace(/-/g, ' ');
 
   feedHeaders(c, 300);
   return c.body(

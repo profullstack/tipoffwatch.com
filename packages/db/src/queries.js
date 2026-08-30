@@ -1484,6 +1484,22 @@ export async function listSports() {
   return sql`select sport, count(*)::int as leagues from leagues where active and superseded_by is null group by sport order by sport`;
 }
 
+/**
+ * Does anything publish under this sport slug?
+ *
+ * Deliberately the same predicate as listSports(), because that is what the feed
+ * directory and the feed sitemap link. Anything narrower -- "and has a fixture
+ * upcoming", say -- puts an out-of-season sport in the directory and a 404 behind
+ * the link, which is exactly the bug this replaced: hockey, lacrosse and water polo
+ * were all listed and all dead.
+ */
+export async function sportExists(sport) {
+  const [row] = await sql`
+    select 1 from leagues where active and superseded_by is null and sport = ${sport} limit 1
+  `;
+  return Boolean(row);
+}
+
 /** Trigram search over team names, for the follow picker. */
 export async function searchTeams(term, limit = 25) {
   return sql`
