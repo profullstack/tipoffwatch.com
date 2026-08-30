@@ -28,8 +28,8 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
-
 import { buildFeed } from './lib/rss.js';
+import { SECURITY_HEADERS } from './lib/security-headers.js';
 import { Feeds } from './views/feeds.jsx';
 import {
   About,
@@ -138,6 +138,19 @@ app.use('*', async (c, next) => {
   return next();
 });
 
+/*
+ * Security headers, on everything.
+ *
+ * Registered before any route so it covers the assets and the feeds too, not just
+ * the pages -- `nosniff` on a stylesheet is the half of it people forget. The
+ * policy itself lives in lib/security-headers.js next to the hash of the one
+ * inline script it has to allow.
+ */
+app.use('*', async (c, next) => {
+  await next();
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
+});
+
 app.use('*', async (c, next) => {
   const sid = getCookie(c, config.session.cookie);
   const user = sid ? await auth.userFromRequest(sid) : null;
@@ -181,7 +194,23 @@ async function cached(c, key, ttl, produce) {
   // Only ever cache what is identical for everyone. A signed-in page carries follow
   // stars and the visitor's own timezone, so it is rendered fresh -- caching it would
   // serve one person's calendar to the next visitor.
-  if (!config.cache.enabled || c.get('user')) return c.html(await produce());
+  if (!config.cache.enabled || c.get('user')) {
+    // And say so out loud. Without this header an intermediary is free to apply
+    // its own default heuristic to a page with somebody's follow list on it.
+    if (c.get('user')) c.header('cache-control', 'private, no-store');
+    return c.html(await produce());
+  }
+
+  /*
+   * The same TTL the render is held for, offered to everyone downstream.
+   *
+   * There was no Cache-Control at all, so every crawler and CDN had to guess --
+   * and a crawler that guesses conservatively re-fetches a page that has not
+   * changed, which for a site whose homepage is one Redis read is pure waste on
+   * both sides. `s-maxage` lets a shared cache hold it for the full window while
+   * a browser revalidates sooner.
+   */
+  c.header('cache-control', `public, max-age=${Math.min(ttl, 60)}, s-maxage=${ttl}`);
 
   try {
     const hit = await connection.get(key);

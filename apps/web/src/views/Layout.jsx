@@ -1,6 +1,7 @@
 import { brand, config, href, Word } from '@tipoff/config';
-import { html } from 'hono/html';
+import { html, raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
+import { vapidScript } from '../lib/security-headers.js';
 
 /**
  * The single HTML shell. Everything renders through here, including the signed-out
@@ -220,7 +221,11 @@ export const Layout = (props) => (
           site works without this file -- it only adds notifications. */}
       <script src={assetUrl('vendor-webauthn.js')} defer />
       <script src={assetUrl('app.js')} defer />
-      {props.vapidKey ? html`<script>window.__VAPID = "${props.vapidKey}";</script>` : null}
+      {/* The only inline script on the site. Its exact bytes come from
+          vapidScript() because the Content-Security-Policy hashes them -- writing
+          the assignment out again here would break the page the next time either
+          copy is edited. */}
+      {props.vapidKey ? html`<script>${raw(vapidScript(props.vapidKey))}</script>` : null}
       {/* One page needs a script of its own; the rest must not carry it. */}
       {props.script ? <script src={props.script} defer /> : null}
     </body>
