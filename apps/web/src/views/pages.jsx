@@ -11,6 +11,19 @@ import {
 } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
+/*
+ * A sentence describing THIS page, for the meta description and the share cards.
+ *
+ * Fifty pages crawled, fifty copies of brand.description: an answer engine reads
+ * that as fifty interchangeable pages, keeps one and drops the rest. These are
+ * built from what the page already shows -- a count, a name, a league -- rather
+ * than written per page, because a description that is maintained by hand is a
+ * description that goes stale the first time the catalogue changes.
+ *
+ * Brand vocabulary throughout: the sibling site has genres and releases, not
+ * leagues and fixtures.
+ */
+
 /**
  * The markets a fixture is carried in, normalised for rendering.
  *
@@ -451,7 +464,15 @@ export const SportsIndex = ({
   soonTotal,
   soonHours,
 }) => (
-  <Layout title="Sports" user={user} canonical={href.category()}>
+  <Layout
+    title="Sports"
+    user={user}
+    canonical={href.category()}
+    description={
+      `Every ${brand.words.category} and ${brand.words.collection} we cover. Follow any ` +
+      `${brand.words.participant} for a free reminder before it plays -- notification, email or calendar feed.`
+    }
+  >
     <h1>{brand.copy.browse}</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
 
@@ -564,7 +585,17 @@ export const SportsIndex = ({
  * you have this" is asking about their line, not about our catalogue.
  */
 export const SearchPage = ({ user, term, sport, results }) => (
-  <Layout title={term ? `${term} — search` : 'Search'} user={user} q={term}>
+  <Layout
+    title={term ? `${term} — search` : 'Search'}
+    user={user}
+    q={term}
+    noindex
+    description={
+      term
+        ? `Search results for "${term}".`
+        : `Search every ${brand.words.category}, ${brand.words.collection} and ${brand.words.participant} we cover.`
+    }
+  >
     <h1>Search</h1>
 
     <form method="get" action="/search" class="searchbar">
@@ -748,7 +779,15 @@ export const SportPage = ({
   const liveEmpty = `Nothing in ${name} is on right now.`;
   const soonEmpty = `Nothing in ${name} starts in the next ${soonHours} hours.`;
   return (
-    <Layout title={sport} user={user} canonical={href.category(sport)}>
+    <Layout
+      title={sport}
+      user={user}
+      canonical={href.category(sport)}
+      description={
+        `${leagues.length} ${brand.words.collections} in ${name}. Upcoming ${brand.words.events}, ` +
+        `live scores, and a free reminder before each one.`
+      }
+    >
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>
           <a href={href.category()}>{Word.collections}</a>
@@ -821,6 +860,10 @@ export const LeaguePage = ({
       title={league.name}
       user={user}
       canonical={href.collection(league.slug)}
+      description={
+        `${league.name} schedule and live scores. ${teams.length} ${brand.words.participants}, ` +
+        `upcoming ${brand.words.events} in your own time zone, and a free reminder before each one.`
+      }
       feedUrl={`/feeds/league/${league.slug}.xml`}
       feedTitle={`${league.name} fixtures`}
     >
@@ -919,6 +962,11 @@ export const TeamPage = ({
       title={team.display_name}
       user={user}
       canonical={href.participant(team.slug)}
+      description={
+        `${team.display_name} schedule, results and live scores` +
+        `${team.league_name ? ` in ${team.league_name}` : ''}. Next ${brand.words.events} in your ` +
+        `own time zone, with a free notification and email before each one.`
+      }
       feedUrl={`/feeds/team/${team.slug}.xml`}
       feedTitle={`${team.display_name} fixtures`}
     >
@@ -1337,6 +1385,11 @@ export const EventPage = ({
       title={event.name}
       user={user}
       canonical={`/events/${event.id}`}
+      description={
+        `${event.name}${event.league_name ? ` — ${event.league_name}` : ''}` +
+        `${event.venue ? ` at ${event.venue}` : ''}. Start time in your own time zone, live score, ` +
+        `and a free reminder before it starts.`
+      }
       /* The fixture, and the trail rendered just below, said in the vocabulary an
          answer engine reads. Neither adds a fact the page does not already show --
          they say which visible fact is the kickoff and which is the venue. */
@@ -2749,7 +2802,7 @@ export const About = ({ user, stats }) => (
 );
 
 export const NotFound = ({ user }) => (
-  <Layout title="Not found" user={user}>
+  <Layout title="Not found" user={user} noindex description="This page does not exist.">
     <h1>Not found</h1>
     <p>
       <a href="/">{brand.copy.notFound}</a>
