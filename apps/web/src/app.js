@@ -32,6 +32,7 @@ import { buildFeed } from './lib/rss.js';
 import { SECURITY_HEADERS } from './lib/security-headers.js';
 import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
 import { Feeds } from './views/feeds.jsx';
+import { Contact, Privacy, Terms } from './views/legal.jsx';
 import {
   About,
   Channels,
@@ -2609,6 +2610,25 @@ app.get('/api/v1/events', async (c) => {
   return c.json({ count: events.length, events });
 });
 
+/*
+ * The three pages a reader is entitled to and the site did not have.
+ *
+ * Cached like any other page that is identical for everyone. They are static, so
+ * the TTL is long -- but they go through cached() rather than being served as
+ * strings so the signed-in header still renders for whoever is signed in.
+ */
+app.get('/privacy', (c) =>
+  cached(c, 'page:privacy', 86400, () => render(<Privacy user={c.get('user')} />)),
+);
+
+app.get('/terms', (c) =>
+  cached(c, 'page:terms', 86400, () => render(<Terms user={c.get('user')} />)),
+);
+
+app.get('/contact', (c) =>
+  cached(c, 'page:contact', 86400, () => render(<Contact user={c.get('user')} />)),
+);
+
 app.get('/about', async (c) => {
   const stats = await q.catalogueStats();
   return c.html(await render(<About user={c.get('user')} stats={stats} />));
@@ -2803,7 +2823,18 @@ app.get('/sitemap.xml', async (c) => {
 });
 
 app.get('/sitemaps/static.xml', (c) => {
-  const paths = ['/', href.category(), '/about', '/login', '/signup'];
+  // /login and /signup are Disallowed in robots.txt, so listing them here asked a
+  // crawler to fetch what the same site had just told it not to.
+  const paths = [
+    '/',
+    href.category(),
+    '/about',
+    '/feeds',
+    '/premium',
+    '/contact',
+    '/privacy',
+    '/terms',
+  ];
   c.header('content-type', 'application/xml');
   return c.body(
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths

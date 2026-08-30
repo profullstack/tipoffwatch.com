@@ -30,7 +30,7 @@ export const Layout = (props) => {
         <title>
           {props.title ? `${props.title} · ${brand.name}` : `${brand.name} — ${brand.tagline}`}
         </title>
-        <meta name="description" content={props.description ?? brand.description} />
+        <meta name="description" content={description} />
         {/* Matches the stylesheet's ground so browser chrome and the PWA splash do
           not flash white before a dark page paints. */}
         <meta name="theme-color" content="#12161f" />
@@ -275,6 +275,12 @@ export const Layout = (props) => {
           <p class="muted">
             <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
             <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
+          </p>
+          {/* A privacy policy nobody can find is a privacy policy nobody has. The
+              footer is on every page, which is the only place these three belong. */}
+          <p class="muted">
+            <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+            <a href="/terms">Terms</a>
           </p>
         </footer>
 
