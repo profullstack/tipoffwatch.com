@@ -14,6 +14,7 @@
  */
 
 import { config } from '@tipoff/config';
+import { canonicalBroadcaster } from './broadcasters.js';
 
 const CORE = 'https://sports.core.api.espn.com/v2';
 const SITE = 'https://site.api.espn.com/apis/site/v2/sports';
@@ -489,7 +490,15 @@ function normaliseEvent(e, providerKey) {
   // Kept as a list as well as a string. The joined form is what the feeds and the
   // legacy column want; the list is what the market picker needs, and splitting the
   // string back apart would be guessing that no broadcaster has a comma in its name.
-  const broadcastNames = [...new Set((comp.broadcasts ?? []).flatMap((b) => b.names ?? []))];
+  //
+  // Spelled out on the way in rather than on the way to the page, so the RSS item,
+  // the calendar entry and the API say the same thing the page does. ESPN writes
+  // "NBC Sports CA" because the field is about thirteen characters wide; the channel
+  // calls itself NBC Sports California and so does a reader's remote. Deduplicated
+  // afterwards, since two truncations can spell out to one name.
+  const broadcastNames = [
+    ...new Set((comp.broadcasts ?? []).flatMap((b) => b.names ?? []).map(canonicalBroadcaster)),
+  ];
   const broadcast = broadcastNames.join(', ') || null;
 
   return {
@@ -541,6 +550,11 @@ const isUndrawn = (c) =>
  * fixture means. The flag stands in for a crest: tennis has no club badge, and a
  * row with no image at all reads as broken rather than as neutral.
  */
+/** The carriers of one tennis match, spelled out and de-duplicated. */
+const tennisBroadcasters = (m) => [
+  ...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []).map(canonicalBroadcaster)),
+];
+
 const tennisSide = (c, providerKey) => {
   if (!c || isUndrawn(c)) return null;
   const name = c.athlete?.displayName ?? c.roster?.displayName;
@@ -626,9 +640,8 @@ function tennisMatches(tournament, providerKey) {
         // Neither side is at home, which the UI already knows how to render: no
         // home/away tags, and "vs" rather than "at".
         neutralSite: true,
-        broadcast:
-          [...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []))].join(', ') || null,
-        broadcastNames: [...new Set((m.broadcasts ?? []).flatMap((b) => b.names ?? []))],
+        broadcast: tennisBroadcasters(m).join(', ') || null,
+        broadcastNames: tennisBroadcasters(m),
         attendance: null,
         period: Number.isFinite(m.status?.period) ? m.status.period : null,
         displayClock: null,

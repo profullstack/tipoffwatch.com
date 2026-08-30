@@ -13,6 +13,7 @@
  * key="value" attributes or nothing at all.
  */
 
+import { spellsOut } from './broadcasters.js';
 import { normaliseTeam } from './sportsdb.js';
 
 /**
@@ -648,10 +649,23 @@ function isStationMark(t) {
  * @param {string} broadcaster  the name a provider gave for this market
  */
 export function channelMatchesName(channelTitle, broadcaster) {
+  return nameMatchRank(channelTitle, broadcaster) > 0;
+}
+
+/** The broadcaster's own words are in the title; nothing had to be worked out. */
+export const LITERAL = 3;
+
+/**
+ * The same question as channelMatchesName, answered with how sure it is: LITERAL,
+ * SPELLED, GUESSED, or 0 for no. Only the ranking uses this -- see
+ * marketsWithOwnChannels, where a channel that says the name outright puts out one
+ * that merely could be read as it.
+ */
+export function nameMatchRank(channelTitle, broadcaster) {
   const hay = normaliseTeam(channelTitle);
   const needle = normaliseTeam(broadcaster);
-  if (!hay || !needle) return false;
-  if (isPlaceholder(channelTitle)) return false;
+  if (!hay || !needle) return 0;
+  if (isPlaceholder(channelTitle)) return 0;
   if (needle.length < 4) {
     const own = nameTokens(channelName(channelTitle)).filter((t) => !FEED_VARIANT.has(t));
 
@@ -663,9 +677,10 @@ export function channelMatchesName(channelTitle, broadcaster) {
     while (i < own.length && own[i] !== needle && own[i].length <= 2) i++;
 
     // The network has to LEAD what is left. "CNBC" and "MSNBC" are their own first
-    // word and are not NBC.
-    if (own[i] !== needle) return false;
-    const rest = own.slice(i + 1);
+    // word and are not NBC. A name that does not lead is not finished with here --
+    // it falls through to the abbreviation rules below, which is how a three-letter
+    // initialism like CHSN or SNY finds the name it stands for.
+    const rest = own[i] === needle ? own.slice(i + 1) : null;
 
     /*
      * What follows has to be the station rather than a brand -- or, failing that,
@@ -677,14 +692,22 @@ export function channelMatchesName(channelTitle, broadcaster) {
      * essentially nothing else. Sub-brands never carry one, which is why NBC Sports
      * Washington and CBS Sports Golazo Network still fail here.
      */
-    return rest.every(isStationMark) || rest.some(isCallSign);
+    if (rest && (rest.every(isStationMark) || rest.some(isCallSign))) return LITERAL;
+  } else {
+    const words = new Set(nameTokens(channelTitle));
+    const own = nameTokens(broadcaster);
+    if (own.length > 0 && own.every((t) => words.has(t))) return LITERAL;
   }
 
-  const words = new Set(nameTokens(channelTitle));
-  const own = nameTokens(broadcaster);
-  if (own.length === 0) return false;
-
-  return own.every((t) => words.has(t));
+  /*
+   * Everything above needs the broadcaster's words to actually be in the title, and
+   * a provider with thirteen characters to spend does not write them: ESPN files
+   * "NBC Sports CA", "MLB.TV", "USA Net", "CHSN". None of those shares a full word
+   * with the row a reader's list carries for it. See broadcasters.js -- the last
+   * word may stand for the rest, a "TV" and a "Network" are the same claim, and one
+   * word may stand for several as long as it begins each of them.
+   */
+  return spellsOut(broadcaster, channelName(channelTitle));
 }
 
 /**
@@ -702,8 +725,24 @@ export function marketsWithOwnChannels(markets, channels) {
   return (markets ?? []).map((m) => ({
     country: m.country,
     channels: (m.channels ?? []).map((name) => {
-      const found = (channels ?? [])
-        .filter((c) => channelMatchesName(c.title, name))
+      const ranked = (channels ?? [])
+        .map((c) => ({ c, rank: nameMatchRank(c.title, name) }))
+        .filter((x) => x.rank > 0);
+
+      /*
+       * Only the surest reading of the name is offered.
+       *
+       * A set of initials can genuinely fit two channels -- MASN is Mid-Atlantic
+       * Sports Network and is also, letter for letter, a way to cut up Marquee
+       * Sports Network -- and offering both puts the wrong regional in front of a
+       * reader who has the right one. So a channel that spells the name out ends
+       * any argument with one that merely could be read as it, and only when
+       * nothing better fits is a guess worth showing at all.
+       */
+      const best = Math.max(...ranked.map((x) => x.rank), 0);
+      const found = ranked
+        .filter((x) => x.rank === best)
+        .map((x) => x.c)
         // The plainest title first: a provider carrying one thing on several slots
         // gives the primary the shortest name, and the long ones are regional
         // alternates and replays with a date baked in.
