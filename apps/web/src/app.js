@@ -30,6 +30,7 @@ import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle
 import { buildCalendar } from './lib/ics.js';
 import { buildFeed } from './lib/rss.js';
 import { SECURITY_HEADERS } from './lib/security-headers.js';
+import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
 import { Feeds } from './views/feeds.jsx';
 import {
   About,
@@ -2565,7 +2566,7 @@ app.post('/api/invite/email', async (c) => {
 app.get('/api/v1', async (c) => {
   const stats = await q.catalogueStats();
   return c.json({
-    name: 'TipoffWatch API',
+    name: `${brand.name} API`,
     version: 1,
     documentation: `${config.siteUrl}/api/v1`,
     license: 'Free to use, no key required. Be reasonable.',
@@ -2942,11 +2943,41 @@ app.get('/manifest.webmanifest', (c) =>
  * for every signed-out visitor, they carry nothing a search result should point
  * at, and /api/ answers callers rather than readers.
  */
-app.get('/robots.txt', (c) =>
-  c.text(
-    `User-agent: AwarioBot\nDisallow: /\n\nUser-agent: *\nAllow: /\nDisallow: /login\nDisallow: /signup\nDisallow: /auth/\nDisallow: /api/\nSitemap: ${config.siteUrl}/sitemap.xml\n`,
-  ),
-);
+app.get('/robots.txt', (c) => {
+  c.header('cache-control', 'public, max-age=3600');
+  return c.text(robotsTxt());
+});
+
+/*
+ * The three files written for machines.
+ *
+ * llms.txt is a map of the site for a model with one request to spend; skill.md
+ * says what an agent can call rather than read; security.txt gives a researcher
+ * somewhere to send a report. All three were 404s, which for a site whose whole
+ * value is machine-readable schedule data was the wrong answer.
+ *
+ * Served from routes rather than public/ because they name the brand, the live
+ * catalogue counts and the site's own origin -- a static file would describe
+ * whichever site was checked in.
+ */
+app.get('/llms.txt', async (c) => {
+  // The counts are the same ones /about shows, and they are cheap and cached.
+  const stats = await q.catalogueStats().catch(() => ({}));
+  c.header('content-type', 'text/plain; charset=utf-8');
+  c.header('cache-control', 'public, max-age=3600');
+  return c.body(llmsTxt(stats));
+});
+
+app.get('/skill.md', (c) => {
+  c.header('content-type', 'text/markdown; charset=utf-8');
+  c.header('cache-control', 'public, max-age=3600');
+  return c.body(skillMd());
+});
+
+app.get('/.well-known/security.txt', (c) => {
+  c.header('content-type', 'text/plain; charset=utf-8');
+  return c.body(securityTxt());
+});
 
 const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],
