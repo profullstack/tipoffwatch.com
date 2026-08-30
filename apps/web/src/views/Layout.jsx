@@ -1,81 +1,143 @@
 import { brand, config, href, Word } from '@tipoff/config';
-import { html } from 'hono/html';
+import { html, raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
+import { serialise, siteGraph } from '../lib/jsonld.js';
+import { vapidScript } from '../lib/security-headers.js';
 
 /**
  * The single HTML shell. Everything renders through here, including the signed-out
  * landing page -- a second shell is how site-wide tags end up missing for exactly
  * the visitors who matter most.
  */
-export const Layout = (props) => (
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-      <title>
-        {props.title ? `${props.title} · ${brand.name}` : `${brand.name} — ${brand.tagline}`}
-      </title>
-      <meta name="description" content={props.description ?? brand.description} />
-      {/* Matches the stylesheet's ground so browser chrome and the PWA splash do
-          not flash white before a dark page paints. */}
-      <meta name="theme-color" content="#12161f" />
-      <link rel="manifest" href="/manifest.webmanifest" />
+export const Layout = (props) => {
+  /*
+   * Derived once, used by the meta description, og: and twitter: alike.
+   *
+   * Every page but /about and /feeds fell through to brand.description, so a
+   * crawl of fifty pages found fifty copies of one sentence -- which tells an
+   * answer engine the pages are interchangeable, and it picks one and drops the
+   * rest. Pages pass their own now; the fallback stays for the homepage, where
+   * the site's description of itself is the correct description.
+   */
+  const description = props.description ?? brand.description;
+  const ogTitle = props.title ? `${props.title} · ${brand.name}` : brand.name;
 
-      {/* Deliberately NOT linking the 1254x1254 /favicon.png the generator emits:
+  return (
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <title>
+          {props.title ? `${props.title} · ${brand.name}` : `${brand.name} — ${brand.tagline}`}
+        </title>
+        <meta name="description" content={description} />
+        {/* Matches the stylesheet's ground so browser chrome and the PWA splash do
+          not flash white before a dark page paints. */}
+        <meta name="theme-color" content="#12161f" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+
+        {/* Deliberately NOT linking the 1254x1254 /favicon.png the generator emits:
           it is the same 1.4MB source image as the logo, and browsers would fetch it
           on every page to draw a 16px tab icon. The generated sizes are the point. */}
-      {/* Versioned like the stylesheet: icons sit behind a week-long cache, so
+        {/* Versioned like the stylesheet: icons sit behind a week-long cache, so
           redrawing one under its own name reaches nobody who has already visited.
           A new hash is a new URL, which is the only thing a cache respects. */}
-      <link rel="icon" type="image/png" sizes="32x32" href={assetUrl('icons/favicon-32.png')} />
-      <link rel="icon" type="image/png" sizes="16x16" href={assetUrl('icons/favicon-16.png')} />
-      {[180, 152, 144, 120, 76].map((s) => (
-        <link
-          key={s}
-          rel="apple-touch-icon"
-          sizes={`${s}x${s}`}
-          href={assetUrl(`icons/apple-touch-icon-${s}x${s}.png`)}
+        <link rel="icon" type="image/png" sizes="32x32" href={assetUrl('icons/favicon-32.png')} />
+        <link rel="icon" type="image/png" sizes="16x16" href={assetUrl('icons/favicon-16.png')} />
+        {[180, 152, 144, 120, 76].map((s) => (
+          <link
+            key={s}
+            rel="apple-touch-icon"
+            sizes={`${s}x${s}`}
+            href={assetUrl(`icons/apple-touch-icon-${s}x${s}.png`)}
+          />
+        ))}
+
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Tipoff" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="msapplication-TileColor" content="#12161f" />
+        <meta name="msapplication-config" content="/icons/browserconfig.xml" />
+        <meta
+          name="msapplication-TileImage"
+          content={assetUrl('icons/apple-touch-icon-144x144.png')}
         />
-      ))}
 
-      <meta name="apple-mobile-web-app-capable" content="yes" />
-      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-      <meta name="apple-mobile-web-app-title" content="Tipoff" />
-      <meta name="mobile-web-app-capable" content="yes" />
-      <meta name="msapplication-TileColor" content="#12161f" />
-      <meta name="msapplication-config" content="/icons/browserconfig.xml" />
-      <meta
-        name="msapplication-TileImage"
-        content={assetUrl('icons/apple-touch-icon-144x144.png')}
-      />
-
-      {/* Autodiscovery: a reader pointed at any page finds the feed without being
+        {/* Autodiscovery: a reader pointed at any page finds the feed without being
           told where it is. props.feedUrl narrows it to the league or team in view. */}
-      <link
-        rel="alternate"
-        type="application/rss+xml"
-        title={`${brand.name} — everything`}
-        href="/feeds/all.xml"
-      />
-      {props.feedUrl ? (
         <link
           rel="alternate"
           type="application/rss+xml"
-          title={props.feedTitle ?? 'Fixtures'}
-          href={props.feedUrl}
+          title={`${brand.name} — everything`}
+          href="/feeds/all.xml"
         />
-      ) : null}
+        {props.feedUrl ? (
+          <link
+            rel="alternate"
+            type="application/rss+xml"
+            title={props.feedTitle ?? 'Fixtures'}
+            href={props.feedUrl}
+          />
+        ) : null}
 
-      <link rel="stylesheet" href={assetUrl('styles.css')} />
-      {props.canonical ? (
-        <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
-      ) : null}
-      <meta property="og:title" content={props.title ?? 'TipoffWatch'} />
-      <meta property="og:type" content="website" />
-      <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
-      <meta name="twitter:card" content="summary" />
+        <link rel="stylesheet" href={assetUrl('styles.css')} />
+        {props.canonical ? (
+          <link rel="canonical" href={`${config.siteUrl}${props.canonical}`} />
+        ) : null}
+        {/*
+        A page that should never be a search result says so, rather than relying
+        on nobody linking to it. Search results and the 404 are the same page for
+        everyone and carry nothing a result should point at -- and robots.txt
+        cannot express "crawl this but do not index it", which is exactly what a
+        search page needs.
+      */}
+        {props.noindex ? <meta name="robots" content="noindex, follow" /> : null}
 
-      {/*
+        {/*
+        Open Graph and Twitter, completed.
+
+        og:title and og:image were here alone, so a shared link showed the site's
+        name over the site's description of ITSELF no matter which page was
+        shared -- and the page title was the one thing that varied. The
+        description falls back the same way the meta description does, so these
+        two can never disagree about what a page is.
+      */}
+        <meta property="og:title" content={ogTitle} />
+        <meta property="og:description" content={description} />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content={brand.name} />
+        {props.canonical ? (
+          <meta property="og:url" content={`${config.siteUrl}${props.canonical}`} />
+        ) : null}
+        <meta property="og:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content={ogTitle} />
+        <meta name="twitter:description" content={description} />
+        <meta name="twitter:image" content={`${config.siteUrl}/icons/icon-512x512.png`} />
+
+        {/*
+        Structured data.
+
+        The site graph goes on every page -- it is what lets an answer engine
+        resolve the NAME to an entity rather than paraphrasing whatever prose it
+        scraped -- and props.jsonld carries whatever the page itself is about.
+
+        These are data blocks, not code: `type="application/ld+json"` is never
+        executed, so the strict script-src in lib/security-headers.js does not
+        apply to them and they need no hash. The raw write is safe because
+        serialise() escapes `<` in every value -- a team name of `</script>`
+        would otherwise end the element and drop the page into the document.
+      */}
+        {[...siteGraph(), ...(props.jsonld ?? [])].map((node) => (
+          <script
+            key={node['@id'] ?? node['@type']}
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: serialise(node) }}
+          />
+        ))}
+
+        {/*
         Traffic counting, when a site id is configured.
 
         In the head with `async`: a view should be counted even if the reader
@@ -88,42 +150,42 @@ export const Layout = (props) => (
         first day counting its own visitors against this dashboard, with a test
         pinning the value so the mistake looked deliberate.
       */}
-      {config.analytics.enabled ? (
-        <script
-          src="https://crawlproof.com/stats.js"
-          data-site={config.analytics.crawlproofSite}
-          async
-        />
-      ) : null}
-    </head>
-    {/* Carries the zone the server has on file, so app.js can report a correction
+        {config.analytics.enabled ? (
+          <script
+            src="https://crawlproof.com/stats.js"
+            data-site={config.analytics.crawlproofSite}
+            async
+          />
+        ) : null}
+      </head>
+      {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens
         settings would otherwise get every reminder email stamped in UTC. */}
-    {/* data-tz is the zone the visitor CHOSE, and wins over the browser's when set:
+      {/* data-tz is the zone the visitor CHOSE, and wins over the browser's when set:
         a setting that does not change what you see is not a setting. data-known-tz
         is what the server currently has on file, so the client only reports a
         correction when it genuinely differs. */}
-    <body
-      data-tz={props.user?.timezone ?? null}
-      data-known-tz={props.user ? (props.user.timezone ?? 'UTC') : null}
-    >
-      <a class="skip" href="#main">
-        Skip to content
-      </a>
-      <header class="topbar">
-        {/* The mark carries the name, so the wordmark beside it was saying the
-            same thing twice. alt keeps it for anyone not seeing the image. */}
-        <a class="brand" href="/">
-          <img
-            src="/icons/icon-192x192.png"
-            alt="TipoffWatch"
-            width="192"
-            height="192"
-            class="brand-logo"
-          />
+      <body
+        data-tz={props.user?.timezone ?? null}
+        data-known-tz={props.user ? (props.user.timezone ?? 'UTC') : null}
+      >
+        <a class="skip" href="#main">
+          Skip to content
         </a>
+        <header class="topbar">
+          {/* The mark carries the name, so the wordmark beside it was saying the
+            same thing twice. alt keeps it for anyone not seeing the image. */}
+          <a class="brand" href="/">
+            <img
+              src="/icons/icon-192x192.png"
+              alt="TipoffWatch"
+              width="192"
+              height="192"
+              class="brand-logo"
+            />
+          </a>
 
-        {/*
+          {/*
           The search box, in the header, on every page.
 
           A plain GET form pointed at the page behind it. No script, no suggestion
@@ -135,94 +197,105 @@ export const Layout = (props) => (
           `props.q` puts the current query back in the box on the results page, so
           refining a search means editing what you typed rather than retyping it.
         */}
-        <search class="topsearch">
-          <form class="topsearch-form" method="get" action="/search">
-            <label class="sr-only" for="topsearch-q">
-              Search
-            </label>
-            <input
-              id="topsearch-q"
-              type="search"
-              name="q"
-              value={props.q ?? ''}
-              placeholder="Search everything"
-              autocomplete="off"
-              enterkeyhint="search"
-            />
-            <button type="submit" class="ghost">
-              Go
-            </button>
-          </form>
-        </search>
+          <search class="topsearch">
+            <form class="topsearch-form" method="get" action="/search">
+              <label class="sr-only" for="topsearch-q">
+                Search
+              </label>
+              <input
+                id="topsearch-q"
+                type="search"
+                name="q"
+                value={props.q ?? ''}
+                placeholder="Search everything"
+                autocomplete="off"
+                enterkeyhint="search"
+              />
+              <button type="submit" class="ghost">
+                Go
+              </button>
+            </form>
+          </search>
 
-        <nav>
-          <a href={href.category()}>{Word.categories}</a>
-          {props.user ? <a href="/following">{brand.copy.mine}</a> : null}
-          {/* The count rides on the user, set once in middleware, so a view stays
+          <nav>
+            <a href={href.category()}>{Word.categories}</a>
+            {props.user ? <a href="/following">{brand.copy.mine}</a> : null}
+            {/* The count rides on the user, set once in middleware, so a view stays
               a view and no render call has to remember to pass it. */}
-          {props.user ? (
-            <a href="/messages">
-              Messages
-              {props.user.unread ? (
-                <span class="unread-count">
-                  {props.user.unread > 99 ? '99+' : props.user.unread}
-                </span>
-              ) : null}
-            </a>
-          ) : null}
-          {/* Your own profile, once you have a handle. Without this the page was
+            {props.user ? (
+              <a href="/messages">
+                Messages
+                {props.user.unread ? (
+                  <span class="unread-count">
+                    {props.user.unread > 99 ? '99+' : props.user.unread}
+                  </span>
+                ) : null}
+              </a>
+            ) : null}
+            {/* Your own profile, once you have a handle. Without this the page was
               reachable only by typing its URL, which is a strange way to own a
               page that other people can see. */}
-          {props.user?.handle ? <a href={`/u/${props.user.handle}`}>Profile</a> : null}
-          {/* Shown to everybody, member or not. A member needs it to check what
+            {props.user?.handle ? <a href={`/u/${props.user.handle}`}>Profile</a> : null}
+            {/* Shown to everybody, member or not. A member needs it to check what
               they have earned, and somebody who is not needs to be able to find
               out what it costs -- a link that disappears once you join is a link
               nobody can use to look at their own balance. */}
-          <a href="/premium">{brand.copy.premiumTitle}</a>
-          {props.user ? (
-            <a href="/settings">Settings</a>
-          ) : (
-            <a class="cta" rel="nofollow" href="/login">
-              Sign in
-            </a>
-          )}
-        </nav>
-      </header>
+            <a href="/premium">{brand.copy.premiumTitle}</a>
+            {props.user ? (
+              <a href="/settings">Settings</a>
+            ) : (
+              <a class="cta" rel="nofollow" href="/login">
+                Sign in
+              </a>
+            )}
+          </nav>
+        </header>
 
-      <main id="main">{props.children}</main>
+        <main id="main">{props.children}</main>
 
-      <footer>
-        <p>
-          TipoffWatch is free. Times are shown in your own time zone (
-          <span data-tz-label>your device</span>).
-        </p>
-        {/* Two sources now, so the credit names both. Tennis moved off ESPN when it
+        <footer>
+          <p>
+            TipoffWatch is free. Times are shown in your own time zone (
+            <span data-tz-label>your device</span>).
+          </p>
+          {/* Two sources now, so the credit names both. Tennis moved off ESPN when it
             got its own provider, and a footer still crediting ESPN for it is wrong
             about where the fixture in front of the reader actually came from. */}
-        <p class="muted">
-          Schedule data from{' '}
-          <a href="https://www.espn.com" rel="noopener nofollow">
-            ESPN
-          </a>
-          's public API, and tennis from the{' '}
-          <a href="https://livetennisapi.com" rel="noopener nofollow">
-            Live Tennis API
-          </a>
-          . Not affiliated with either.
-        </p>
-        <p class="muted">
-          <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
-          <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
-        </p>
-      </footer>
+          <p class="muted">
+            Schedule data from{' '}
+            <a href="https://www.espn.com" rel="noopener nofollow">
+              ESPN
+            </a>
+            's public API, and tennis from the{' '}
+            <a href="https://livetennisapi.com" rel="noopener nofollow">
+              Live Tennis API
+            </a>
+            . Not affiliated with either.
+          </p>
+          <p class="muted">
+            <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
+            <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
+          </p>
+          {/* A privacy policy nobody can find is a privacy policy nobody has. The
+              footer is on every page, which is the only place these three belong. */}
+          <p class="muted">
+            <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
+            <a href="/terms">Terms</a>
+          </p>
+        </footer>
 
-      {/* Registers the service worker and wires the push opt-in. Everything on the
+        {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}
-      <script src={assetUrl('vendor-webauthn.js')} defer />
-      <script src={assetUrl('app.js')} defer />
-      {props.vapidKey ? html`<script>window.__VAPID = "${props.vapidKey}";</script>` : null}
-      {/* One page needs a script of its own; the rest must not carry it. */}
-      {props.script ? <script src={props.script} defer /> : null}
-    </body>
-  </html>
-);
+        <script src={assetUrl('vendor-webauthn.js')} defer />
+        <script src={assetUrl('app.js')} defer />
+        {/* The only inline script on the site. Its exact bytes come from
+          vapidScript() because the Content-Security-Policy hashes them -- writing
+          the assignment out again here would break the page the next time either
+          copy is edited. */}
+        {props.vapidKey ? html`<script>${raw(vapidScript(props.vapidKey))}</script>` : null}
+        {/* One page needs a script of its own; the rest must not carry it. */}
+        {props.script ? <script src={props.script} defer /> : null}
+      </body>
+    </html>
+  );
+};

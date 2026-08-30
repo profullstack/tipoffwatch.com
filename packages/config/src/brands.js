@@ -136,6 +136,16 @@ const BRANDS = {
         'Keep every message you have ever sent or received, not just the recent ones.',
       premiumInvites: 'Earn a share of what the people you bring in spend.',
     },
+    /*
+     * schema.org vocabulary for this brand's structured data.
+     *
+     * A fixture is a SportsEvent and a competitor is a SportsTeam; on the sibling
+     * site the same rows are a release and a title, and calling those a
+     * SportsEvent would be a lie told to every answer engine that reads it. So the
+     * TYPE is per brand while the shape of the markup is shared, the same way the
+     * vocabulary above works.
+     */
+    schema: { event: 'SportsEvent', participant: 'SportsTeam', collection: 'SportsOrganization' },
     providers: ['espn'],
     elsewhere: {},
   },
@@ -191,6 +201,9 @@ const BRANDS = {
         'Keep every message you have ever sent or received, not just the recent ones.',
       premiumInvites: 'Earn a share of what the people you bring in spend.',
     },
+    // A release is an Event with a start; the thing being released is a
+    // CreativeWork, and a genre is a collection of them rather than a league.
+    schema: { event: 'Event', participant: 'CreativeWork', collection: 'Thing' },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],
     /*
      * Sport is a link, not a section.

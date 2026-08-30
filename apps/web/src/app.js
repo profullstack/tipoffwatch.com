@@ -28,9 +28,11 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
-
 import { buildFeed } from './lib/rss.js';
+import { SECURITY_HEADERS } from './lib/security-headers.js';
+import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
 import { Feeds } from './views/feeds.jsx';
+import { Contact, Privacy, Terms } from './views/legal.jsx';
 import {
   About,
   Channels,
@@ -138,6 +140,19 @@ app.use('*', async (c, next) => {
   return next();
 });
 
+/*
+ * Security headers, on everything.
+ *
+ * Registered before any route so it covers the assets and the feeds too, not just
+ * the pages -- `nosniff` on a stylesheet is the half of it people forget. The
+ * policy itself lives in lib/security-headers.js next to the hash of the one
+ * inline script it has to allow.
+ */
+app.use('*', async (c, next) => {
+  await next();
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
+});
+
 app.use('*', async (c, next) => {
   const sid = getCookie(c, config.session.cookie);
   const user = sid ? await auth.userFromRequest(sid) : null;
@@ -181,7 +196,23 @@ async function cached(c, key, ttl, produce) {
   // Only ever cache what is identical for everyone. A signed-in page carries follow
   // stars and the visitor's own timezone, so it is rendered fresh -- caching it would
   // serve one person's calendar to the next visitor.
-  if (!config.cache.enabled || c.get('user')) return c.html(await produce());
+  if (!config.cache.enabled || c.get('user')) {
+    // And say so out loud. Without this header an intermediary is free to apply
+    // its own default heuristic to a page with somebody's follow list on it.
+    if (c.get('user')) c.header('cache-control', 'private, no-store');
+    return c.html(await produce());
+  }
+
+  /*
+   * The same TTL the render is held for, offered to everyone downstream.
+   *
+   * There was no Cache-Control at all, so every crawler and CDN had to guess --
+   * and a crawler that guesses conservatively re-fetches a page that has not
+   * changed, which for a site whose homepage is one Redis read is pure waste on
+   * both sides. `s-maxage` lets a shared cache hold it for the full window while
+   * a browser revalidates sooner.
+   */
+  c.header('cache-control', `public, max-age=${Math.min(ttl, 60)}, s-maxage=${ttl}`);
 
   try {
     const hit = await connection.get(key);
@@ -2536,7 +2567,7 @@ app.post('/api/invite/email', async (c) => {
 app.get('/api/v1', async (c) => {
   const stats = await q.catalogueStats();
   return c.json({
-    name: 'TipoffWatch API',
+    name: `${brand.name} API`,
     version: 1,
     documentation: `${config.siteUrl}/api/v1`,
     license: 'Free to use, no key required. Be reasonable.',
@@ -2578,6 +2609,25 @@ app.get('/api/v1/events', async (c) => {
   c.header('cache-control', 'public, max-age=60');
   return c.json({ count: events.length, events });
 });
+
+/*
+ * The three pages a reader is entitled to and the site did not have.
+ *
+ * Cached like any other page that is identical for everyone. They are static, so
+ * the TTL is long -- but they go through cached() rather than being served as
+ * strings so the signed-in header still renders for whoever is signed in.
+ */
+app.get('/privacy', (c) =>
+  cached(c, 'page:privacy', 86400, () => render(<Privacy user={c.get('user')} />)),
+);
+
+app.get('/terms', (c) =>
+  cached(c, 'page:terms', 86400, () => render(<Terms user={c.get('user')} />)),
+);
+
+app.get('/contact', (c) =>
+  cached(c, 'page:contact', 86400, () => render(<Contact user={c.get('user')} />)),
+);
 
 app.get('/about', async (c) => {
   const stats = await q.catalogueStats();
@@ -2773,7 +2823,18 @@ app.get('/sitemap.xml', async (c) => {
 });
 
 app.get('/sitemaps/static.xml', (c) => {
-  const paths = ['/', href.category(), '/about', '/login', '/signup'];
+  // /login and /signup are Disallowed in robots.txt, so listing them here asked a
+  // crawler to fetch what the same site had just told it not to.
+  const paths = [
+    '/',
+    href.category(),
+    '/about',
+    '/feeds',
+    '/premium',
+    '/contact',
+    '/privacy',
+    '/terms',
+  ];
   c.header('content-type', 'application/xml');
   return c.body(
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths
@@ -2913,11 +2974,41 @@ app.get('/manifest.webmanifest', (c) =>
  * for every signed-out visitor, they carry nothing a search result should point
  * at, and /api/ answers callers rather than readers.
  */
-app.get('/robots.txt', (c) =>
-  c.text(
-    `User-agent: AwarioBot\nDisallow: /\n\nUser-agent: *\nAllow: /\nDisallow: /login\nDisallow: /signup\nDisallow: /auth/\nDisallow: /api/\nSitemap: ${config.siteUrl}/sitemap.xml\n`,
-  ),
-);
+app.get('/robots.txt', (c) => {
+  c.header('cache-control', 'public, max-age=3600');
+  return c.text(robotsTxt());
+});
+
+/*
+ * The three files written for machines.
+ *
+ * llms.txt is a map of the site for a model with one request to spend; skill.md
+ * says what an agent can call rather than read; security.txt gives a researcher
+ * somewhere to send a report. All three were 404s, which for a site whose whole
+ * value is machine-readable schedule data was the wrong answer.
+ *
+ * Served from routes rather than public/ because they name the brand, the live
+ * catalogue counts and the site's own origin -- a static file would describe
+ * whichever site was checked in.
+ */
+app.get('/llms.txt', async (c) => {
+  // The counts are the same ones /about shows, and they are cheap and cached.
+  const stats = await q.catalogueStats().catch(() => ({}));
+  c.header('content-type', 'text/plain; charset=utf-8');
+  c.header('cache-control', 'public, max-age=3600');
+  return c.body(llmsTxt(stats));
+});
+
+app.get('/skill.md', (c) => {
+  c.header('content-type', 'text/markdown; charset=utf-8');
+  c.header('cache-control', 'public, max-age=3600');
+  return c.body(skillMd());
+});
+
+app.get('/.well-known/security.txt', (c) => {
+  c.header('content-type', 'text/plain; charset=utf-8');
+  return c.body(securityTxt());
+});
 
 const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],

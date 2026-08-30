@@ -1,5 +1,6 @@
 import { brand, href, Word } from '@tipoff/config';
 import { assetUrl } from '../lib/asset-version.js';
+import { breadcrumbNode, eventNode, faqNode } from '../lib/jsonld.js';
 import {
   EventList,
   FollowButton,
@@ -9,6 +10,19 @@ import {
   TeamRow,
 } from './components.jsx';
 import { Layout } from './Layout.jsx';
+
+/*
+ * A sentence describing THIS page, for the meta description and the share cards.
+ *
+ * Fifty pages crawled, fifty copies of brand.description: an answer engine reads
+ * that as fifty interchangeable pages, keeps one and drops the rest. These are
+ * built from what the page already shows -- a count, a name, a league -- rather
+ * than written per page, because a description that is maintained by hand is a
+ * description that goes stale the first time the catalogue changes.
+ *
+ * Brand vocabulary throughout: the sibling site has genres and releases, not
+ * leagues and fixtures.
+ */
 
 /**
  * The markets a fixture is carried in, normalised for rendering.
@@ -450,7 +464,15 @@ export const SportsIndex = ({
   soonTotal,
   soonHours,
 }) => (
-  <Layout title="Sports" user={user} canonical={href.category()}>
+  <Layout
+    title="Sports"
+    user={user}
+    canonical={href.category()}
+    description={
+      `Every ${brand.words.category} and ${brand.words.collection} we cover. Follow any ` +
+      `${brand.words.participant} for a free reminder before it plays -- notification, email or calendar feed.`
+    }
+  >
     <h1>{brand.copy.browse}</h1>
     <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
 
@@ -563,7 +585,17 @@ export const SportsIndex = ({
  * you have this" is asking about their line, not about our catalogue.
  */
 export const SearchPage = ({ user, term, sport, results }) => (
-  <Layout title={term ? `${term} — search` : 'Search'} user={user} q={term}>
+  <Layout
+    title={term ? `${term} — search` : 'Search'}
+    user={user}
+    q={term}
+    noindex
+    description={
+      term
+        ? `Search results for "${term}".`
+        : `Search every ${brand.words.category}, ${brand.words.collection} and ${brand.words.participant} we cover.`
+    }
+  >
     <h1>Search</h1>
 
     <form method="get" action="/search" class="searchbar">
@@ -747,7 +779,15 @@ export const SportPage = ({
   const liveEmpty = `Nothing in ${name} is on right now.`;
   const soonEmpty = `Nothing in ${name} starts in the next ${soonHours} hours.`;
   return (
-    <Layout title={sport} user={user} canonical={href.category(sport)}>
+    <Layout
+      title={sport}
+      user={user}
+      canonical={href.category(sport)}
+      description={
+        `${leagues.length} ${brand.words.collections} in ${name}. Upcoming ${brand.words.events}, ` +
+        `live scores, and a free reminder before each one.`
+      }
+    >
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>
           <a href={href.category()}>{Word.collections}</a>
@@ -820,6 +860,10 @@ export const LeaguePage = ({
       title={league.name}
       user={user}
       canonical={href.collection(league.slug)}
+      description={
+        `${league.name} schedule and live scores. ${teams.length} ${brand.words.participants}, ` +
+        `upcoming ${brand.words.events} in your own time zone, and a free reminder before each one.`
+      }
       feedUrl={`/feeds/league/${league.slug}.xml`}
       feedTitle={`${league.name} fixtures`}
     >
@@ -918,6 +962,11 @@ export const TeamPage = ({
       title={team.display_name}
       user={user}
       canonical={href.participant(team.slug)}
+      description={
+        `${team.display_name} schedule, results and live scores` +
+        `${team.league_name ? ` in ${team.league_name}` : ''}. Next ${brand.words.events} in your ` +
+        `own time zone, with a free notification and email before each one.`
+      }
       feedUrl={`/feeds/team/${team.slug}.xml`}
       feedTitle={`${team.display_name} fixtures`}
     >
@@ -1332,7 +1381,28 @@ export const EventPage = ({
   const recentPlays = plays.slice(0, 15);
 
   return (
-    <Layout title={event.name} user={user} canonical={`/events/${event.id}`}>
+    <Layout
+      title={event.name}
+      user={user}
+      canonical={`/events/${event.id}`}
+      description={
+        `${event.name}${event.league_name ? ` — ${event.league_name}` : ''}` +
+        `${event.venue ? ` at ${event.venue}` : ''}. Start time in your own time zone, live score, ` +
+        `and a free reminder before it starts.`
+      }
+      /* The fixture, and the trail rendered just below, said in the vocabulary an
+         answer engine reads. Neither adds a fact the page does not already show --
+         they say which visible fact is the kickoff and which is the venue. */
+      jsonld={[
+        eventNode(event),
+        breadcrumbNode([
+          [Word.collections, href.category()],
+          ...(event.sport ? [[event.sport.replace(/-/g, ' '), href.category(event.sport)]] : []),
+          ...(event.league_slug ? [[event.league_name, href.collection(event.league_slug)]] : []),
+          [event.short_name ?? event.name, null],
+        ]),
+      ]}
+    >
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>
           <a href={href.category()}>{Word.collections}</a>
@@ -2629,8 +2699,50 @@ export const Settings = ({
   </Layout>
 );
 
+/*
+ * The About page's own question headings, paired with the answers under them.
+ *
+ * Written out rather than derived from the JSX because the answers below carry
+ * links and emphasis, and an FAQ answer is plain text. The pairing is asserted by
+ * a test so an edited heading cannot leave the markup answering a question the
+ * page no longer asks.
+ */
+export const ABOUT_FAQ = [
+  [
+    'Is TipoffWatch really free?',
+    'Following teams, the calendar and the reminders are free and stay free. The only thing ' +
+      'anyone pays for is a live stream, when someone is sharing one.',
+  ],
+  [
+    'Where does the schedule data come from?',
+    "Schedules, teams and scores come from ESPN's public JSON API, and tennis from the Live " +
+      'Tennis API. We are not affiliated with either. Every response is normalised and stored ' +
+      'here, so the calendar keeps working when the upstream is slow or unavailable.',
+  ],
+  [
+    'What time zone are games shown in?',
+    "All times are stored in UTC and shown in your browser's own time zone. Emailed reminders " +
+      'use the zone set in your settings, since an email has no browser to ask.',
+  ],
+  [
+    'When will I be reminded about a game?',
+    'An hour before kickoff, and again a minute out -- by web notification, email, or both. ' +
+      'It also works as a calendar feed if you would rather not be notified at all.',
+  ],
+  [
+    'Is there an API?',
+    'Yes. The schedule is public data, so the API at /api/v1 is open and needs no key.',
+  ],
+];
+
 export const About = ({ user, stats }) => (
-  <Layout title="About" user={user} canonical="/about">
+  <Layout
+    title="About"
+    user={user}
+    canonical="/about"
+    description="What TipoffWatch is, where the schedule data comes from, how reminders work, and why it is free."
+    jsonld={[faqNode(ABOUT_FAQ)]}
+  >
     <h1>About TipoffWatch</h1>
     <p>
       A calendar for people who keep missing the start of games. Follow any team or competition and
@@ -2675,7 +2787,7 @@ export const About = ({ user, stats }) => (
       <a href="/settings">settings</a>, since an email has no browser to ask.
     </p>
 
-    <h2>Is it really free?</h2>
+    <h2>Is TipoffWatch really free?</h2>
     <p>
       Following teams, the calendar and the reminders are free and stay free. The only thing anyone
       pays for is a live stream, when someone is sharing one.
@@ -2690,7 +2802,7 @@ export const About = ({ user, stats }) => (
 );
 
 export const NotFound = ({ user }) => (
-  <Layout title="Not found" user={user}>
+  <Layout title="Not found" user={user} noindex description="This page does not exist.">
     <h1>Not found</h1>
     <p>
       <a href="/">{brand.copy.notFound}</a>
