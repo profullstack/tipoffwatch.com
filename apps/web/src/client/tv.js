@@ -79,104 +79,67 @@ export function isTvBrowser(userAgent) {
  *
  * @param {boolean} isTv
  */
-export function playerConfig(isTv) {
-  const shared = {
-    // lazyLoad pauses the download once enough is buffered, which for a live
-    // stream means dropping the connection mid-match and reconnecting.
-    lazyLoad: false,
+export function playerConfig(_isTv) {
+  return {
     /*
-     * Drop what has already been watched.
+     * Demux on a worker thread.
      *
-     * A football match is three hours. Without this the source buffer keeps
-     * every second of it in memory and the tab is killed somewhere in the
-     * second half -- on a Fire TV, considerably sooner than that.
+     * A transport stream at broadcast bitrate is real work, and on the main
+     * thread it competes with rendering the page it is playing on -- which
+     * shows up as dropped frames rather than as an error. mpegts.js builds the
+     * worker from a blob URL; we serve no CSP, so there is nothing to allow.
+     */
+    enableWorker: true,
+
+    /*
+     * Read ahead, on every screen.
+     *
+     * The stash sits in front of the demuxer. A transport stream arrives in
+     * bursts -- the provider's pacing, not the viewer's bandwidth -- so with
+     * nothing buffered each gap between bursts is an underrun however fast the
+     * connection is. 384KB is mpegts.js's own default, roughly a second.
+     */
+    enableStashBuffer: true,
+    stashInitialSize: 384 * 1024,
+
+    /*
+     * Never close drift by seeking.
+     *
+     * This is the line that made a desktop stutter and then killed the stream.
+     * mpegts.js implements chasing by assigning to `currentTime`; that is a
+     * hard seek, MSE rebuilds the decode pipeline on every one, it is evaluated
+     * on every appended fragment, and it leaves only `MinRemain` seconds of
+     * buffer behind -- one second, as this used to be set. One second is a
+     * single jitter spike from an underrun, the underrun refills past the
+     * ceiling, and it seeks again. Each hitch was also a chance to spend a
+     * restart, which is how a stutter became a stream that ended.
+     *
+     * The two bounds are inert while chasing is off. They are kept as the bound
+     * anyone re-enabling it would want, rather than left to a library default.
+     */
+    liveBufferLatencyChasing: false,
+    liveBufferLatencyMaxLatency: 5,
+    liveBufferLatencyMinRemain: 1,
+
+    /*
+     * Drop what has already been watched. Without this the source buffer keeps
+     * every second of a three-hour match in memory and the tab is killed -- on
+     * a Fire TV, considerably sooner than that.
      */
     autoCleanupSourceBuffer: true,
     autoCleanupMaxBackwardDuration: 30,
     autoCleanupMinBackwardDuration: 10,
-  };
 
-  if (isTv) {
-    return {
-      ...shared,
-      /*
-       * Read ahead, and do not chase.
-       *
-       * The stash is a read-ahead buffer. On a desktop it is pure added latency;
-       * on a stick going through the proxy it is the only thing standing between
-       * a wifi hiccup and a stall, so it is on and generously sized. 384KB is
-       * mpegts.js's own default and roughly a second of a broadcast bitrate.
-       *
-       * Latency chasing is off, and is now off on both screens. Its answer to
-       * drift is to seek the media element forward; on a link that drifts because
-       * it is struggling, that is a seek every few seconds, and a seek during a
-       * live stream is a rebuffer. Being ten seconds behind is not a complaint
-       * anybody makes. Stopping every ten seconds is.
-       *
-       * Nothing replaces it here. The desktop closes its drift with liveSync, but
-       * a stick is behind because it is struggling, and asking a CPU that is
-       * barely keeping up to decode at 1.1x is how you turn a slow stream into a
-       * stopped one. A television is allowed to run late.
-       *
-       * The two `liveBufferLatency*` numbers below are inert while chasing is off.
-       * They are kept because they are the bound anyone re-enabling it would want,
-       * and a bare `false` gives the next person nothing to reason from.
-       */
-      enableStashBuffer: true,
-      stashInitialSize: 384 * 1024,
-      liveBufferLatencyChasing: false,
-      liveBufferLatencyMaxLatency: 12,
-      liveBufferLatencyMinRemain: 2,
-    };
-  }
+    /*
+     * lazyLoad pauses the download once enough is buffered, which on a live
+     * stream means dropping the provider connection mid-match and reconnecting
+     * -- on a line that permits one connection, the worst available way to
+     * idle. Off, with both durations stated so there is no default to inherit.
+     */
+    lazyLoad: false,
+    lazyLoadMaxDuration: 60,
+    lazyLoadRecoverDuration: 30,
 
-  return {
-    ...shared,
-    /*
-     * Live settings for a screen with a real connection.
-     *
-     * These used to be the opposite of the television's on every line, on the
-     * reasoning that a laptop has bandwidth to spare and should therefore sit as
-     * close to the live edge as it can. The first half of that is true and the
-     * second half is what made the picture stutter, because of how mpegts.js
-     * closes the gap when it decides you have drifted.
-     *
-     * `liveBufferLatencyChasing` -- which the library's own source calls "not
-     * recommended" in the first line of the file that implements it -- answers
-     * drift by assigning to `currentTime`. That is a hard seek, and a hard seek
-     * on Media Source Extensions tears down the decode pipeline and builds it
-     * again: one visible hitch, every time it fires. It is evaluated on every
-     * buffered range update, so on every appended fragment, and it fires whenever
-     * the buffer is more than `MaxLatency` ahead -- leaving `MinRemain` behind,
-     * which was one second. One second of buffer is one jitter spike from an
-     * underrun, the underrun refills past six seconds, and it seeks again. That
-     * sawtooth is what "choppy" was: not a slow connection and not the provider,
-     * but the player repeatedly throwing away the buffer that would have covered
-     * for both.
-     *
-     * So the seek is gone and `liveSync` does the same job the way a live player
-     * is supposed to: when it is more than six seconds behind it plays at 1.1x
-     * until it is back within three, and then returns to 1x. Nothing is
-     * discarded, nothing rebuffers, and 1.1x is slight enough that the pitch
-     * shift is not something a viewer notices -- 1.2, the library default, is.
-     */
-    liveBufferLatencyChasing: false,
-    liveSync: true,
-    liveSyncMaxLatency: 6,
-    liveSyncTargetLatency: 3,
-    liveSyncPlaybackRate: 1.1,
-    /*
-     * And a stash, which is the other half of the same answer.
-     *
-     * The stash is a read-ahead buffer in front of the demuxer. It was off here
-     * because it costs latency, and that was the right trade only while chasing
-     * was going to throw the buffer away anyway. A transport stream arriving
-     * through the proxy is delivered in bursts -- the provider's pacing, not
-     * ours -- and with no stash each burst is demuxed the instant it lands and
-     * each gap between bursts is an underrun. A third of the television's stash
-     * absorbs the gap; liveSync gives the latency back.
-     */
-    enableStashBuffer: true,
-    stashInitialSize: 128 * 1024,
+    seekType: 'range',
   };
 }
