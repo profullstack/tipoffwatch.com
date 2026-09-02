@@ -16,129 +16,34 @@
 import { spellsOut } from './broadcasters.js';
 import { normaliseTeam } from './sportsdb.js';
 
-/**
- * Fallback ceiling for callers that do not pass one.
+/*
+ * The parsing half now lives in `@profullstack/player/m3u`, and this file keeps
+ * the half that is ours: what a channel is CALLED and whether it is carrying
+ * tonight's fixture.
  *
- * The real limit is configuration -- see playlists.maxChannels -- because it had to
- * become a knob: at 20,000 this silently truncated a 300,000-entry VOD catalogue
- * and the reader had no way to tell which entries were missing.
+ * genrewatch is a port of this repo and read the same playlists with the same
+ * code, so the parser existed twice and was fixed twice -- the same reason the
+ * codec table moved. And the shared version is streaming, which this one could
+ * not be: holding a reader's catalogue as one string, hashing it into a second
+ * copy and splitting it into an array of every line is what stopped the sibling
+ * site answering, five minutes after every boot.
+ *
+ * Re-exported rather than re-pointed at every call site, so the existing imports
+ * of `parseM3u`/`entryKind`/`MAX_CHANNELS` do not all have to move to say the
+ * same thing.
  */
-export const MAX_CHANNELS = 300_000;
+export {
+  createM3uParser,
+  MAX_CHANNELS,
+  parseM3u,
+  parseM3uStream,
+} from '@profullstack/player/m3u';
 
-/**
- * Pull `key="value"` pairs out of the attribute block of an #EXTINF line.
- *
- * Only the block BEFORE the last comma is scanned. Attribute values routinely
- * contain commas ("Sports, US"), which is what made the old first-comma split
- * wrong: it truncated the title of every channel whose group had one in it.
- */
-function parseAttrs(head) {
-  /** @type {Record<string,string>} */
-  const out = {};
-  for (const m of head.matchAll(/([a-zA-Z0-9_-]+)="([^"]*)"/g)) {
-    out[m[1].toLowerCase()] = m[2];
-  }
-  return out;
-}
+// Imported as well as re-exported: `export ... from` creates no local binding, and
+// the ranker below calls entryKind for rows stored before the column existed.
+import { entryKind } from '@profullstack/player/m3u';
 
-/**
- * What kind of entry this is: a live channel, a film, or an episode of a series.
- *
- * Read off the URL first, because a provider panel encodes it there and is
- * consistent about it -- /live/, /movie/, /series/, or a file extension. The group
- * is the fallback for the lists that do not.
- *
- * The distinction is not cosmetic: a file is available whenever you want it and a
- * channel is a claim about right now, so conflating the two puts a maybe above a
- * certainty in every ranked list.
- */
-export function entryKind({ url, group } = {}) {
-  const u = String(url ?? '').toLowerCase();
-  if (/\/series\//.test(u)) return 'series';
-  if (/\/(movie|movies|vod)\//.test(u)) return 'vod';
-  if (/\.(mkv|mp4|avi|m4v)(\?|$)/.test(u)) return 'vod';
-  if (/\/live\//.test(u) || /\.(ts|m3u8)(\?|$)/.test(u)) return 'live';
-
-  // Nothing in the URL says. Fall back to the group, which usually does.
-  const g = String(group ?? '').toLowerCase();
-  if (/\b(vod|on ?demand|movies?|films?)\b/.test(g)) return 'vod';
-  if (/\b(series|shows?|tv ?shows?)\b/.test(g)) return 'series';
-  return 'live';
-}
-
-/**
- * Split an M3U into { title, group, url, kind } entries.
- *
- * Only `#EXTINF` followed by a URL counts. Everything else -- `#EXTM3U`,
- * `#EXT-X-SESSION-DATA`, comments, blank lines -- is skipped rather than guessed
- * at, because a playlist that half-parses is worse than one that does not.
- *
- * Ported from the sibling brand, which had already fixed two things here: the
- * title is taken from the LAST comma rather than the first, and `group-title` is
- * kept. The group is what a provider calls the shelf a channel sits on -- "Sports
- * | US", "PPV", "UK Documentary" -- and it is the most useful single string in the
- * file for telling a reader what one of their own entries actually is.
- *
- * @param {string} text
- */
-export function parseM3u(text, { max = MAX_CHANNELS } = {}) {
-  const lines = String(text ?? '').split(/\r?\n/);
-  const out = [];
-  /** `#EXTGRP:` is the other way providers state a group; it applies until changed. */
-  let currentGroup = null;
-
-  for (let i = 0; i < lines.length && out.length < max; i++) {
-    const line = lines[i].trim();
-
-    if (line.startsWith('#EXTGRP:')) {
-      currentGroup = line.slice('#EXTGRP:'.length).trim() || null;
-      continue;
-    }
-    if (!line.startsWith('#EXTINF')) continue;
-
-    /*
-     * The title is everything after the LAST comma, not the first.
-     *
-     * The attribute block before it may itself contain commas inside quotes, and
-     * on a real provider list it usually does -- group-title="Sports, US" is
-     * ordinary. Splitting on the first comma turns every such title into a
-     * fragment of its own metadata, which is what this used to do.
-     */
-    const comma = line.lastIndexOf(',');
-    if (comma < 0) continue;
-    const head = line.slice(0, comma);
-    const title = line.slice(comma + 1).trim();
-    const attrs = parseAttrs(head);
-
-    // The URL is the next line that is not another directive. Providers sometimes
-    // interleave #EXTVLCOPT or #EXTGRP between the two.
-    let url = null;
-    for (let j = i + 1; j < lines.length; j++) {
-      const cand = lines[j].trim();
-      if (!cand) continue;
-      if (cand.startsWith('#EXTGRP:')) {
-        currentGroup = cand.slice('#EXTGRP:'.length).trim() || currentGroup;
-        continue;
-      }
-      if (cand.startsWith('#')) continue;
-      url = cand;
-      i = j;
-      break;
-    }
-    if (!url) continue;
-    if (!/^https?:\/\//i.test(url)) continue;
-
-    // A title is optional in the wild -- a numbered slot with nothing on it yet
-    // ("NFL 03:") is normal -- so fall back to tvg-name before giving up.
-    const name = title || attrs['tvg-name'] || '';
-    if (!name) continue;
-
-    const group = attrs['group-title'] || currentGroup || null;
-    out.push({ title: name, group, url, kind: entryKind({ url, group }) });
-  }
-
-  return out;
-}
+export { entryKind };
 
 /**
  * The distinct groups in a list, largest first.

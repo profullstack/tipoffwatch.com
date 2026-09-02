@@ -37,7 +37,12 @@ describe('the byte ceiling', () => {
       'utf8',
     );
     expect(src).toContain("res.headers.get('content-length')");
-    expect(src).toContain('text.length > config.playlists.maxBytes');
+    // Counted off the wire now, not measured on a finished string: a provider
+    // that understates its content-length is abandoned mid-download rather than
+    // after we have already read all of it.
+    expect(src).toContain('bytes > config.playlists.maxBytes');
+    const cb = src.slice(src.indexOf('onChunk: (chunk)'));
+    expect(cb.slice(0, cb.indexOf('},'))).toContain('bytes > config.playlists.maxBytes');
   });
 });
 
@@ -64,7 +69,9 @@ describe('the entry ceiling', () => {
       new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
       'utf8',
     );
-    expect(src).toContain('truncated: channels.length >= config.playlists.maxChannels');
+    // The parser reports it now, rather than the caller inferring it from a
+    // length: it is the half that knows it stopped accepting entries.
+    expect(src).toContain('truncated: list.truncated');
   });
 });
 
@@ -87,7 +94,7 @@ describe('polling a large list', () => {
   });
 
   test('and the size actually reaches it', () => {
-    expect(src).toContain('nextRefreshAt(text.length)');
+    expect(src).toContain('nextRefreshAt(bytes)');
     expect(src).not.toMatch(/nextRefreshAt\(\)/);
   });
 });
@@ -164,5 +171,29 @@ describe('reading a large list back', () => {
     );
     expect(playlists).toContain('q.playlistChannelCount(userId)');
     expect(playlists).not.toContain('channelCount: rows.length');
+  });
+});
+
+/*
+ * The regression this change exists to prevent.
+ *
+ * `await res.text()` held a reader's catalogue as one string, hashed it into a
+ * second copy and split it into an array of every line. Beside the HTTP server
+ * that starved it -- which is exactly what happened on genrewatch, running this
+ * same code: 513 connections banked up in the accept queue and the edge
+ * answering "connection dial timeout", every five minutes after boot.
+ */
+describe('the body is never buffered whole', () => {
+  test('the refresh streams, hashes per chunk, and holds no string', () => {
+    const src = readFileSync(
+      new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    // Comments stripped first: the one above the fetch quotes the old call by
+    // name, and a guard that its own explanation trips is worse than none.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toContain('res.text()');
+    expect(code).toContain('parseM3uStream(res.body');
+    expect(code).toContain('hash.update(chunk)');
   });
 });
