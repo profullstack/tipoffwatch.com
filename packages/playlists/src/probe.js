@@ -66,6 +66,25 @@ const SNIFF_BYTES = 2048;
 const DEAD_STATUS = new Set([404, 410, 451]);
 
 /**
+ * Is this status a fact about the slot, or about the last few seconds?
+ *
+ * Exported for the same reason PLAYABLE_TYPE is: the browser proxy has to make
+ * the same judgement about the same panel, and two copies of this rule that drift
+ * apart would mean a channel the probe calls transient and the player calls dead.
+ *
+ * The 403 is the one that matters. An Xtream line that permits one connection
+ * answers 403 to the second, which is to say it answers 403 exactly when the
+ * reader is already watching -- including the moment after a dropped stream, when
+ * the panel has not yet noticed the old session is gone. Treating that as
+ * permanent ends the match; treating it as "try again in a moment" is what it is.
+ *
+ * @param {number} status
+ */
+export function isDeadStatus(status) {
+  return DEAD_STATUS.has(status);
+}
+
+/**
  * Read the front of the body, then let go.
  *
  * Cancelled rather than drained. The point of the range request is to hold the

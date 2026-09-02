@@ -80,11 +80,72 @@ describe('opening a channel for the browser', () => {
     s.stop(true);
   });
 
+  /*
+   * Which refusals are about the SLOT, and which are about the last few seconds.
+   *
+   * The whole of "it stops after a minute or two". Every non-ok status used to
+   * come back as 502, the player treats 502 as final, and the commonest answer a
+   * busy line gives -- 403, which is what an Xtream panel says to the second
+   * connection, including the reconnect replacing a session whose end it has not
+   * noticed -- was therefore a dead channel rather than "ask again in a moment".
+   * The same flattening also wrote `is_live = false` against the row, hiding a
+   * working channel from the page for the next half hour.
+   */
+  const transient = [403, 429, 500, 502, 503];
+  for (const status of transient) {
+    test(`a provider answering ${status} is asked again, not written off`, async () => {
+      const s = serve({ '/x': { status, type: 'video/mp2t' } });
+      const got = await openStream(`http://localhost:${s.port}/x`);
+      expect(got.ok).toBe(false);
+      // 503, which the player reconnects from. Never 502, which is final.
+      expect(got.status).toBe(503);
+      expect(got.definitive).toBe(false);
+      s.stop(true);
+    });
+  }
+
+  const gone = [404, 410, 451];
+  for (const status of gone) {
+    test(`a provider answering ${status} is a slot that is really gone`, async () => {
+      const s = serve({ '/x': { status, type: 'video/mp2t' } });
+      const got = await openStream(`http://localhost:${s.port}/x`);
+      expect(got.ok).toBe(false);
+      expect(got.status).toBe(502);
+      expect(got.definitive).toBe(true);
+      s.stop(true);
+    });
+  }
+
+  test('a web page where video was promised is remembered, because it will be one again', async () => {
+    const s = serve({ '/page': { status: 200, type: 'text/html', body: '<html>no</html>' } });
+    const got = await openStream(`http://localhost:${s.port}/page`);
+    expect(got.status).toBe(502);
+    expect(got.definitive).toBe(true);
+    s.stop(true);
+  });
+
+  test('a body nothing can be told from is not a verdict', async () => {
+    /*
+     * A live channel between keyframes hands over an empty body and looks exactly
+     * like a broken one. The probe has always read that as "unknown"; this reads
+     * it the same way, rather than ending the match on a silence.
+     */
+    const s = serve({ '/quiet': { status: 200, type: 'application/x-weird', body: '' } });
+    const got = await openStream(`http://localhost:${s.port}/quiet`);
+    expect(got.ok).toBe(false);
+    expect(got.status).toBe(503);
+    expect(got.definitive).toBe(false);
+    s.stop(true);
+  });
+
   test('a provider that never answers gives up, rather than holding the request open', async () => {
     const s = serve({ '/hang': { hang: true } });
     const got = await openStream(`http://localhost:${s.port}/hang`, { connectTimeoutMs: 150 });
     expect(got.ok).toBe(false);
     expect(got.note).toBe('timed out');
+    // A fact about eight seconds, not about the channel: reconnected from by the
+    // player and stored as unknown rather than as a no.
+    expect(got.definitive).toBe(false);
     s.stop(true);
   });
 

@@ -49,6 +49,19 @@ function supported() {
 const MAX_RESTARTS = 5;
 const RESTART_BASE_MS = 2000;
 
+/**
+ * The same ladder, started further along, for a line we KNOW is busy.
+ *
+ * A generic network error is worth retrying immediately -- wifi came back, the
+ * socket was replaced, two seconds is plenty. A 503 is different: the panel has
+ * told us in words that it is still counting a connection, and the one it is
+ * counting is usually the stream that just dropped. Reconnecting two seconds
+ * later asks a question whose answer we already know, and spends an attempt to
+ * hear it. Six seconds is roughly how long these panels take to notice a session
+ * has ended, so the first attempt lands after that rather than during it.
+ */
+const BUSY_BASE_MS = 6000;
+
 /** How a stall is noticed: the clock is read this often, this many times. */
 const STALL_CHECK_MS = 5000;
 const STALL_LIMIT = 3;
@@ -121,7 +134,7 @@ function attach(video, url, onError, onNotice = () => {}) {
    * stream's current shape and simply works. That is a reconnect, so it is
    * bounded, spaced out, and it says so on the page rather than freezing.
    */
-  const restart = (finalMessage) => {
+  const restart = (finalMessage, baseMs = RESTART_BASE_MS) => {
     if (stopped) return;
     if (restarts >= MAX_RESTARTS) return giveUp(finalMessage);
     restarts += 1;
@@ -133,7 +146,7 @@ function attach(video, url, onError, onNotice = () => {}) {
         restartTimer = null;
         if (!stopped) start();
       },
-      RESTART_BASE_MS * 2 ** (restarts - 1),
+      baseMs * 2 ** (restarts - 1),
     );
   };
 
@@ -245,8 +258,30 @@ function attach(video, url, onError, onNotice = () => {}) {
       }
       if (code === 404) return giveUp('That channel is no longer on your list.');
       if (code === 415) return giveUp('That channel needs a different player. Try VLC.');
-      if (code === 502 || code === 504) {
+      /*
+       * The provider is not answering with video, and there are two very
+       * different reasons for that.
+       *
+       * 502 is the route having established something about the SLOT: it served
+       * an HTML apology, or the panel answered with a status that means the
+       * channel is gone. Nothing about that improves on the second attempt, so
+       * it is still final.
+       *
+       * 503 and 504 are the route having established something about the last
+       * few seconds: a busy line, a panel having a bad minute, a connection that
+       * did not open in time. Every one of those is the ordinary way a provider
+       * behaves during a match, and every one used to arrive here as 502 and end
+       * the stream. They reconnect -- 503 further down the ladder, because a busy
+       * line is the one failure whose cause we can name and wait out.
+       */
+      if (code === 502) {
         return giveUp('Your provider did not send a stream for that channel.');
+      }
+      if (code === 503) {
+        return restart('Your provider kept the line busy. Try again in a minute.', BUSY_BASE_MS);
+      }
+      if (code === 504) {
+        return restart('Your provider did not send a stream for that channel.');
       }
       if (type === mpegts.ErrorTypes.NETWORK_ERROR) {
         /*

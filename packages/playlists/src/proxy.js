@@ -35,7 +35,7 @@
  * is.
  */
 
-import { PLAYABLE_TYPE, probeStream, sniffBytes } from './probe.js';
+import { isDeadStatus, PLAYABLE_TYPE, probeStream, sniffBytes } from './probe.js';
 
 export { probeStream };
 
@@ -118,7 +118,7 @@ const PLAYER_UA = 'VLC/3.0.20 LibVLC/3.0.20';
  */
 export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   if (!url || !/^https?:\/\//i.test(url)) {
-    return { ok: false, status: 502, note: 'not a fetchable url' };
+    return { ok: false, status: 502, note: 'not a fetchable url', definitive: true };
   }
 
   const controller = new AbortController();
@@ -144,24 +144,58 @@ export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEO
     // to the channel row as one.
     if (signal?.aborted) return { ok: false, status: 499, note: 'closed', silent: true };
     const aborted = err?.name === 'AbortError' || err?.name === 'TimeoutError';
-    return { ok: false, status: 504, note: aborted ? 'timed out' : 'could not connect' };
+    return {
+      ok: false,
+      status: 504,
+      note: aborted ? 'timed out' : 'could not connect',
+      definitive: false,
+    };
   }
   clearTimeout(timer);
 
   const type = (res.headers.get('content-type') ?? '').trim();
 
-  const fail = (status, note) => {
+  /**
+   * @param {number} status
+   * @param {string} note
+   * @param {boolean} definitive whether this says something about the SLOT, or
+   *   only about the last few seconds. Two things read it: the caller, which
+   *   persists only a definitive no, and the player, which reconnects from
+   *   anything else. Getting it wrong in either direction takes a working
+   *   channel off the page.
+   */
+  const fail = (status, note, definitive) => {
     // Let the connection go rather than leaving it to a finaliser. These lines
     // count concurrent streams, and a leaked one counts.
     res.body?.cancel().catch(() => {});
     signal?.removeEventListener('abort', abort);
-    return { ok: false, status, note };
+    return { ok: false, status, note, definitive };
   };
 
-  if (!res.ok) return fail(502, `provider answered ${res.status}`);
+  /*
+   * A panel that says no is usually saying "not right now".
+   *
+   * Every non-ok status used to come back as 502, and the player treats a 502 as
+   * final -- so the commonest transient answer these lines give ended the match.
+   * The sequence was: the provider drops the stream, the player reconnects a
+   * couple of seconds later, the panel still counts the session whose end it has
+   * not noticed and answers 403, that becomes 502, and the player gives up on a
+   * channel that was working a moment earlier and would have worked again on the
+   * next attempt. "It stops after a minute or two" was this.
+   *
+   * So only the statuses that mean the slot is GONE keep the final 502. The rest
+   * -- 403 and 429 for a busy line, the whole 5xx range for a panel having a bad
+   * minute -- answer 503, which the player reconnects from and nothing writes
+   * down. The split is `isDeadStatus`, shared with the probe so that the two
+   * cannot come to different conclusions about the same panel.
+   */
+  if (!res.ok) {
+    const dead = isDeadStatus(res.status);
+    return fail(dead ? 502 : 503, `provider answered ${res.status}`, dead);
+  }
 
   // The common failure: a dead slot answers 200 with an HTML page saying so.
-  if (/^text\/html/i.test(type)) return fail(502, 'returned a web page, not a stream');
+  if (/^text\/html/i.test(type)) return fail(502, 'returned a web page, not a stream', true);
 
   /*
    * An HLS playlist is playable, but not by this page.
@@ -172,7 +206,7 @@ export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEO
    * is HLS, but a provider can change that overnight, and being told to open it
    * in VLC is a working answer where a black rectangle is not.
    */
-  if (/mpegurl/i.test(type)) return fail(415, 'that channel is an HLS playlist');
+  if (/mpegurl/i.test(type)) return fail(415, 'that channel is an HLS playlist', true);
 
   if (!PLAYABLE_TYPE.some((re) => re.test(type))) {
     /*
@@ -193,12 +227,24 @@ export async function openStream(url, { signal, connectTimeoutMs = CONNECT_TIMEO
 
     await sniffed.release();
     if (sniffed.looks === 'page') {
-      return { ok: false, status: 502, note: 'returned a web page, not a stream' };
+      return {
+        ok: false,
+        status: 502,
+        note: 'returned a web page, not a stream',
+        definitive: true,
+      };
     }
+    /*
+     * Nothing conclusive in the bytes, which is NOT a no -- the same reading the
+     * probe takes of the same silence. A live channel between keyframes hands
+     * over an empty body and looks exactly like this, so this reconnects rather
+     * than ending the match, and is not remembered.
+     */
     return {
       ok: false,
-      status: 502,
+      status: 503,
       note: type ? `unexpected type ${type}` : 'no content type',
+      definitive: false,
     };
   }
 

@@ -1148,7 +1148,11 @@ app.get('/shared/:channelId/stream.ts', async (c) => {
     // rather than about who asked. Not for a reader who simply closed the tab.
     if (!result.silent) {
       await q
-        .markSharedChannelChecked({ channelId: row.id, live: false, note: result.note })
+        .markSharedChannelChecked({
+          channelId: row.id,
+          live: verdictToStore(result),
+          note: result.note,
+        })
         .catch(() => {});
     }
     return c.json({ error: result.note }, result.status === 499 ? 499 : result.status);
@@ -1415,12 +1419,27 @@ app.get('/events/:id/stream.ts', async (c) => {
 
   if (!result.ok) {
     release();
-    // Remembered, so the page stops offering a slot that is not there -- the same
-    // verdict the probe writes, from the same headers. Not for a reader who simply
-    // closed the tab: that says nothing about the channel.
+    /*
+     * Remembered, so the page stops offering a slot that is not there -- and
+     * through `verdictToStore`, which is the same rule the probe writes by and
+     * the reason it exists: only a DEFINITIVE no is a fact about the channel.
+     *
+     * This used to write `false` for every failure, which is how a busy line took
+     * the right game off the page. A stored no hides the row from the candidate
+     * query for thirty minutes, so a provider that was merely occupied for two
+     * seconds during a reconnect cost the reader the channel for the rest of the
+     * first half. A transient failure now stores NULL -- unknown, and offerable,
+     * because that is what it is. Not for a reader who simply closed the tab
+     * either: that says nothing about the channel at all.
+     */
     if (!result.silent && pick.id) {
       await q
-        .markChannelChecked({ userId: user.id, channelId: pick.id, live: false, note: result.note })
+        .markChannelChecked({
+          userId: user.id,
+          channelId: pick.id,
+          live: verdictToStore(result),
+          note: result.note,
+        })
         .catch(() => {});
     }
     return c.json({ error: result.note }, result.status === 499 ? 499 : result.status);
@@ -1583,7 +1602,12 @@ app.get('/my/channels/:channelId/stream.ts', async (c) => {
     release();
     if (!result.silent) {
       await q
-        .markChannelChecked({ userId: user.id, channelId: ch.id, live: false, note: result.note })
+        .markChannelChecked({
+          userId: user.id,
+          channelId: ch.id,
+          live: verdictToStore(result),
+          note: result.note,
+        })
         .catch(() => {});
     }
     return c.json({ error: result.note }, result.status === 499 ? 499 : result.status);
