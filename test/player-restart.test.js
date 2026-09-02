@@ -292,8 +292,10 @@ describe('what must never be reconnected', () => {
     [404, 'no longer on your list'],
     [415, 'needs a different player'],
     [429, 'line was busy'],
+    // 502 and only 502: the route has established something about the SLOT --
+    // an HTML apology, or a status that means the channel is gone. 503 and 504
+    // used to be here too, and they are the subject of the describe below.
     [502, 'did not send a stream'],
-    [504, 'did not send a stream'],
   ];
 
   for (const [code, expected] of terminal) {
@@ -307,6 +309,80 @@ describe('what must never be reconnected', () => {
       expect(built).toHaveLength(1);
     });
   }
+
+  /*
+   * The regression this file exists to hold down.
+   *
+   * A provider that is momentarily busy is the ordinary way these lines behave
+   * during a match, and it used to end the stream: the panel answered 403 to a
+   * reconnect it had not yet noticed was replacing a session of its own, the
+   * route flattened that into 502, and 502 was in the list above. One hiccup,
+   * one fast retry, and the reader was told their provider did not send a
+   * stream -- for a channel that was playing five seconds earlier and would
+   * have played again on the next attempt.
+   */
+  test('503 -- the line is busy -- reconnects rather than ending the match', () => {
+    const { errors, latest } = play();
+    latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
+
+    expect(errors).toHaveLength(0);
+    // Six seconds, not two: the panel has said in words that it is still
+    // counting a connection, and asking again immediately spends an attempt to
+    // be told so twice.
+    clock.advance(5_999);
+    expect(built).toHaveLength(1);
+    clock.advance(1);
+    expect(built).toHaveLength(2);
+  });
+
+  test('a busy line still gives up eventually, in words that name it', () => {
+    /*
+     * Advanced by exactly the wait each time, which is not fussiness: the stall
+     * watcher is re-armed by every rebuild, and running the clock past fifteen
+     * seconds of a video whose currentTime never moves spends the budget on a
+     * stall instead -- so a looser test passes while measuring the wrong thing.
+     * The ladder is doubling from six seconds rather than from two.
+     */
+    const waits = [6_000, 12_000, 24_000, 48_000, 96_000];
+    const { errors, latest } = play();
+
+    for (const wait of waits) {
+      latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
+      expect(errors).toHaveLength(0);
+      clock.advance(wait);
+    }
+    expect(built).toHaveLength(1 + waits.length);
+
+    // The budget is spent, and only now is the reader told -- in words that name
+    // the line rather than blaming the channel.
+    latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('busy');
+  });
+
+  test('504 -- the provider did not answer in time -- reconnects on the usual ladder', () => {
+    const { errors, latest } = play();
+    latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 504 });
+
+    expect(errors).toHaveLength(0);
+    clock.advance(1_999);
+    expect(built).toHaveLength(1);
+    clock.advance(1);
+    expect(built).toHaveLength(2);
+  });
+
+  test('a picture between hiccups means a busy line is survived indefinitely', () => {
+    // The whole point of the budget refilling on `playing`: a line that is busy
+    // now and then, which is all of them, must not accumulate toward a ceiling.
+    const { errors, video, latest } = play();
+    for (let i = 0; i < 12; i += 1) {
+      latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
+      clock.advance(6_000);
+      video.fire('playing');
+    }
+    expect(errors).toHaveLength(0);
+    expect(built).toHaveLength(13);
+  });
 
   test('a codec this browser cannot decode is terminal, not retried', () => {
     // A browser without an HEVC decoder will not have grown one by the second
