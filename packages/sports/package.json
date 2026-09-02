@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@tipoff/config": "workspace:*",
-    "@tipoff/db": "workspace:*"
+    "@tipoff/db": "workspace:*",
+    "@profullstack/player": "0.5.0"
   }
 }

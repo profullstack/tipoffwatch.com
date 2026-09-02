@@ -24,6 +24,7 @@ export {
   matchTerms,
   oneChannelM3u,
   parseM3u,
+  parseM3uStream,
   rankChannelsForFixture,
 } from './m3u.js';
 export { normaliseTitle, slugify } from './slug.js';
