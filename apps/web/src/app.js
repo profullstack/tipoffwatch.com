@@ -22,6 +22,7 @@ import {
   verdictToStore,
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
+import * as radio from '@tipoff/radio';
 import { oneChannelM3u, searchEverything } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -54,6 +55,7 @@ import {
 } from './views/pages.jsx';
 import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
+import { RadioPage, RadioRows } from './views/radio.jsx';
 
 export const app = new Hono();
 
@@ -543,8 +545,11 @@ app.get('/events/:id', async (c) => {
    * named still had to go and find it. Returns null when they have no list or
    * nothing matched, which is what makes the section render as it always did.
    */
-  const [marketChannels, sharedChannels] = await Promise.all([
+  const [marketChannels, sharedChannels, radioSession] = await Promise.all([
     marketChannelsForEvent({ userId: user?.id, markets: marketsOf(event) }),
+    // Whether the "On SiriusXM" section is drawn at all. A row read, no upstream
+    // call: the lookup itself waits for the button.
+    user && config.radio.enabled ? radio.storedSession(user.id) : null,
     // Other people's open lists. Signed-in only, and it returns no URLs at all --
     // a shared channel is playable through the proxy and nowhere else, because
     // every other route hands over the address and the address is the owner's
@@ -567,6 +572,7 @@ app.get('/events/:id', async (c) => {
         marketChannels={marketChannels}
         sharedChannels={sharedChannels}
         streamDead={c.req.query('stream_dead') ?? null}
+        radioConnected={Boolean(radioSession && !radioSession.unreadable)}
       />,
     ),
   );
@@ -2126,11 +2132,12 @@ app.post('/api/timezone', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = requireUser(c);
-  const [prefs, passkeys, playlist, member, shareCandidates] = await Promise.all([
+  const [prefs, passkeys, playlist, member, shareCandidates, radioSession] = await Promise.all([
     q.getPrefs(user.id),
     q.listPasskeys(user.id),
     q.getPlaylist(user.id),
     isMember(user),
+    config.radio.enabled ? radio.storedSession(user.id) : null,
     // Fetched unconditionally rather than only for a member: the picker has to be
     // populated the instant somebody joins, and a second round trip after the
     // upgrade is how it renders empty on the one page view that matters.
@@ -2186,9 +2193,332 @@ app.get('/settings', async (c) => {
         passwordMinLength={auth.PASSWORD_MIN_LENGTH}
         member={member}
         shareCandidates={shareCandidates}
+        radio={
+          config.radio.enabled
+            ? {
+                session: radioSession,
+                pending: radio.peekPending(user.id),
+                notice: radioNoticeFor(c.req.query('siriusxm')),
+                error: c.req.query('siriusxm_error') ?? null,
+              }
+            : null
+        }
       />,
     ),
   );
+});
+
+/* --------------------------------------------------------------- radio -- */
+
+/**
+ * A reader's own SiriusXM, connected in settings and played on /radio.
+ *
+ * The same BYO rail as the playlist, with the same rule about what leaves the
+ * server: nothing. The session is minted here with the code SiriusXM emails
+ * the reader, stored sealed, and every byte of audio is fetched by us as that
+ * reader and handed to that reader's browser. There is no address to copy
+ * because the addresses only work with the bearer.
+ */
+
+function radioNoticeFor(state) {
+  switch (state) {
+    case 'code':
+      return 'SiriusXM has sent a code to that address. Enter it below.';
+    case 'connected':
+      return 'SiriusXM connected. The lineup is on the Radio page.';
+    case 'removed':
+      return 'SiriusXM disconnected.';
+    default:
+      return null;
+  }
+}
+
+const radioBack = (query) => `/settings?${query}#siriusxm`;
+
+/**
+ * The reader's problem or ours, in the status. A SiriusXmError knows which;
+ * anything else is ours and must not read as "wrong code".
+ */
+function radioFailure(err) {
+  if (err instanceof radio.SiriusXmError) return { message: err.message, status: err.status };
+  console.error('[radio]', err);
+  return { message: 'SiriusXM did not answer. Try again in a moment.', status: 502 };
+}
+
+app.post('/api/radio/connect', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  const email = String(body.email ?? '').trim();
+  if (!email.includes('@')) {
+    return respond(c, {
+      json: { error: 'Enter the email on your SiriusXM account.' },
+      status: 400,
+      redirectTo: radioBack('siriusxm_error=Enter%20the%20email%20on%20your%20SiriusXM%20account.'),
+    });
+  }
+  try {
+    const state = await radio.startOtpLogin(email, {
+      proxy: radio.proxyFor(user.id),
+      deviceGrant: config.radio.deviceGrant || null,
+    });
+    radio.putPending(user.id, { ...state, email });
+    return respond(c, { json: { ok: true, step: 'code' }, redirectTo: radioBack('siriusxm=code') });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return respond(c, {
+      json: { error: message },
+      status,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+});
+
+app.post('/api/radio/connect/verify', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  // Pasted codes arrive as "1 2 3 4 5 6" or wrapped from an email; SXM wants digits.
+  const otp = String(body.otp ?? '').replace(/\s+/g, '');
+  const pending = radio.takePending(user.id);
+  if (!pending) {
+    const message = 'That code has expired. Send a new one.';
+    return respond(c, {
+      json: { error: message },
+      status: 400,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+  if (!otp) {
+    // The jar is consumed by takePending; put it back so a blank submit is not
+    // a restart.
+    radio.putPending(user.id, pending);
+    const message = 'Enter the code from the email.';
+    return respond(c, {
+      json: { error: message },
+      status: 400,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+  try {
+    const session = await radio.completeOtpLogin(pending, otp, { proxy: radio.proxyFor(user.id) });
+    await radio.saveSession(user.id, { email: pending.email, ...session });
+    return respond(c, {
+      json: { ok: true, connected: true },
+      redirectTo: radioBack('siriusxm=connected'),
+    });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    // A wrong code does not spend the sign-in: the jar goes back so the reader
+    // can try the code again rather than asking for a new one.
+    if (status === 400) radio.putPending(user.id, pending);
+    return respond(c, {
+      json: { error: message },
+      status,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+});
+
+app.post('/api/radio/connect/cancel', async (c) => {
+  const user = requireUser(c);
+  radio.dropPending(user.id);
+  return respond(c, { json: { ok: true }, redirectTo: '/settings#siriusxm' });
+});
+
+app.post('/api/radio/disconnect', async (c) => {
+  const user = requireUser(c);
+  radio.dropPending(user.id);
+  await radio.disconnect(user.id);
+  return respond(c, { json: { ok: true }, redirectTo: radioBack('siriusxm=removed') });
+});
+
+/** Rendered per request and never cached: the lineup is the same for everyone, the session is not. */
+app.get('/radio', async (c) => {
+  const user = c.get('user');
+  if (!config.radio.enabled) return c.html(await render(<NotFound user={user} />), 404);
+  const cat = radio.CATEGORIES.includes(c.req.query('cat')) ? c.req.query('cat') : 'sports';
+  const qText = (c.req.query('q') ?? '').trim().slice(0, 80);
+  const session = user ? await radio.storedSession(user.id) : null;
+  let channels = [];
+  let error = null;
+  if (session && !session.unreadable) {
+    try {
+      channels = qText ? await radio.search(user.id, qText) : await radio.channels(user.id, cat);
+    } catch (err) {
+      error = radioFailure(err).message;
+    }
+  }
+  c.header('cache-control', 'private, no-store');
+  return c.html(
+    await render(
+      <RadioPage
+        user={user}
+        session={session}
+        cat={cat}
+        q={qText}
+        channels={channels}
+        error={error}
+      />,
+    ),
+  );
+});
+
+/**
+ * The channels naming either side of a fixture, as rows.
+ *
+ * Both names are searched and the union is kept in lineup order, so a game on
+ * a team channel and one on a league channel both surface. Answered as HTML
+ * because the row already has one template, on the server.
+ */
+app.get('/radio/find', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.text('radio is off', 404);
+  const event = await q.getEvent(Number(c.req.query('event')));
+  if (!event) return c.text('no such fixture', 404);
+  const names = [event.home_team_name, event.away_team_name, event.league_name]
+    .map((n) => String(n ?? '').trim())
+    .filter((n) => n.length >= 3);
+  if (names.length === 0) return c.text('This fixture has no names to look up.', 404);
+  try {
+    const found = await Promise.all(names.map((n) => radio.search(user.id, n)));
+    const seen = new Set();
+    const channels = found.flat().filter((ch) => {
+      if (seen.has(ch.stationId)) return false;
+      seen.add(ch.stationId);
+      return true;
+    });
+    c.header('cache-control', 'private, no-store');
+    // A fragment, not a page: no doctype, no Layout, so not render(). It is
+    // dropped into a section app.js already has on the page.
+    const fragment =
+      channels.length === 0
+        ? '<p class="muted">SiriusXM has no channel naming this fixture right now. Game channels usually appear close to kickoff.</p>'
+        : await (<RadioRows channels={channels} />).toString();
+    return c.body(fragment, 200, { 'content-type': 'text/html; charset=utf-8' });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return c.text(message, status);
+  }
+});
+
+/**
+ * Where a same-origin address for an SXM resource is minted. Root-relative so
+ * the browser resolves it against the page it is on; nothing here needs to
+ * know the public hostname.
+ */
+const radioProxyUrl = (target, quality) =>
+  `/radio/proxy?u=${encodeURIComponent(target)}&quality=${encodeURIComponent(quality)}`;
+
+const radioQuality = (value) => (radio.QUALITIES.includes(value) ? value : radio.DEFAULT_QUALITY);
+
+/**
+ * Fetch one SXM resource as the reader, at most once for everyone asking.
+ *
+ * Through the reader's pinned proxy, because the tune URL was minted from
+ * that IP and the key endpoint checks. Manifests and keys are small; a segment
+ * is a few seconds of audio; all are buffered so `sharedFetch` can hand the
+ * same bytes to a second tab without a second upstream request.
+ */
+async function radioFetch(userId, target) {
+  return radio.sharedFetch(target, async () => {
+    const res = await radio.sxmFetch(
+      target,
+      {
+        headers: {
+          ...radio.API_HEADERS,
+          Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+          Authorization: `Bearer ${await radio.bearerFor(userId)}`,
+        },
+      },
+      { proxy: radio.proxyFor(userId) },
+    );
+    return {
+      status: res.status,
+      contentType: res.headers.get('content-type'),
+      body: await res.arrayBuffer(),
+    };
+  });
+}
+
+/** The reply for a manifest, a key or a segment, from what SXM sent. */
+function radioResource(c, target, quality, upstream) {
+  if (upstream.status < 200 || upstream.status >= 300) {
+    if (upstream.status === 401 || upstream.status === 403) radio.forget(c.get('user').id);
+    return c.text(`SiriusXM answered ${upstream.status}`, upstream.status === 404 ? 404 : 502);
+  }
+  const ct = upstream.contentType ?? '';
+  if (radio.isKeyUrl(target)) {
+    // The AES key arrives as JSON; the player needs the sixteen bytes.
+    let key;
+    try {
+      key = radio.decodeKeyJson(JSON.parse(new TextDecoder().decode(upstream.body)));
+    } catch (err) {
+      return c.text(`key decode failed: ${err.message}`, 502);
+    }
+    return c.body(key, 200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store, private',
+    });
+  }
+  if (radio.looksLikePlaylist(target, ct)) {
+    const text = new TextDecoder().decode(upstream.body);
+    const rewritten = radio.rewritePlaylist(text, target, quality, (u) =>
+      radioProxyUrl(u, quality),
+    );
+    return c.body(rewritten, 200, {
+      'content-type': 'application/vnd.apple.mpegurl',
+      'cache-control': 'no-store, private',
+    });
+  }
+  return c.body(upstream.body, 200, {
+    'content-type': ct || 'application/octet-stream',
+    'cache-control': 'no-store, private',
+    'x-accel-buffering': 'no',
+  });
+}
+
+/**
+ * The playlist the player is handed: a station id in, a rewritten manifest out.
+ *
+ * The tune URL never reaches the browser. It is minted here, held for its own
+ * lifetime, and every address inside the manifest it fetches is rewritten to
+ * /radio/proxy before the bytes leave.
+ */
+app.get('/radio/stream.m3u8', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const parsed = radio.parseStationId(c.req.query('id') ?? '');
+  if (!parsed) return c.json({ error: 'no such station' }, 400);
+  const quality = radioQuality(c.req.query('quality'));
+  try {
+    const target = await radio.tune(user.id, parsed);
+    const upstream = await radioFetch(user.id, target);
+    return radioResource(c, target, quality, upstream);
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return c.json({ error: message }, status);
+  }
+});
+
+/**
+ * Everything the manifest points at. The target is checked against SXM's own
+ * hosts before anything is fetched: this route carries a bearer, and a bearer
+ * sent to an address a reader chose is a bearer handed to that reader.
+ */
+app.get('/radio/proxy', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const target = c.req.query('u') ?? '';
+  if (!radio.isSiriusXmUrl(target)) return c.text('forbidden target', 403);
+  const quality = radioQuality(c.req.query('quality'));
+  try {
+    const upstream = await radioFetch(user.id, target);
+    return radioResource(c, target, quality, upstream);
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return c.text(message, status);
+  }
 });
 
 /**
@@ -3057,6 +3387,10 @@ const STATIC_FILES = [
   // Fetched by app.js on the first press of Play, not linked by the Layout: it is
   // a quarter of a megabyte of demuxer that most readers never need.
   ['/vendor-mpegts.js', 'vendor-mpegts.js', 'text/javascript'],
+  // Same again for the radio player and its stylesheet: fetched on the first
+  // press of Play on a station, by app.js.
+  ['/vendor-player.js', 'vendor-player.js', 'text/javascript'],
+  ['/vendor-player.css', 'vendor-player.css', 'text/css'],
   ['/sw.js', 'sw.js', 'text/javascript'],
   ['/logo.png', 'logo.png', 'image/png'],
 ];

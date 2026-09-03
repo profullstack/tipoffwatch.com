@@ -720,6 +720,7 @@ function initNavigation() {
       initMarketTabs();
       initOwnChannelActions();
       initInlinePlayer();
+      initRadio();
       initPush();
       initPasskeys();
       initPlaylistReveal();
@@ -758,6 +759,7 @@ reportTimezone();
 initMarketTabs();
 initOwnChannelActions();
 initInlinePlayer();
+initRadio();
 initPush();
 initPasskeys();
 // Before initFollowForms: it must be able to cancel a submit that handler would
@@ -1485,4 +1487,233 @@ function initPlayerSection(section) {
   // socket to time out. pagehide rather than unload: it is the one that fires on
   // iOS and on a back/forward navigation.
   window.addEventListener('pagehide', teardown);
+}
+
+/* ------------------------------------------------------------------ radio -- */
+
+/**
+ * The SiriusXM sections: the lineup on /radio and the lookup on an event page.
+ *
+ * Same shape as initPlayerSection, and the same rules, because the reasons are
+ * the same. One station at a time -- a SiriusXM account is one subscription and
+ * the second stream is what gets it flagged -- so the teardown chains into
+ * `__tipoffStopPlayer` with the video players, and a client-side navigation or a
+ * press on a TV channel stops the radio too. The bundle is fetched on the first
+ * press, never on load.
+ *
+ * The station plays through the house player's own bar (it has volume, mute
+ * and a LIVE badge of its own), so the button on the row only ever says Play
+ * here or Stop.
+ */
+const RADIO_QUALITY_KEY = 'tw.radio.quality';
+
+function radioQuality() {
+  try {
+    const v = localStorage.getItem(RADIO_QUALITY_KEY);
+    return ['256', '128', '64', '32'].includes(v) ? v : '256';
+  } catch {
+    return '256';
+  }
+}
+
+function loadRadioBundle(section) {
+  if (window.__tipoffRadio) return Promise.resolve(window.__tipoffRadio);
+  if (window.__tipoffRadioLoading) return window.__tipoffRadioLoading;
+  // The stylesheet first, and not awaited: a bar drawn a frame before its CSS
+  // arrives is a bar, and a bar that never gets its CSS because the link
+  // failed is still a bar with buttons on it.
+  const css = section.dataset.radioCss;
+  if (css && !document.querySelector(`link[href="${css}"]`)) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = css;
+    document.head.append(link);
+  }
+  window.__tipoffRadioLoading = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = section.dataset.radioSrc;
+    el.onload = () =>
+      window.__tipoffRadio ? resolve(window.__tipoffRadio) : reject(new Error('no player'));
+    el.onerror = () => {
+      window.__tipoffRadioLoading = null;
+      reject(new Error('could not load the player'));
+    };
+    document.head.append(el);
+  });
+  return window.__tipoffRadioLoading;
+}
+
+/** Can this browser push HLS audio into Media Source? Asked without the bundle, for the same reason canTransmux is. */
+function canPlayRadio() {
+  try {
+    return (
+      typeof MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function initRadio(root = document) {
+  for (const section of root.querySelectorAll('[data-radio-src]')) initRadioSection(section);
+  for (const select of root.querySelectorAll('select[data-radio-quality]')) {
+    select.value = radioQuality();
+    select.addEventListener('change', () => {
+      try {
+        localStorage.setItem(RADIO_QUALITY_KEY, select.value);
+      } catch {
+        // A browser that refuses storage still gets the stream it asked for,
+        // just not next time.
+      }
+    });
+  }
+}
+
+function initRadioSection(section) {
+  if (!section || section.dataset.radio) return;
+  section.dataset.radio = '1';
+
+  let stop = null;
+  let stage = null;
+  let generation = 0;
+  let playing = null;
+
+  const teardown = () => {
+    if (stop) stop();
+    stop = null;
+    stage?.remove();
+    stage = null;
+    if (playing) {
+      playing.dataset.playing = '';
+      playing.textContent = 'Play here';
+      playing = null;
+    }
+  };
+  const previousStop = window.__tipoffStopPlayer;
+  window.__tipoffStopPlayer = () => {
+    previousStop?.();
+    teardown();
+  };
+  window.addEventListener('pagehide', teardown);
+
+  const message = (text, error) => {
+    section.querySelector('.player-error')?.remove();
+    if (!text) return;
+    const p = document.createElement('p');
+    p.className = error ? 'feedback error player-error' : 'feedback player-error';
+    p.textContent = text;
+    section.prepend(p);
+  };
+
+  const fail = (text) => {
+    teardown();
+    message(text, true);
+  };
+
+  const wire = (scope) => {
+    const buttons = [...scope.querySelectorAll('button[data-radio-play]')];
+    if (!canPlayRadio()) {
+      // Nothing to offer instead: SiriusXM streams only play with the bearer,
+      // and there is no app link that could carry it.
+      for (const b of buttons) b.closest('li')?.remove();
+      if (buttons.length) {
+        message(
+          'This browser cannot play SiriusXM streams here. Chrome, Firefox, Edge or an Android or TV browser can.',
+          true,
+        );
+      }
+      return;
+    }
+    for (const button of buttons) {
+      if (button.dataset.wired) continue;
+      button.dataset.wired = '1';
+      button.disabled = false;
+      button.addEventListener('click', async () => {
+        message(null);
+        if (button.dataset.playing) {
+          generation += 1;
+          teardown();
+          return;
+        }
+        generation += 1;
+        const mine = generation;
+        // Whatever else is playing -- a station in this section, a TV channel in
+        // another -- goes first. One stream per reader is the rule everywhere.
+        window.__tipoffStopPlayer?.();
+
+        button.disabled = true;
+        button.textContent = 'Starting…';
+        let player;
+        try {
+          player = await loadRadioBundle(section);
+        } catch {
+          button.disabled = false;
+          button.textContent = 'Play here';
+          fail('The player could not be loaded. Reload the page and try again.');
+          return;
+        }
+        if (mine !== generation) {
+          button.disabled = false;
+          button.textContent = 'Play here';
+          return;
+        }
+        button.disabled = false;
+        if (!player.supported()) {
+          fail('This browser cannot play SiriusXM streams here.');
+          return;
+        }
+
+        const separator = button.dataset.radioPlay.includes('?') ? '&' : '?';
+        const src = `${button.dataset.radioPlay}${separator}quality=${radioQuality()}`;
+        stage = document.createElement('div');
+        stage.className = 'player-stage audio';
+        button.closest('li')?.after(stage);
+        playing = button;
+        button.dataset.playing = '1';
+        button.textContent = 'Stop';
+        stop = player.play(stage, src, {
+          title: button.dataset.title,
+          artwork: button.dataset.artwork || undefined,
+          onError: fail,
+          onNotice: (text) => message(text, false),
+          onStop: () => {
+            generation += 1;
+            teardown();
+          },
+        });
+      });
+    }
+  };
+
+  wire(section);
+
+  /*
+   * The event page asks only when told to. Searching SiriusXM is an upstream
+   * call on the reader's own session, and most visits to a fixture do not want
+   * radio for it. The answer arrives as HTML rendered by the same component as
+   * the lineup page, so there is one row template and it is on the server.
+   */
+  const find = section.querySelector('button[data-radio-find-button]');
+  const results = section.querySelector('[data-radio-results]');
+  if (find && results && section.dataset.radioFind) {
+    find.addEventListener('click', async () => {
+      find.disabled = true;
+      find.textContent = 'Looking…';
+      try {
+        const res = await fetch(section.dataset.radioFind, {
+          headers: { accept: 'text/html', 'x-requested-with': 'fetch' },
+        });
+        const html = await res.text();
+        if (!res.ok) throw new Error(html.slice(0, 200) || String(res.status));
+        results.innerHTML = html;
+        wire(results);
+        find.closest('p')?.remove();
+      } catch (err) {
+        find.disabled = false;
+        find.textContent = 'Find this game on SiriusXM';
+        message(err?.message || 'SiriusXM did not answer. Try again in a moment.', true);
+      }
+    });
+  }
 }

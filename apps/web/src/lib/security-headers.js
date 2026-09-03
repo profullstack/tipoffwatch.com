@@ -36,6 +36,7 @@ const sha256 = (src) => `'sha256-${createHash('sha256').update(src, 'utf8').dige
  *   media-src    blob:, which is what MediaSource hands the <video> element on
  *                the stream player. Without it Play fails with no console error
  *                that names the cause.
+ *   worker-src   blob: as well, for the radio player's demuxing worker.
  *   frame-ancestors  the clickjacking control that actually matters; the site is
  *                never meant to be embedded.
  *   form-action  every control on the site is a plain form posting to us, so a
@@ -72,7 +73,14 @@ export const buildPolicy = (publicKey) =>
     "img-src 'self' https: data:",
     "media-src 'self' blob:",
     "connect-src 'self' https://crawlproof.com",
-    "worker-src 'self'",
+    /*
+     * blob: alongside 'self', for hls.js. The radio player demuxes in a worker
+     * it builds from a blob URL; refused, it falls back to the main thread and
+     * still plays, but audio decoding on the thread that draws the page is a
+     * stutter on a phone. Only our own scripts can mint a blob, so this widens
+     * nothing that script-src has not already decided.
+     */
+    "worker-src 'self' blob:",
     "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
