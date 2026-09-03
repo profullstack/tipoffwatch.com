@@ -4,9 +4,8 @@ process.env.DATABASE_URL ??= 'postgres://localhost:5432/unused';
 process.env.PLAYLIST_SECRET ??= 'test-secret-for-sealing-values';
 process.env.SITE_URL ??= 'https://tipoffwatch.com';
 
-const { RadioChannelRow, RadioEventSection, RadioPage, RadioSettings } = await import(
-  '../apps/web/src/views/radio.jsx'
-);
+const { RadioChannelRow, RadioPage, RadioSettings, RadioSidesFragment, RadioTeamSection } =
+  await import('../apps/web/src/views/radio.jsx');
 const { Layout } = await import('../apps/web/src/views/Layout.jsx');
 
 const html = (node) => node.toString();
@@ -64,7 +63,9 @@ describe('RadioSettings', () => {
     expect(broken).toContain('action="/api/radio/connect"');
   });
   test('shows what happened', () => {
-    const out = html(RadioSettings({ session: null, pending: null, notice: 'Done.', error: 'Nope.' }));
+    const out = html(
+      RadioSettings({ session: null, pending: null, notice: 'Done.', error: 'Nope.' }),
+    );
     expect(out).toContain('feedback ok');
     expect(out).toContain('feedback error');
   });
@@ -82,7 +83,9 @@ describe('RadioPage', () => {
     expect(out).not.toContain('data-radio-src');
   });
   test('connected: tabs, search, quality and the rows, with the bundle attributes', () => {
-    const out = html(RadioPage({ user: { id: 'u' }, session: { email: 'a@b.c' }, cat: 'news', channels: [ch] }));
+    const out = html(
+      RadioPage({ user: { id: 'u' }, session: { email: 'a@b.c' }, cat: 'news', channels: [ch] }),
+    );
     expect(out).toMatch(/data-radio-src="\/vendor-player\.js(\?v=[^"]+)?"/);
     expect(out).toMatch(/data-radio-css="\/vendor-player\.css(\?v=[^"]+)?"/);
     expect(out).toContain('href="/radio?cat=news" class="active"');
@@ -91,17 +94,40 @@ describe('RadioPage', () => {
     expect(out).toContain('ESPN Radio');
   });
   test('an error from SiriusXM is shown, not swallowed', () => {
-    const out = html(RadioPage({ user: { id: 'u' }, session: { email: 'a' }, channels: [], error: 'SXM said no' }));
+    const out = html(
+      RadioPage({ user: { id: 'u' }, session: { email: 'a' }, channels: [], error: 'SXM said no' }),
+    );
     expect(out).toContain('SXM said no');
   });
 });
 
-describe('RadioEventSection', () => {
-  test('offers a lookup and fetches nothing at render', () => {
-    const out = html(RadioEventSection({ event: { id: 42 } }));
+describe('RadioTeamSection', () => {
+  test('names the lookup and fetches nothing at render', () => {
+    const out = html(RadioTeamSection({ find: '/radio/find?event=42', sides: ['A', 'B'] }));
     expect(out).toContain('data-radio-find="/radio/find?event=42"');
-    expect(out).toContain('data-radio-find-button');
     expect(out).toContain('data-radio-results');
+    expect(out).toContain('Looking on SiriusXM');
+    expect(out).toContain('Each side&#39;s own broadcast');
+    const one = html(RadioTeamSection({ find: '/radio/find?team=7', sides: ['Denver Broncos'] }));
+    expect(one).toContain('Denver Broncos&#39;s own broadcast');
+  });
+});
+
+describe('RadioSidesFragment', () => {
+  test('a side with a feed gets rows; without one, words; a failure, its reason', () => {
+    const out = html(
+      RadioSidesFragment({
+        sides: [
+          { team: 'Denver Broncos', stations: [ch] },
+          { team: 'Kansas City Chiefs', stations: [] },
+          { team: 'Nobody', stations: [], error: 'SXM said no' },
+        ],
+      }),
+    );
+    expect(out).toContain('ESPN Radio');
+    expect(out).toContain('No Kansas City Chiefs feed on SiriusXM right now.');
+    expect(out).toContain('SXM said no');
+    expect(out).not.toContain('<!doctype');
   });
 });
 

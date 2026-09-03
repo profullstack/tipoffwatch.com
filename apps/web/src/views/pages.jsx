@@ -10,7 +10,7 @@ import {
   TeamRow,
 } from './components.jsx';
 import { Layout } from './Layout.jsx';
-import { RadioEventSection, RadioSettings } from './radio.jsx';
+import { RadioSettings, RadioTeamSection } from './radio.jsx';
 
 /*
  * A sentence describing THIS page, for the meta description and the share cards.
@@ -955,6 +955,9 @@ export const TeamPage = ({
   soonTotal = 0,
   soonHours = 4,
   stalled = 0,
+  // The team's own SiriusXM feed, for a connected reader on a league that has
+  // them. See views/radio.jsx.
+  radio = null,
 }) => {
   const liveEmpty = `${team.display_name} are not playing right now.`;
   const soonEmpty = `${team.display_name} are not on in the next ${soonHours} hours.`;
@@ -1040,6 +1043,8 @@ export const TeamPage = ({
         Below the fixture list and the reader's own line, because both of those
         are why somebody opened a team page. This answers the narrower question
         they may not have thought to ask: is this lot playing at this moment. */}
+      {radio ? <RadioTeamSection {...radio} /> : null}
+
       <LiveSection
         title={brand.copy.liveTitle}
         blurb={brand.copy.liveBlurb}
@@ -1361,9 +1366,9 @@ export const EventPage = ({
   // Channels from lists other accounts have opened. Never carries a URL.
   sharedChannels = null,
   streamDead = null,
-  // Whether the reader has a SiriusXM session on file. A section is drawn, not a
-  // lookup: the lookup waits for the button.
-  radioConnected = false,
+  // The SiriusXM section's props, or null: connected reader, league SiriusXM
+  // carries by team. A section is drawn, not a lookup; app.js asks for the rows.
+  radio = null,
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
@@ -1880,10 +1885,11 @@ export const EventPage = ({
         </section>
       ) : null}
 
-      {/* The reader's own SiriusXM, when connected. Radio rather than television,
-          so it sits after both TV rails; the same one-stream-at-a-time rule applies
-          across all three and app.js enforces it. */}
-      {radioConnected ? <RadioEventSection event={event} /> : null}
+      {/* The reader's own SiriusXM, when connected and the league has team feeds.
+          Radio rather than television, so it sits after both TV rails; the same
+          one-stream-at-a-time rule applies across all three and app.js enforces
+          it. */}
+      {radio ? <RadioTeamSection {...radio} /> : null}
 
       <section class="stream">
         <h2>Watch</h2>

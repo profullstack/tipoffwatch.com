@@ -1689,17 +1689,18 @@ function initRadioSection(section) {
   wire(section);
 
   /*
-   * The event page asks only when told to. Searching SiriusXM is an upstream
-   * call on the reader's own session, and most visits to a fixture do not want
-   * radio for it. The answer arrives as HTML rendered by the same component as
-   * the lineup page, so there is one row template and it is on the server.
+   * A fixture's or a team's own feeds, asked for as soon as the section is up.
+   *
+   * The server drew the section without asking SiriusXM, so the page arrived
+   * as fast as it always has; the lookup runs on the reader's own session
+   * here, and the rows come back as HTML from the same template as the lineup
+   * page. A failure is said in words with a way to try again, because "no
+   * feed" and "the lookup broke" must never look alike.
    */
-  const find = section.querySelector('button[data-radio-find-button]');
   const results = section.querySelector('[data-radio-results]');
-  if (find && results && section.dataset.radioFind) {
-    find.addEventListener('click', async () => {
-      find.disabled = true;
-      find.textContent = 'Looking…';
+  if (results && section.dataset.radioFind) {
+    const look = async () => {
+      results.innerHTML = '<p class="muted small radio-looking">Looking on SiriusXM…</p>';
       try {
         const res = await fetch(section.dataset.radioFind, {
           headers: { accept: 'text/html', 'x-requested-with': 'fetch' },
@@ -1708,12 +1709,20 @@ function initRadioSection(section) {
         if (!res.ok) throw new Error(html.slice(0, 200) || String(res.status));
         results.innerHTML = html;
         wire(results);
-        find.closest('p')?.remove();
       } catch (err) {
-        find.disabled = false;
-        find.textContent = 'Find this game on SiriusXM';
-        message(err?.message || 'SiriusXM did not answer. Try again in a moment.', true);
+        results.innerHTML = '';
+        const p = document.createElement('p');
+        p.className = 'feedback error';
+        p.textContent = `${err?.message || 'SiriusXM did not answer.'} `;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'ghost small-btn';
+        retry.textContent = 'Try again';
+        retry.addEventListener('click', look);
+        p.append(retry);
+        results.append(p);
       }
-    });
+    };
+    look();
   }
 }

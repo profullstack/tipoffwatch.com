@@ -108,6 +108,15 @@ as that reader; the browser never sees a SiriusXM address or a bearer. The playe
 is `@profullstack/player` with its audio bar, bundled to `vendor-player.js` and
 fetched on the first press of Play.
 
+For the leagues SiriusXM carries by team (NFL, NBA, MLB, NHL, WNBA, the college
+football and basketball conferences, MLS), a fixture's page and a team's page
+draw an **On SiriusXM** section that looks up each side's own feed as soon as
+the page is up: the team name is parsed (`packages/radio/src/teams.js`),
+SiriusXM is searched for it on the reader's session, and only channels that
+actually name the team are kept. Lookups are cached across readers for ten
+minutes, so a busy fixture costs one search per side, not one per view. Team
+feeds appear close to kickoff and vanish after; the section says which.
+
 Knobs, all read at request time:
 
 - `SIRIUSXM` — `0` turns the rail off. Defaults to on for the tipoffwatch brand

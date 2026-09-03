@@ -26,8 +26,7 @@ describe('cookie jar', () => {
 });
 
 describe('jwt expiry', () => {
-  const token = (exp) =>
-    `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+  const token = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
   test('reads exp in seconds and answers in ms', () => {
     expect(sxm.jwtExpiryMs(token(1_700_000_000))).toBe(1_700_000_000_000);
   });
@@ -139,7 +138,12 @@ describe('hls rewriting', () => {
       'audio_128k_v3.m3u8',
       '',
     ].join('\n');
-    const out = sxm.rewritePlaylist(master, 'https://cdn.siriusxm.com/ch/master.m3u8', '128', proxify);
+    const out = sxm.rewritePlaylist(
+      master,
+      'https://cdn.siriusxm.com/ch/master.m3u8',
+      '128',
+      proxify,
+    );
     expect(out).toContain('BANDWIDTH=128000');
     expect(out).not.toContain('256000');
     expect(out).toContain(proxify('https://cdn.siriusxm.com/ch/audio_128k_v3.m3u8'));
@@ -155,7 +159,12 @@ describe('hls rewriting', () => {
       '/abs/seg002.aac',
       '',
     ].join('\n');
-    const out = sxm.rewritePlaylist(media, 'https://cdn.siriusxm.com/ch/a/media.m3u8', '256', proxify);
+    const out = sxm.rewritePlaylist(
+      media,
+      'https://cdn.siriusxm.com/ch/a/media.m3u8',
+      '256',
+      proxify,
+    );
     const lines = out.split('\n');
     expect(lines[1]).toBe('#EXT-X-TARGETDURATION:10');
     expect(lines[2]).toContain(
@@ -186,9 +195,9 @@ describe('key decoding', () => {
   const bytes = Buffer.from('0123456789abcdef');
   test('base64, base64url, hex and literal', () => {
     expect(sxm.decodeKeyJson({ key: bytes.toString('base64') }).equals(bytes)).toBe(true);
-    expect(sxm.decodeKeyJson({ result: { value: bytes.toString('base64url') } }).equals(bytes)).toBe(
-      true,
-    );
+    expect(
+      sxm.decodeKeyJson({ result: { value: bytes.toString('base64url') } }).equals(bytes),
+    ).toBe(true);
     // A literal that is neither alphabet: taken as the bytes it is.
     expect(sxm.decodeKeyJson({ data: 'raw key sixteen!' }).length).toBe(16);
   });
@@ -224,7 +233,12 @@ describe('otp login', () => {
       fetch: async (req) => {
         const url = new URL(req.url);
         const auth = req.headers.get('authorization');
-        calls.push({ method: req.method, path: url.pathname, auth, cookie: req.headers.get('cookie') });
+        calls.push({
+          method: req.method,
+          path: url.pathname,
+          auth,
+          cookie: req.headers.get('cookie'),
+        });
         const json = (data, status = 200, headers = {}) =>
           new Response(JSON.stringify(data), {
             status,
@@ -304,7 +318,7 @@ describe('otp login', () => {
     expect(calls[4].cookie).toContain('sxm=jar1');
   });
 
-  test('an unknown email is the reader\'s problem, not ours', async () => {
+  test("an unknown email is the reader's problem, not ours", async () => {
     await expect(
       sxm.startOtpLogin('nobody@example.com', {
         deviceGrant: JSON.stringify({ grant: 'device-grant' }),

@@ -25,4 +25,14 @@ describe('config.radio', () => {
     expect(config.radio.enabled).toBe(false);
     delete process.env.SIRIUSXM;
   });
+
+  test('off for genrewatch unless asked for: that site is VOD only', () => {
+    process.env.BRAND = 'genrewatch';
+    expect(config.radio.enabled).toBe(false);
+    process.env.SIRIUSXM = '1';
+    expect(config.radio.enabled).toBe(true);
+    delete process.env.SIRIUSXM;
+    delete process.env.BRAND;
+    expect(config.radio.enabled).toBe(true);
+  });
 });
