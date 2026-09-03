@@ -739,6 +739,49 @@ export async function deletePlaylist(userId) {
   await sql`delete from user_playlists where user_id = ${userId}`;
 }
 
+/* -------------------------------------------------------------- siriusxm -- */
+/**
+ * The reader's own SiriusXM session. Same rule as the playlist above: every
+ * query takes the user_id and uses it, and there is no lookup by anything else.
+ * Both secret columns arrive already sealed -- this module never sees a bearer.
+ */
+
+export async function getSiriusXm(userId) {
+  const [row] = await sql`select * from siriusxm_sessions where user_id = ${userId}`;
+  return row ?? null;
+}
+
+/** One session per account: connecting again replaces the last one. */
+export async function saveSiriusXm({
+  userId,
+  email,
+  accessToken,
+  sessionCookies,
+  accessTokenExpiresAt,
+  refreshTokenExpiresAt,
+}) {
+  const [row] = await sql`
+    insert into siriusxm_sessions
+      (user_id, email, access_token, session_cookies, access_token_expires_at, refresh_token_expires_at)
+    values
+      (${userId}, ${email ?? null}, ${accessToken}, ${sessionCookies ?? ''},
+       ${accessTokenExpiresAt ?? null}, ${refreshTokenExpiresAt ?? null})
+    on conflict (user_id) do update set
+      email = excluded.email,
+      access_token = excluded.access_token,
+      session_cookies = excluded.session_cookies,
+      access_token_expires_at = excluded.access_token_expires_at,
+      refresh_token_expires_at = excluded.refresh_token_expires_at,
+      updated_at = now()
+    returning user_id, email, created_at, updated_at
+  `;
+  return row;
+}
+
+export async function deleteSiriusXm(userId) {
+  await sql`delete from siriusxm_sessions where user_id = ${userId}`;
+}
+
 /* ----------------------------------------------------- sharing a playlist -- */
 /**
  * Record a probe verdict on a SHARED entry.

@@ -10,6 +10,7 @@ import {
   TeamRow,
 } from './components.jsx';
 import { Layout } from './Layout.jsx';
+import { RadioEventSection, RadioSettings } from './radio.jsx';
 
 /*
  * A sentence describing THIS page, for the meta description and the share cards.
@@ -1360,6 +1361,9 @@ export const EventPage = ({
   // Channels from lists other accounts have opened. Never carries a URL.
   sharedChannels = null,
   streamDead = null,
+  // Whether the reader has a SiriusXM session on file. A section is drawn, not a
+  // lookup: the lookup waits for the button.
+  radioConnected = false,
 }) => {
   const live = event.state === 'in';
   const done = event.state === 'post';
@@ -1876,6 +1880,11 @@ export const EventPage = ({
         </section>
       ) : null}
 
+      {/* The reader's own SiriusXM, when connected. Radio rather than television,
+          so it sits after both TV rails; the same one-stream-at-a-time rule applies
+          across all three and app.js enforces it. */}
+      {radioConnected ? <RadioEventSection event={event} /> : null}
+
       <section class="stream">
         <h2>Watch</h2>
         {entitlement ? (
@@ -2185,6 +2194,7 @@ export const Settings = ({
   passwordMinLength,
   member = false,
   shareCandidates = [],
+  radio = null,
 }) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
@@ -2531,6 +2541,10 @@ export const Settings = ({
         actually changed.
       </p>
     </section>
+
+    {/* The radio rail, when this deployment has one. Its own section with its
+        own three forms; see views/radio.jsx. */}
+    {radio ? <RadioSettings {...radio} /> : null}
 
     <section>
       <h2>Reminders</h2>

@@ -2504,3 +2504,79 @@ ul.group-grid .meta {
 .kind-count.kind-series strong {
   color: var(--accent);
 }
+
+/* ===================================================================== radio ==
+   A reader's own SiriusXM. Rows reuse the channel list; what is new is the
+   art, the number, and a stage that is a bar rather than a picture. */
+.radio-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  margin: 0.8rem 0 1rem;
+}
+.radio-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+.radio-tabs a {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+}
+.radio-tabs a.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.radio-search {
+  display: flex;
+  gap: 0.35rem;
+  flex: 1 1 14rem;
+}
+.radio-search input {
+  flex: 1;
+  min-width: 0;
+}
+.radio-quality {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.radio-channel {
+  align-items: center;
+}
+.radio-art {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--line);
+}
+.radio-art-empty {
+  display: inline-block;
+}
+.radio-number {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-right: 0.5rem;
+}
+.radio-desc {
+  display: block;
+}
+.radio-otp {
+  font-size: 1.4rem;
+  letter-spacing: 0.3em;
+  max-width: 12rem;
+}
+
+/* The bar, inserted after the row that started it. No aspect ratio: there is
+   no picture to hold a place for, and a 16:9 black box over a radio station
+   reads as a stream that never arrived. */
+.player-stage.audio {
+  aspect-ratio: auto;
+  background: none;
+  overflow: visible;
+}

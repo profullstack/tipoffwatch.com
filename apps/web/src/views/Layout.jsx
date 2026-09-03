@@ -236,6 +236,9 @@ export const Layout = (props) => {
               reachable only by typing its URL, which is a strange way to own a
               page that other people can see. */}
             {props.user?.handle ? <a href={`/u/${props.user.handle}`}>Profile</a> : null}
+            {/* Signed-in only: the page has nothing to play without a session, and
+              a nav entry that leads to a sign-in wall is a wall with a sign on it. */}
+            {props.user && config.radio.enabled ? <a href="/radio">Radio</a> : null}
             {/* Shown to everybody, member or not. A member needs it to check what
               they have earned, and somebody who is not needs to be able to find
               out what it costs -- a link that disappears once you join is a link

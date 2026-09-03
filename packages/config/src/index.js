@@ -578,6 +578,68 @@ export const config = {
   },
 
   /**
+   * A reader's own SiriusXM, played here.
+   *
+   * The BYO rail for radio, beside the playlist one above: the reader connects
+   * their own subscription with the code SiriusXM emails them, and the sports and
+   * news lineups play in the page through a proxy that holds their session. The
+   * session is sealed with the playlist key, so this is off wherever that is.
+   *
+   * On for the sports brand and off for the sibling by default: the lineups
+   * offered are sports and news, and a site about film releases has no page to
+   * put them on. SIRIUSXM=1 or 0 overrides either way.
+   */
+  radio: {
+    get enabled() {
+      const dflt = (process.env.BRAND ?? 'tipoffwatch') === 'tipoffwatch' ? '1' : '0';
+      return (
+        opt('SIRIUSXM', dflt) !== '0' && Boolean(opt('PLAYLIST_SECRET') || opt('DATABASE_URL'))
+      );
+    },
+    /**
+     * The residential exit for every SiriusXM call.
+     *
+     * SXM answers a datacenter address with 403 before it reads the bearer, and
+     * pins a session to the IP that authenticated it, so this is not optional in
+     * production. SIRIUSXM_PROXY_URL when set, else the ESPN proxy, which is the
+     * same Webshare account.
+     */
+    get proxyUrl() {
+      return opt('SIRIUSXM_PROXY_URL') || opt('SPORTS_PROXY_URL');
+    },
+    /**
+     * A pool of single-IP proxies to pin readers to, one per line or comma.
+     *
+     * Each entry is `host:port:user:pass` (Webshare's export) or a full URL. A
+     * reader hashes to one entry and keeps it, which is what makes their
+     * session's IP the same at login, at refresh and at every segment. With no
+     * pool, everything goes through proxyUrl and a rotating endpoint will
+     * eventually hand a reader a different exit mid-stream.
+     */
+    get proxyPool() {
+      return opt('SIRIUSXM_PROXIES')
+        .split(/[\n,]+/)
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith('#'))
+        .map((line) => {
+          if (/^https?:\/\//.test(line)) return line;
+          const parts = line.split(':');
+          if (parts.length !== 4) return '';
+          const [host, port, user, pass] = parts;
+          return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+        })
+        .filter(Boolean);
+    },
+    /**
+     * A DEVICE_GRANT pasted from a browser session, for when SXM refuses to
+     * start a sign-in without one. Rarely needed; see packages/radio.
+     */
+    get deviceGrant() {
+      return opt('SIRIUSXM_DEVICE_GRANT');
+    },
+  },
+
+  /**
    * Analytics, if this deployment has any.
    *
    * No default, deliberately. This id used to be hardcoded in the layout, and it

@@ -1,5 +1,5 @@
 {
-  "name": "@tipoff/sports",
+  "name": "@tipoff/radio",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     ".": "./src/index.js"
   },
   "dependencies": {
+    "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
-    "@tipoff/db": "workspace:*",
-    "@profullstack/player": "0.6.0"
+    "@tipoff/db": "workspace:*"
   }
 }

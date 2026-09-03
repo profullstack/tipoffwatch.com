@@ -40,6 +40,8 @@ packages/queue  BullMQ queues, schedules and the fan-out workers.
 packages/notify Web push (VAPID) and email (Resend).
 packages/auth   Magic link, passkeys, sessions.
 packages/payments CoinPay checkout, webhook verification, entitlements.
+packages/playlists A reader's own M3U line: import, probe, proxy, share.
+packages/radio  A reader's own SiriusXM: email+code sign-in, lineups, HLS proxy.
 ```
 
 ## How reminders scale
@@ -95,3 +97,32 @@ proxy forwarding to a closed socket while the container reports healthy.
 
 Secrets belong on the service and in the logicsrc vault, not in a committed
 `.env`.
+
+## Radio (SiriusXM)
+
+A reader connects their own SiriusXM subscription in settings — the email on the
+account and the code SiriusXM sends to it, the way the SiriusXM app signs in —
+and the sports and news lineups play on `/radio` and on a fixture's page. The
+session is sealed with the playlist key and every byte is fetched by the server
+as that reader; the browser never sees a SiriusXM address or a bearer. The player
+is `@profullstack/player` with its audio bar, bundled to `vendor-player.js` and
+fetched on the first press of Play.
+
+Knobs, all read at request time:
+
+- `SIRIUSXM` — `0` turns the rail off. Defaults to on for the tipoffwatch brand
+  and off for any other `BRAND`.
+- `SIRIUSXM_PROXY_URL` — the residential exit for every SiriusXM call. Falls back
+  to `SPORTS_PROXY_URL`. Not optional in production: SiriusXM answers a
+  datacenter address with 403 and pins a session to the IP that authenticated it.
+- `SIRIUSXM_PROXIES` — a pool of single-IP proxies (`host:port:user:pass` lines
+  or full URLs, comma or newline separated). Each reader is hashed to one and
+  keeps it, so login, refresh and playback all leave through the same address.
+  Set this when a rotating endpoint starts breaking streams mid-segment.
+- `SIRIUSXM_DEVICE_GRANT` — a `DEVICE_GRANT` cookie value pasted from a browser
+  session, for the rare case SiriusXM refuses to start a sign-in without one.
+  The sign-in is tried without it first.
+
+The pending-code state between "send code" and "verify" lives in the web
+process's memory for ten minutes, which is right for one web replica and would
+need Redis for more.

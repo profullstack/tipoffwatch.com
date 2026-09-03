@@ -15,6 +15,7 @@ COPY packages/notify/package.json packages/notify/
 COPY packages/playlists/package.json packages/playlists/
 COPY packages/payments/package.json packages/payments/
 COPY packages/queue/package.json packages/queue/
+COPY packages/radio/package.json packages/radio/
 COPY packages/sports/package.json packages/sports/
 RUN bun install --frozen-lockfile || bun install
 
