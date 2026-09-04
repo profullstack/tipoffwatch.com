@@ -61,7 +61,17 @@ export async function storedSession(userId) {
   if (!row) return null;
   const accessToken = open(row.access_token);
   const cookies = row.session_cookies ? open(row.session_cookies) : '';
-  if (accessToken === null || cookies === null) return { unreadable: true, email: row.email };
+  // Who else may listen through this line. Carried on the session so settings
+  // can draw the sharing card from the one row read it already makes.
+  const sharing = {
+    shared: Boolean(row.shared),
+    shareAudience: row.share_audience ?? 'none',
+    sharedAt: row.shared_at ?? null,
+    sharedLabel: row.shared_label ?? null,
+  };
+  if (accessToken === null || cookies === null) {
+    return { unreadable: true, email: row.email, ...sharing };
+  }
   return {
     email: row.email,
     accessToken,
@@ -70,6 +80,7 @@ export async function storedSession(userId) {
     refreshTokenExpiresAt: row.refresh_token_expires_at,
     connectedAt: row.created_at,
     updatedAt: row.updated_at,
+    ...sharing,
   };
 }
 

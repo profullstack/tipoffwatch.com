@@ -3228,3 +3228,146 @@ export async function setPlaylistShareGrant({ userId, audienceUserId, allowed })
   `;
   return true;
 }
+
+/* --------------------------------------------------- sharing a SiriusXM line -- */
+
+/**
+ * Open one account's SiriusXM line to others, or close it again.
+ *
+ * The radio twin of setPlaylistSharing, with the same shape and the same rules:
+ * keyed on the owner's own user_id so there is no id to tamper with, an
+ * unrecognised audience closes rather than opens, and shared_at is stamped on the
+ * transition only. Returns null when the account has no line to share.
+ */
+export async function setSiriusXmSharing({ userId, audience, label = null }) {
+  const wanted = SHARE_AUDIENCES.includes(audience) ? audience : 'none';
+  const shared = wanted !== 'none';
+  const [row] = await sql`
+    update siriusxm_sessions set
+      shared = ${shared},
+      share_audience = ${wanted},
+      shared_at = case
+        when ${shared} and not shared then now()
+        else shared_at
+      end,
+      shared_label = ${label === null ? null : String(label).slice(0, 80)},
+      updated_at = now()
+    where user_id = ${userId}
+    returning shared, share_audience, shared_at, shared_label
+  `;
+  return row ?? null;
+}
+
+/**
+ * The people this owner could name on their line, and which are already named.
+ * Mutual follows, as for a playlist; the grant row is the rule.
+ */
+export async function siriusXmShareCandidates(userId) {
+  if (!userId) return [];
+  return sql`
+    select u.id, u.handle::text as handle, u.display_name,
+           exists (
+             select 1 from siriusxm_share_grants g
+             where g.owner_user_id = ${userId} and g.audience_user_id = u.id
+           ) as granted
+    from user_follows mine
+    join user_follows theirs
+      on theirs.follower_id = mine.followee_id and theirs.followee_id = ${userId}
+    join users u on u.id = mine.followee_id
+    where mine.follower_id = ${userId}
+    order by coalesce(u.display_name, u.handle::text)
+    limit 200
+  `;
+}
+
+/**
+ * Add or remove one named person from this owner's line.
+ *
+ * The insert selects through the owner's own session row, so a grant cannot be
+ * written for an account that has no line, and the foreign keys refuse an
+ * audience that does not exist.
+ */
+export async function setSiriusXmShareGrant({ userId, audienceUserId, allowed }) {
+  if (!userId || !audienceUserId || userId === audienceUserId) return false;
+  if (allowed) {
+    const [row] = await sql`
+      insert into siriusxm_share_grants (owner_user_id, audience_user_id)
+      select s.user_id, ${audienceUserId}::uuid from siriusxm_sessions s where s.user_id = ${userId}
+      on conflict do nothing
+      returning audience_user_id
+    `;
+    return Boolean(row);
+  }
+  await sql`
+    delete from siriusxm_share_grants
+    where owner_user_id = ${userId} and audience_user_id = ${audienceUserId}::uuid
+  `;
+  return true;
+}
+
+/**
+ * Whose lines this viewer may listen through. Never a token, never an email:
+ * the label, the handle, and when it opened.
+ *
+ * The one radio query that crosses accounts on purpose, so `s.shared` leads the
+ * where clause. The viewer's own line is excluded -- it is their own Radio page.
+ */
+export async function sharedSiriusXmOwners({ viewerId = null } = {}) {
+  return sql`
+    select s.user_id as owner_id,
+           u.handle::text as handle,
+           coalesce(s.shared_label, u.display_name, '@' || u.handle::text, 'someone') as label,
+           s.shared_at, s.share_audience
+    from siriusxm_sessions s
+    join users u on u.id = s.user_id
+    where s.shared
+      and (
+        s.share_audience = 'everyone'
+        or (
+          s.share_audience = 'friends'
+          and exists (
+            select 1 from siriusxm_share_grants g
+            where g.owner_user_id = s.user_id and g.audience_user_id = ${viewerId}::uuid
+          )
+        )
+      )
+      and (${viewerId}::uuid is null or s.user_id <> ${viewerId})
+    order by s.shared_at
+  `;
+}
+
+/**
+ * One shared line by its owner, if this viewer may use it. This is what
+ * authorises every play through somebody else's SiriusXM: the row comes back
+ * only while the owner's line is open to this viewer, and the owner always
+ * reaches their own.
+ */
+export async function sharedSiriusXmOwner(ownerId, { viewerId = null } = {}) {
+  if (!ownerId || !/^[0-9a-f-]{36}$/i.test(String(ownerId))) return null;
+  const [row] = await sql`
+    select s.user_id as owner_id,
+           u.handle::text as handle,
+           coalesce(s.shared_label, u.display_name, '@' || u.handle::text, 'someone') as label,
+           s.share_audience
+    from siriusxm_sessions s
+    join users u on u.id = s.user_id
+    where s.user_id = ${ownerId}::uuid
+      and (
+        s.user_id = ${viewerId}::uuid
+        or (
+          s.shared
+          and (
+            s.share_audience = 'everyone'
+            or (
+              s.share_audience = 'friends'
+              and exists (
+                select 1 from siriusxm_share_grants g
+                where g.owner_user_id = s.user_id and g.audience_user_id = ${viewerId}::uuid
+              )
+            )
+          )
+        )
+      )
+  `;
+  return row ?? null;
+}

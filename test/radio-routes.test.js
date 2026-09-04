@@ -124,3 +124,115 @@ describe('radio routes', () => {
     expect(entry).toContain('live: true');
   });
 });
+
+/*
+ * A line opened to others: the same shape as a shared playlist, with the same
+ * guards in the same order, and with the owner's session never reaching anybody.
+ */
+describe('sharing a SiriusXM line', () => {
+  test('the schema mirrors the shared playlists: three audiences, agreeing flag, named grants', async () => {
+    const sql = await read('../packages/db/migrations/0031_shared_siriusxm.sql');
+    expect(sql).toContain("(shared and share_audience in ('friends', 'everyone'))");
+    expect(sql).toContain("or (not shared and share_audience = 'none')");
+    expect(sql).toContain('create table if not exists siriusxm_share_grants');
+    expect(sql).toContain('references siriusxm_sessions(user_id) on delete cascade');
+  });
+
+  test("every read of somebody else's line is authorised by the shared row, viewer in hand", async () => {
+    const queries = await read('../packages/db/src/queries.js');
+    for (const fn of [
+      'setSiriusXmSharing',
+      'siriusXmShareCandidates',
+      'setSiriusXmShareGrant',
+      'sharedSiriusXmOwners',
+      'sharedSiriusXmOwner',
+    ]) {
+      expect(queries).toContain(`export async function ${fn}(`);
+    }
+    const owner = queries.slice(queries.indexOf('export async function sharedSiriusXmOwner('));
+    expect(owner.slice(0, 1500)).toContain('s.shared');
+    expect(owner.slice(0, 1500)).toContain("s.share_audience = 'everyone'");
+    expect(owner.slice(0, 1500)).toContain('g.audience_user_id = ${viewerId}::uuid');
+    // Never the bearer or the jar: the columns a listener's request can reach.
+    expect(owner.slice(0, 1500)).not.toContain('access_token');
+    expect(owner.slice(0, 1500)).not.toContain('session_cookies');
+  });
+
+  test('the shared stream and proxy need a session, authorise before they fetch, and play as the owner', async () => {
+    const src = await read('../apps/web/src/app.js');
+    for (const route of [
+      "app.get('/radio/shared/:owner/stream.m3u8'",
+      "app.get('/radio/shared/:owner/proxy'",
+      "app.post('/api/radio/share'",
+      "app.post('/api/radio/share/grant'",
+    ]) {
+      const at = src.indexOf(route);
+      expect(at).toBeGreaterThan(-1);
+      expect(src.slice(at, at + 400)).toContain('requireUser(c)');
+    }
+    for (const route of [
+      "app.get('/radio/shared/:owner/stream.m3u8'",
+      "app.get('/radio/shared/:owner/proxy'",
+    ]) {
+      const body = src.slice(src.indexOf(route), src.indexOf(route) + 1500);
+      const authAt = body.indexOf('q.sharedSiriusXmOwner(');
+      const fetchAt = body.indexOf('radioFetch(');
+      expect(authAt).toBeGreaterThan(-1);
+      expect(authAt).toBeLessThan(fetchAt);
+      // The owner's line, the owner's proxy, the owner's addresses.
+      expect(body).toContain('radioFetch(owner.owner_id');
+      expect(body).toContain('lineUserId: owner.owner_id');
+      expect(body).toContain('proxyUrl: radioSharedProxyUrl(owner.owner_id)');
+    }
+    // The shared proxy checks the host before it even looks the owner up.
+    const proxy = src.slice(src.indexOf("app.get('/radio/shared/:owner/proxy'"));
+    expect(proxy.indexOf('isSiriusXmUrl')).toBeLessThan(proxy.indexOf('q.sharedSiriusXmOwner('));
+    // A shared manifest points back at the shared proxy, under its owner.
+    expect(src).toContain(
+      '`/radio/shared/${encodeURIComponent(ownerId)}/proxy?u=${encodeURIComponent(target)}',
+    );
+  });
+
+  test('naming people is premium; narrowing never is', async () => {
+    const src = await read('../apps/web/src/app.js');
+    const share = src.slice(
+      src.indexOf("app.post('/api/radio/share'"),
+      src.indexOf("app.post('/api/radio/share'") + 1500,
+    );
+    expect(share).toContain("audience === 'friends' && !(await isMember(user))");
+    const grant = src.slice(src.indexOf("app.post('/api/radio/share/grant'"));
+    expect(grant.slice(0, 1200)).toContain('allowed && !(await isMember(user))');
+  });
+
+  test('a follower with no line lands on the shared one, on /radio and on a game page', async () => {
+    const src = await read('../apps/web/src/app.js');
+    const page = src.slice(src.indexOf("app.get('/radio',"), src.indexOf("app.get('/radio/find'"));
+    expect(page).toContain('q.sharedSiriusXmOwners({ viewerId: user.id })');
+    expect(page).toContain("c.req.query('via')");
+    expect(page).toContain('radio.channels(lineUserId, cat)');
+    // The fixture and team pages ask the same question, on their own line each.
+    expect(src.match(/await radioSharedOwnerFor\(user\.id, radioSession\)/g)).toHaveLength(2);
+    const find = src.slice(
+      src.indexOf("app.get('/radio/find'"),
+      src.indexOf("app.get('/radio/stream.m3u8'"),
+    );
+    expect(find).toContain("c.req.query('via')");
+    expect(find).toContain('radio.sidesStations(lineUserId');
+    expect(find).toContain('playBase={via ? radioSharedStreamUrl(via.owner_id) : undefined}');
+  });
+
+  test('the rows carry the play address they were rendered for', async () => {
+    const view = await read('../apps/web/src/views/radio.jsx');
+    expect(view).toContain("const OWN_PLAY_BASE = '/radio/stream.m3u8'");
+    expect(view).toContain(
+      'data-radio-play={`${playBase}?id=${encodeURIComponent(ch.stationId)}`}',
+    );
+    expect(view).toContain('/radio/shared/${encodeURIComponent(via.owner_id)}/stream.m3u8');
+    // The settings card posts to the radio share routes, not the playlist ones.
+    expect(view).toContain('action="/api/radio/share"');
+    expect(view).toContain('action="/api/radio/share/grant"');
+    // Never a VLC link, never an .m3u: those are the bearer.
+    expect(view).not.toContain('vlc://');
+    expect(view).not.toContain('.m3u"');
+  });
+});

@@ -50,7 +50,55 @@ describe('siriusxm_sessions', () => {
       'refresh_token_expires_at',
       'created_at',
       'updated_at',
+      // Sharing (0031). None of these is a secret: a flag, an audience, a
+      // timestamp and a label the owner wrote to be shown to other people.
+      'shared',
+      'share_audience',
+      'shared_at',
+      'shared_label',
     ]);
+  });
+
+  test('a line is shared exactly when its audience says so, and grants go with the line', async () => {
+    const {
+      rows: [owner],
+    } = await db.query("insert into users (email) values ('o@example.com') returning id");
+    const {
+      rows: [friend],
+    } = await db.query("insert into users (email) values ('f@example.com') returning id");
+    await db.query(
+      'insert into siriusxm_sessions (user_id, access_token, session_cookies) values ($1, $2, $3)',
+      [owner.id, 'v1.sealed', 'v1.sealed'],
+    );
+    // The two columns must agree: open with no audience, or private with one, is refused.
+    await expect(
+      db.query('update siriusxm_sessions set shared = true where user_id = $1', [owner.id]),
+    ).rejects.toThrow();
+    await expect(
+      db.query("update siriusxm_sessions set share_audience = 'everyone' where user_id = $1", [
+        owner.id,
+      ]),
+    ).rejects.toThrow();
+    await db.query(
+      "update siriusxm_sessions set shared = true, share_audience = 'friends' where user_id = $1",
+      [owner.id],
+    );
+    await db.query(
+      'insert into siriusxm_share_grants (owner_user_id, audience_user_id) values ($1, $2)',
+      [owner.id, friend.id],
+    );
+    // A grant needs a line to attach to.
+    await expect(
+      db.query(
+        'insert into siriusxm_share_grants (owner_user_id, audience_user_id) values ($1, $2)',
+        [friend.id, owner.id],
+      ),
+    ).rejects.toThrow();
+    // Disconnecting the line takes its grants with it.
+    await db.query('delete from siriusxm_sessions where user_id = $1', [owner.id]);
+    const { rows } = await db.query('select count(*)::int as n from siriusxm_share_grants');
+    expect(rows[0].n).toBe(0);
+    await db.query('delete from users where id in ($1, $2)', [owner.id, friend.id]);
   });
 });
 
