@@ -467,13 +467,13 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
    *
    * Per-viewer, and safe only because this page is not one of the cached() ones.
    */
-  const [ownChannels, radioSession] = await Promise.all([
-    ownChannelsForTeam({ userId: user?.id, team }),
-    // A row read, not a lookup: the team's feed is asked for by app.js.
+  const ownChannels = await ownChannelsForTeam({ userId: user?.id, team });
+  // A row read, not a lookup: the team's feed is asked for by app.js. On its own
+  // line like the other two pages, so it can never shift a neighbour's slot.
+  const radioSession =
     user && config.radio.enabled && radio.hasTeamRadio(team.league_slug)
-      ? radio.storedSession(user.id)
-      : null,
-  ]);
+      ? await radio.storedSession(user.id)
+      : null;
 
   return c.html(
     await render(
@@ -556,19 +556,21 @@ app.get('/events/:id', async (c) => {
    * named still had to go and find it. Returns null when they have no list or
    * nothing matched, which is what makes the section render as it always did.
    */
-  const [marketChannels, sharedChannels, radioSession] = await Promise.all([
+  const [marketChannels, sharedChannels] = await Promise.all([
     marketChannelsForEvent({ userId: user?.id, markets: marketsOf(event) }),
-    // Whether the "On SiriusXM" section is drawn at all. A row read, no upstream
-    // call: the lookup itself waits for the button.
-    user && config.radio.enabled && radio.hasTeamRadio(event.league_slug)
-      ? radio.storedSession(user.id)
-      : null,
     // Other people's open lists. Signed-in only, and it returns no URLs at all --
     // a shared channel is playable through the proxy and nowhere else, because
     // every other route hands over the address and the address is the owner's
     // provider password.
     sharedChannelsForEvent({ viewerId: user?.id ?? null, event }),
   ]);
+  // Whether the "On SiriusXM" section is drawn at all: a row read, no upstream
+  // call, and on its own line -- see the settings handler for why it is not in
+  // the array above (it was, and shifted "Shared with you" out of existence).
+  const radioSession =
+    user && config.radio.enabled && radio.hasTeamRadio(event.league_slug)
+      ? await radio.storedSession(user.id)
+      : null;
   return c.html(
     await render(
       <EventPage
@@ -2152,17 +2154,21 @@ app.post('/api/timezone', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = requireUser(c);
-  const [prefs, passkeys, playlist, member, shareCandidates, radioSession] = await Promise.all([
+  const [prefs, passkeys, playlist, member, shareCandidates] = await Promise.all([
     q.getPrefs(user.id),
     q.listPasskeys(user.id),
     q.getPlaylist(user.id),
     isMember(user),
-    config.radio.enabled ? radio.storedSession(user.id) : null,
     // Fetched unconditionally rather than only for a member: the picker has to be
     // populated the instant somebody joins, and a second round trip after the
     // upgrade is how it renders empty on the one page view that matters.
     q.shareCandidates(user.id),
   ]);
+  // On its own line, named, and not slotted into the array above. It was, one
+  // position off from where it was destructured, and every reader was told they
+  // were connected: the share-candidates list is truthy. A positional list of
+  // five unrelated things is exactly where that happens; a sixth does not join it.
+  const radioSession = config.radio.enabled ? await radio.storedSession(user.id) : null;
   const added = c.req.query('playlist');
   /*
    * Three outcomes, not one count.

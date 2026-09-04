@@ -246,6 +246,10 @@ describe('otp login', () => {
           });
         switch (`${req.method} ${url.pathname}`) {
           case 'GET /identity/v1/identities/status':
+            // What a spent residential proxy answers, before SXM sees anything.
+            if (url.searchParams.get('handle') === 'capped@example.com') {
+              return new Response('Bandwidth limit reached', { status: 402 });
+            }
             // Requires a session the first time round, which is what forces the
             // anonymous-session path; the pasted grant makes it possible.
             if (!auth) return json({ error: 'auth' }, 401);
@@ -372,6 +376,13 @@ describe('otp login', () => {
     ).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining('email and password'),
+    });
+  });
+
+  test('a 402 is the proxy out of bandwidth, and is said so', async () => {
+    await expect(sxm.startOtpLogin('capped@example.com', {})).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringContaining('out of bandwidth'),
     });
   });
 
