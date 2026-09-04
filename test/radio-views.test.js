@@ -39,13 +39,13 @@ describe('RadioChannelRow', () => {
 });
 
 describe('RadioSettings', () => {
-  test('asks for email and password when nothing is connected, with the code as the other door', () => {
+  test('asks for the email when nothing is connected, and nothing else', () => {
+    // media-streamer's flow, exactly: email, send code, code, verify.
     const out = html(RadioSettings({ session: null, pending: null }));
-    expect(out).toContain('action="/api/radio/connect/password"');
+    expect(out).toContain('action="/api/radio/connect"');
     expect(out).toContain('name="email"');
-    expect(out).toContain('type="password"');
-    expect(out).toContain('autocomplete="current-password"');
-    expect(out).toContain('formaction="/api/radio/connect"');
+    expect(out).toContain('Send sign-in code');
+    expect(out).not.toContain('type="password"');
     expect(out).not.toContain('name="otp"');
   });
   test('asks for the code while one is pending', () => {
@@ -63,7 +63,7 @@ describe('RadioSettings', () => {
     expect(on).not.toContain('name="email"');
     const broken = html(RadioSettings({ session: { unreadable: true }, pending: null }));
     expect(broken).toContain('no longer be decrypted');
-    expect(broken).toContain('action="/api/radio/connect/password"');
+    expect(broken).toContain('action="/api/radio/connect"');
   });
   test('shows what happened', () => {
     const out = html(
