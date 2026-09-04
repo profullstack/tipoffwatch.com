@@ -632,7 +632,13 @@ export const config = {
     },
     /**
      * A DEVICE_GRANT pasted from a browser session, for when SXM refuses to
-     * start a sign-in without one. Rarely needed; see packages/radio.
+     * start a sign-in without one.
+     *
+     * Rarely needed: packages/radio mints one itself by loading the web player
+     * in a headless Chromium through the proxy, as media-streamer does. That
+     * reads PUPPETEER_EXECUTABLE_PATH (the Dockerfile sets it to Debian's
+     * Chromium) and can be switched off with SIRIUSXM_BROWSER_MINT=off, which
+     * the tests do. This paste is the fallback when the mint fails.
      */
     get deviceGrant() {
       return opt('SIRIUSXM_DEVICE_GRANT');

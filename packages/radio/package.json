@@ -9,6 +9,7 @@
   "dependencies": {
     "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
-    "@tipoff/db": "workspace:*"
+    "@tipoff/db": "workspace:*",
+    "puppeteer-core": "^24"
   }
 }
