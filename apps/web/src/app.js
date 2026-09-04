@@ -474,6 +474,12 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
     user && config.radio.enabled && radio.hasTeamRadio(team.league_slug)
       ? await radio.storedSession(user.id)
       : null;
+  // No line of their own: somebody else's, when one is open to them. The same
+  // section, played through us, exactly as a shared playlist is on this page.
+  const radioVia =
+    user && config.radio.enabled && radio.hasTeamRadio(team.league_slug)
+      ? await radioSharedOwnerFor(user.id, radioSession)
+      : null;
 
   return c.html(
     await render(
@@ -486,7 +492,13 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
         radio={
           radioSession && !radioSession.unreadable
             ? { find: `/radio/find?team=${team.id}`, sides: [team.display_name] }
-            : null
+            : radioVia
+              ? {
+                  find: `/radio/find?team=${team.id}&via=${encodeURIComponent(radioVia.owner_id)}`,
+                  sides: [team.display_name],
+                  via: radioVia.label,
+                }
+              : null
         }
         live={live}
         liveTotal={liveTotal}
@@ -571,6 +583,11 @@ app.get('/events/:id', async (c) => {
     user && config.radio.enabled && radio.hasTeamRadio(event.league_slug)
       ? await radio.storedSession(user.id)
       : null;
+  // No line of their own: somebody else's, when one is open to them.
+  const radioVia =
+    user && config.radio.enabled && radio.hasTeamRadio(event.league_slug)
+      ? await radioSharedOwnerFor(user.id, radioSession)
+      : null;
   return c.html(
     await render(
       <EventPage
@@ -593,7 +610,13 @@ app.get('/events/:id', async (c) => {
                 find: `/radio/find?event=${event.id}`,
                 sides: [event.home_name, event.away_name].filter(Boolean),
               }
-            : null
+            : radioVia
+              ? {
+                  find: `/radio/find?event=${event.id}&via=${encodeURIComponent(radioVia.owner_id)}`,
+                  sides: [event.home_name, event.away_name].filter(Boolean),
+                  via: radioVia.label,
+                }
+              : null
         }
       />,
     ),
@@ -2169,6 +2192,11 @@ app.get('/settings', async (c) => {
   // were connected: the share-candidates list is truthy. A positional list of
   // five unrelated things is exactly where that happens; a sixth does not join it.
   const radioSession = config.radio.enabled ? await radio.storedSession(user.id) : null;
+  // The people this owner could name on their SiriusXM line. Its own line and
+  // its own read, for the same reason the playlist picker is fetched
+  // unconditionally: it must exist the instant the line is connected.
+  const radioShareCandidates =
+    radioSession && !radioSession.unreadable ? await q.siriusXmShareCandidates(user.id) : [];
   const added = c.req.query('playlist');
   /*
    * Three outcomes, not one count.
@@ -2226,6 +2254,8 @@ app.get('/settings', async (c) => {
                 pending: radio.peekPending(user.id),
                 notice: radioNoticeFor(c.req.query('siriusxm')),
                 error: c.req.query('siriusxm_error') ?? null,
+                member,
+                shareCandidates: radioShareCandidates,
               }
             : null
         }
@@ -2254,9 +2284,27 @@ function radioNoticeFor(state) {
       return 'SiriusXM connected. The lineup is on the Radio page.';
     case 'removed':
       return 'SiriusXM disconnected.';
+    case 'shared_none':
+      return 'Your SiriusXM line is private again.';
+    case 'shared_friends':
+      return 'Your SiriusXM line is open to the people you name below.';
+    case 'shared_everyone':
+      return 'Your SiriusXM line is open to everyone signed in.';
     default:
       return null;
   }
+}
+
+/**
+ * Whose line a reader with none of their own may use, for the pages that draw
+ * the "On SiriusXM" section. Null when they have a line -- their own comes
+ * first -- or when nobody has opened one to them. The first open line is the
+ * default here as it is on /radio.
+ */
+async function radioSharedOwnerFor(viewerId, ownSession) {
+  if (ownSession && !ownSession.unreadable) return null;
+  const owners = await q.sharedSiriusXmOwners({ viewerId });
+  return owners[0] ?? null;
 }
 
 const radioBack = (query) => `/settings?${query}#siriusxm`;
@@ -2371,11 +2419,30 @@ app.get('/radio', async (c) => {
   const cat = radio.CATEGORIES.includes(c.req.query('cat')) ? c.req.query('cat') : 'sports';
   const qText = (c.req.query('q') ?? '').trim().slice(0, 80);
   const session = user ? await radio.storedSession(user.id) : null;
+  const own = Boolean(session && !session.unreadable);
+  /*
+   * Whose lines are open to this reader, and which one the page is on.
+   *
+   * `via` picks one by its owner and is honoured only if that line is open to
+   * this reader -- the list is the authorisation. With no line of their own the
+   * first open one is the default, so a reader who was given a line lands on a
+   * playing page rather than on "connect yours".
+   */
+  const sharedOwners = user ? await q.sharedSiriusXmOwners({ viewerId: user.id }) : [];
+  const viaId = c.req.query('via') ?? '';
+  const via =
+    sharedOwners.find((o) => o.owner_id === viaId) ??
+    (!own && sharedOwners.length > 0 ? sharedOwners[0] : null);
+  // Whose session the lineup and the search run on. The lineup is the same for
+  // everyone and cached once; what the choice decides is whose line plays it.
+  const lineUserId = via ? via.owner_id : own ? user.id : null;
   let channels = [];
   let error = null;
-  if (session && !session.unreadable) {
+  if (lineUserId) {
     try {
-      channels = qText ? await radio.search(user.id, qText) : await radio.channels(user.id, cat);
+      channels = qText
+        ? await radio.search(lineUserId, qText)
+        : await radio.channels(lineUserId, cat);
     } catch (err) {
       error = radioFailure(err).message;
     }
@@ -2390,6 +2457,8 @@ app.get('/radio', async (c) => {
         q={qText}
         channels={channels}
         error={error}
+        sharedOwners={sharedOwners}
+        via={via}
       />,
     ),
   );
@@ -2437,9 +2506,23 @@ app.get('/radio/find', async (c) => {
     return c.text('SiriusXM has no team feeds for this league.', 404);
   if (sides.length === 0) return c.text('This fixture has no sides to look up.', 404);
 
+  // Somebody else's line, when the page was drawn for one. Authorised on every
+  // call, exactly as the shared stream routes are; the page's say-so is not enough.
+  const viaId = c.req.query('via') ?? '';
+  const via = viaId ? await q.sharedSiriusXmOwner(viaId, { viewerId: user.id }) : null;
+  if (viaId && !via) return c.text('not shared', 404);
+  const lineUserId = via ? via.owner_id : user.id;
+
   try {
-    const result = await radio.sidesStations(user.id, leagueSlug, sides);
-    return fragment(await (<RadioSidesFragment sides={result} />).toString());
+    const result = await radio.sidesStations(lineUserId, leagueSlug, sides);
+    return fragment(
+      await (
+        <RadioSidesFragment
+          sides={result}
+          playBase={via ? radioSharedStreamUrl(via.owner_id) : undefined}
+        />
+      ).toString(),
+    );
   } catch (err) {
     const { message, status } = radioFailure(err);
     return c.text(message, status);
@@ -2453,6 +2536,12 @@ app.get('/radio/find', async (c) => {
  */
 const radioProxyUrl = (target, quality) =>
   `/radio/proxy?u=${encodeURIComponent(target)}&quality=${encodeURIComponent(quality)}`;
+
+/** The same addresses for somebody else's line, under its owner. */
+const radioSharedProxyUrl = (ownerId) => (target, quality) =>
+  `/radio/shared/${encodeURIComponent(ownerId)}/proxy?u=${encodeURIComponent(target)}&quality=${encodeURIComponent(quality)}`;
+const radioSharedStreamUrl = (ownerId) =>
+  `/radio/shared/${encodeURIComponent(ownerId)}/stream.m3u8`;
 
 const radioQuality = (value) => (radio.QUALITIES.includes(value) ? value : radio.DEFAULT_QUALITY);
 
@@ -2485,10 +2574,22 @@ async function radioFetch(userId, target) {
   });
 }
 
-/** The reply for a manifest, a key or a segment, from what SXM sent. */
-function radioResource(c, target, quality, upstream) {
+/**
+ * The reply for a manifest, a key or a segment, from what SXM sent.
+ *
+ * `lineUserId` is whose session fetched it -- the reader's own unless the line
+ * is somebody else's -- and `proxyUrl` is where the rewritten manifest points,
+ * which for a shared line is the shared proxy under that owner.
+ */
+function radioResource(
+  c,
+  target,
+  quality,
+  upstream,
+  { lineUserId = c.get('user').id, proxyUrl = radioProxyUrl } = {},
+) {
   if (upstream.status < 200 || upstream.status >= 300) {
-    if (upstream.status === 401 || upstream.status === 403) radio.forget(c.get('user').id);
+    if (upstream.status === 401 || upstream.status === 403) radio.forget(lineUserId);
     return c.text(`SiriusXM answered ${upstream.status}`, upstream.status === 404 ? 404 : 502);
   }
   const ct = upstream.contentType ?? '';
@@ -2507,9 +2608,7 @@ function radioResource(c, target, quality, upstream) {
   }
   if (radio.looksLikePlaylist(target, ct)) {
     const text = new TextDecoder().decode(upstream.body);
-    const rewritten = radio.rewritePlaylist(text, target, quality, (u) =>
-      radioProxyUrl(u, quality),
-    );
+    const rewritten = radio.rewritePlaylist(text, target, quality, (u) => proxyUrl(u, quality));
     return c.body(rewritten, 200, {
       'content-type': 'application/vnd.apple.mpegurl',
       'cache-control': 'no-store, private',
@@ -2563,6 +2662,125 @@ app.get('/radio/proxy', async (c) => {
     const { message, status } = radioFailure(err);
     return c.text(message, status);
   }
+});
+
+/* ------------------------------------------------- somebody else's line -- */
+
+/**
+ * Somebody else's SiriusXM, heard through us.
+ *
+ * The radio twin of /shared/:channelId/stream.ts, and safer than it in the one
+ * way that matters: nothing here is the credential. The owner's bearer fetches
+ * every manifest, key and segment on the server and only the bytes go out, the
+ * way media-streamer's restream rail does it. `sharedSiriusXmOwner` is what
+ * authorises each request -- the row comes back only while the owner's line is
+ * open to this listener -- and it is asked on every call, not once at the page.
+ *
+ * The line is used as the OWNER: the tune is minted on their session, the fetch
+ * goes through their pinned proxy, and `sharedFetch` collapses every listener on
+ * a channel into one upstream request, because a session pinned to one IP seen
+ * serving twenty streams is how that account gets terminated. Twenty followers
+ * on one channel is still one connection.
+ */
+app.get('/radio/shared/:owner/stream.m3u8', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const owner = await q.sharedSiriusXmOwner(c.req.param('owner'), { viewerId: user.id });
+  if (!owner) return c.json({ error: 'not shared' }, 404);
+  const parsed = radio.parseStationId(c.req.query('id') ?? '');
+  if (!parsed) return c.json({ error: 'no such station' }, 400);
+  const quality = radioQuality(c.req.query('quality'));
+  try {
+    const target = await radio.tune(owner.owner_id, parsed);
+    const upstream = await radioFetch(owner.owner_id, target);
+    return radioResource(c, target, quality, upstream, {
+      lineUserId: owner.owner_id,
+      proxyUrl: radioSharedProxyUrl(owner.owner_id),
+    });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return c.json({ error: message }, status);
+  }
+});
+
+/**
+ * Everything a shared manifest points at. The host check comes first, before
+ * the owner lookup and before any fetch, for the same reason as /radio/proxy:
+ * this route carries the owner's bearer.
+ */
+app.get('/radio/shared/:owner/proxy', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const target = c.req.query('u') ?? '';
+  if (!radio.isSiriusXmUrl(target)) return c.text('forbidden target', 403);
+  const owner = await q.sharedSiriusXmOwner(c.req.param('owner'), { viewerId: user.id });
+  if (!owner) return c.text('not shared', 404);
+  const quality = radioQuality(c.req.query('quality'));
+  try {
+    const upstream = await radioFetch(owner.owner_id, target);
+    return radioResource(c, target, quality, upstream, {
+      lineUserId: owner.owner_id,
+      proxyUrl: radioSharedProxyUrl(owner.owner_id),
+    });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return c.text(message, status);
+  }
+});
+
+/**
+ * Open the reader's SiriusXM line to others, or close it. The same route shape
+ * and the same gate as /api/playlist/share: naming people is premium, the two
+ * free audiences are free, and a lapsed member can always narrow but never
+ * widen.
+ */
+app.post('/api/radio/share', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  const label = String(body.label ?? '').trim();
+  const audience = String(body.audience ?? 'none');
+
+  if (audience === 'friends' && !(await isMember(user))) {
+    return respond(c, {
+      json: { error: 'premium only' },
+      status: 402,
+      redirectTo: '/premium?want=friends',
+    });
+  }
+
+  const row = await q.setSiriusXmSharing({ userId: user.id, audience, label: label || null });
+  if (!row) {
+    return respond(c, {
+      json: { error: 'no line to share' },
+      status: 400,
+      redirectTo: radioBack('siriusxm_error=Connect%20SiriusXM%20before%20sharing%20it.'),
+    });
+  }
+  return respond(c, { json: row, redirectTo: radioBack(`siriusxm=shared_${row.share_audience}`) });
+});
+
+/**
+ * Name one person who may listen through this line, or take them off it.
+ * Removal is never gated: closing a line down must always work.
+ */
+app.post('/api/radio/share/grant', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  const audienceUserId = String(body.user_id ?? '');
+  const allowed = String(body.allowed ?? '') === '1';
+
+  if (allowed && !(await isMember(user))) {
+    return respond(c, {
+      json: { error: 'premium only' },
+      status: 402,
+      redirectTo: '/premium?want=friends',
+    });
+  }
+
+  const ok = await q.setSiriusXmShareGrant({ userId: user.id, audienceUserId, allowed });
+  return respond(c, { json: { ok }, redirectTo: '/settings#radio-sharing' });
 });
 
 /**
