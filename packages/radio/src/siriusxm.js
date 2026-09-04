@@ -341,14 +341,15 @@ export function resetDeviceGrantCache() {
  * The bootstrap token a bare session needs, when SXM asks for one.
  *
  * In order, exactly as media-streamer does it:
- *   1. One pasted by an operator into SIRIUSXM_DEVICE_GRANT.
+ *   1. A grant the caller handed in. The app never does; the tests do, to run
+ *      the anonymous-session dance against the fake gateway with no browser.
  *   2. The last browser-minted grant, while it is well inside its TTL.
  *   3. A headless browser loading the web player through the proxy, one mint
  *      at a time no matter how many sign-ins are waiting on it.
  *   4. The fetch spellings, which cost nothing and occasionally work.
  *
- * Only when all four fail is the operator asked for one, with what each step
- * said attached.
+ * Nothing is read from configuration: the token is minted, not stored. When
+ * every step fails the error carries what each of them said.
  */
 async function bootstrapDeviceGrant({ proxy, pasted }) {
   if (pasted) return parseDeviceGrant(pasted);
@@ -435,7 +436,7 @@ async function bootstrapDeviceGrantViaFetch({ proxy, browserErr }) {
     log.push(`${url}: HTTP ${res.status}`);
   }
   throw new SiriusXmError(
-    'SiriusXM would not start a sign-in from this server. It asks for a device token that only its own web player can mint; the headless browser could not mint one either, and an operator can supply one in SIRIUSXM_DEVICE_GRANT.',
+    'SiriusXM would not start a sign-in from this server. It asks for a device token that only its web player mints, and the headless browser could not mint one.',
     502,
     { browser: browserErr?.message ?? String(browserErr), fetch: log },
   );

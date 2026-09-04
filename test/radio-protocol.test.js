@@ -397,10 +397,10 @@ describe('otp login', () => {
     await expect(sxm.refreshSession('stale=1')).rejects.toMatchObject({ status: 401 });
   });
 
-  test('without a device grant and with SXM insisting on one, the failure names the lever', async () => {
+  test('without a device grant and with SXM insisting on one, the failure says the browser could not mint', async () => {
     await expect(sxm.startOtpLogin('me@example.com', {})).rejects.toMatchObject({
       status: 502,
-      message: expect.stringContaining('SIRIUSXM_DEVICE_GRANT'),
+      message: expect.stringContaining('headless browser could not mint'),
     });
   });
 
