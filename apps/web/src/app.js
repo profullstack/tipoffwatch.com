@@ -2302,6 +2302,46 @@ app.post('/api/radio/connect', async (c) => {
   }
 });
 
+/**
+ * The password door. Nothing is stored but the session it produces -- the
+ * same row the code path writes -- and the password itself is in this handler
+ * and nowhere else, not even the log.
+ */
+app.post('/api/radio/connect/password', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  const email = String(body.email ?? '').trim();
+  const password = String(body.password ?? '');
+  if (!email.includes('@') || !password) {
+    const message = 'Enter the email and password on your SiriusXM account.';
+    return respond(c, {
+      json: { error: message },
+      status: 400,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+  try {
+    const session = await radio.passwordLogin(email, password, {
+      proxy: radio.proxyFor(user.id),
+      deviceGrant: config.radio.deviceGrant || null,
+    });
+    radio.dropPending(user.id);
+    await radio.saveSession(user.id, { email, ...session });
+    return respond(c, {
+      json: { ok: true, connected: true },
+      redirectTo: radioBack('siriusxm=connected'),
+    });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return respond(c, {
+      json: { error: message },
+      status,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+});
+
 app.post('/api/radio/connect/verify', async (c) => {
   const user = requireUser(c);
   if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);

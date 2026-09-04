@@ -31,6 +31,7 @@ export {
   isSiriusXmUrl,
   looksLikePlaylist,
   parseStationId,
+  passwordLogin,
   QUALITIES,
   rewritePlaylist,
   SiriusXmError,

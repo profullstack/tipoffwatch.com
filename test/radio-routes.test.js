@@ -19,6 +19,7 @@ describe('radio routes', () => {
     expect(guard).toBeLessThan(fetchAt);
     for (const route of [
       "app.post('/api/radio/connect'",
+      "app.post('/api/radio/connect/password'",
       "app.post('/api/radio/connect/verify'",
       "app.post('/api/radio/disconnect'",
       "app.get('/radio/find'",
@@ -35,6 +36,15 @@ describe('radio routes', () => {
     expect(src).toMatch(/`\/radio\/proxy\?u=\$\{encodeURIComponent\(target\)\}/);
     const resource = src.slice(src.indexOf('function radioResource'));
     expect(resource.slice(0, 2000)).toContain("'cache-control': 'no-store, private'");
+  });
+
+  test('the password is used once and never reaches a log or the database', async () => {
+    const src = await read('../apps/web/src/app.js');
+    const route = src.slice(src.indexOf("app.post('/api/radio/connect/password'"));
+    const body = route.slice(0, route.indexOf("app.post('/api/radio/connect/verify'"));
+    expect(body).toContain('radio.passwordLogin(email, password');
+    expect(body).not.toMatch(/console\.\w+\([^)]*password/);
+    expect(body).not.toMatch(/saveSession\([^)]*password/);
   });
 
   test('a wrong code keeps the sign-in; an expired one says so', async () => {

@@ -264,6 +264,14 @@ describe('otp login', () => {
           case 'POST /identity/v1/identities/authenticate/otp':
             if (auth !== 'Bearer otp-grant') return json({}, 403);
             return json({ grant: 'identity-grant' });
+          case 'POST /identity/v1/identities/authenticate/password': {
+            if (!auth) return json({ error: 'auth' }, 401);
+            const body = await req.json();
+            if (body.handle !== 'me@example.com' || body.password !== 'hunter2') {
+              return json({ error: 'bad credentials' }, 401);
+            }
+            return json({ grant: 'identity-grant' }, 200, { 'set-cookie': 'pw=1' });
+          }
           case 'POST /session/v1/sessions/authenticated':
             if (auth !== 'Bearer identity-grant') return json({}, 403);
             return json(session('access-1'), 200, { 'set-cookie': 'refresh=r1; HttpOnly' });
@@ -333,6 +341,37 @@ describe('otp login', () => {
     await expect(sxm.completeOtpLogin(state, '000000')).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining('not accepted'),
+    });
+  });
+
+  test('the password door: anonymous session, then the grant, then the session', async () => {
+    calls.length = 0;
+    const result = await sxm.passwordLogin('me@example.com', 'hunter2', {
+      deviceGrant: JSON.stringify({ grant: 'device-grant' }),
+    });
+    expect(result.accessToken).toBe('access-1');
+    expect(result.cookies).toContain('refresh=r1');
+    const paths = calls.map((c) => `${c.method} ${c.path}`);
+    expect(paths).toEqual([
+      'POST /identity/v1/identities/authenticate/password',
+      'POST /session/v1/sessions/anonymous',
+      'POST /identity/v1/identities/authenticate/password',
+      'POST /session/v1/sessions/authenticated',
+    ]);
+    expect(calls[2].auth).toBe('Bearer anon-token');
+    expect(calls[3].auth).toBe('Bearer identity-grant');
+    // The jar from the anonymous session rides along to the password call.
+    expect(calls[2].cookie).toContain('anon=1');
+  });
+
+  test('a wrong password is a 400 in words, never a 502', async () => {
+    await expect(
+      sxm.passwordLogin('me@example.com', 'nope', {
+        deviceGrant: JSON.stringify({ grant: 'device-grant' }),
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('email and password'),
     });
   });
 

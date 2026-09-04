@@ -290,7 +290,7 @@ export const RadioSettings = ({ session, pending, notice, error }) => (
         </div>
       </form>
     ) : (
-      <form method="post" action="/api/radio/connect" class="card">
+      <form method="post" action="/api/radio/connect/password" class="card">
         <h3 class="card-title">Connect your SiriusXM account</h3>
         {session?.unreadable ? (
           <p class="feedback error">
@@ -304,12 +304,31 @@ export const RadioSettings = ({ session, pending, notice, error }) => (
             name="email"
             required
             placeholder="you@example.com"
-            autocomplete="email"
+            autocomplete="username"
           />
         </label>
-        <button class="cta" type="submit">
-          Send sign-in code
-        </button>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" />
+        </label>
+        <p class="muted small">
+          The password is used once, to sign in as the SiriusXM app would, and is not stored. What
+          is kept is the session it produces, encrypted. No password, or would rather not? Leave it
+          blank and have SiriusXM email you a code instead.
+        </p>
+        <div class="card-actions">
+          <button class="cta" type="submit">
+            Connect
+          </button>
+          <button
+            class="ghost small-btn"
+            type="submit"
+            formaction="/api/radio/connect"
+            formnovalidate
+          >
+            Email me a code instead
+          </button>
+        </div>
       </form>
     )}
   </section>

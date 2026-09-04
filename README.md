@@ -100,9 +100,9 @@ Secrets belong on the service and in the logicsrc vault, not in a committed
 
 ## Radio (SiriusXM)
 
-A reader connects their own SiriusXM subscription in settings — the email on the
-account and the code SiriusXM sends to it, the way the SiriusXM app signs in —
-and the sports and news lineups play on `/radio` and on a fixture's page. The
+A reader connects their own SiriusXM subscription in settings — email and
+password, or the code SiriusXM emails them, the two doors the SiriusXM app
+itself offers; only the resulting session is kept — and the sports and news lineups play on `/radio` and on a fixture's page. The
 session is sealed with the playlist key and every byte is fetched by the server
 as that reader; the browser never sees a SiriusXM address or a bearer. The player
 is `@profullstack/player` with its audio bar, bundled to `vendor-player.js` and
