@@ -20,7 +20,7 @@ describe('pending sign-ins', () => {
     expect(peekPending('u1')).toBeNull();
   });
 
-  test('one reader cannot see another\'s', () => {
+  test("one reader cannot see another's", () => {
     putPending('u1', { email: 'a@b.c' });
     expect(peekPending('u2')).toBeNull();
     dropPending('u1');

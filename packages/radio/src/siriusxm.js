@@ -428,6 +428,67 @@ export async function completeOtpLogin(state, otp, { proxy = null } = {}) {
   return extractSession(authed, jar);
 }
 
+/**
+ * The other door: the account password.
+ *
+ * What the SiriusXM web player does when a reader types a password rather than
+ * asking for a code (read from its bundle, 2026-09-03: endpoint
+ * `authenticatePassword`, body `{handle, password}`, bearer the anonymous
+ * session's access token; the reply is an identity grant, and
+ * `sessions/authenticated` turns it into a session the same way the OTP path
+ * does). Tried first with no bearer, as the OTP start is; only if the gateway
+ * insists is the anonymous session minted underneath it.
+ *
+ * The password is used for this one call and never stored -- what is kept is
+ * the session it produced, which is all the OTP path keeps too.
+ */
+export async function passwordLogin(handle, password, { proxy = null, deviceGrant = null } = {}) {
+  let jar = '';
+  const body = { handle, password };
+  const attempt = (bearer) =>
+    sxmCall('identity/v1/identities/authenticate/password', {
+      bearer: bearer || undefined,
+      cookies: jar,
+      body,
+      proxy,
+    });
+
+  let reply = await attempt('');
+  if (reply.status === 401 || reply.status === 403) {
+    const grant = await bootstrapDeviceGrant({ proxy, pasted: deviceGrant });
+    const anon = await sxmCall('session/v1/sessions/anonymous', { bearer: grant.grant, proxy });
+    if (anon.status >= 400) {
+      throw new SiriusXmError(`anonymous session failed: ${anon.status}`, 502, anon.data);
+    }
+    jar = mergeCookies(jar, anon.setCookie);
+    reply = await attempt(extractSession(anon, jar).accessToken);
+  }
+  if (reply.status >= 400) {
+    throw new SiriusXmError(
+      [400, 401, 403, 404].includes(reply.status)
+        ? 'SiriusXM did not accept that email and password.'
+        : `SiriusXM would not sign in (${reply.status}).`,
+      reply.status >= 500 ? 502 : 400,
+      reply.data,
+    );
+  }
+  jar = mergeCookies(jar, reply.setCookie);
+  const identityGrant = reply.data?.grant ?? reply.data?.identityGrant?.grant;
+  if (!identityGrant) {
+    throw new SiriusXmError(`no grant in password response: ${reply.raw.slice(0, 300)}`, 502);
+  }
+
+  const authed = await sxmCall('session/v1/sessions/authenticated', {
+    bearer: identityGrant,
+    cookies: jar,
+    proxy,
+  });
+  if (authed.status >= 400) {
+    throw new SiriusXmError(`sessions/authenticated failed: ${authed.status}`, 502, authed.data);
+  }
+  return extractSession(authed, jar);
+}
+
 /** A new access token from the jar alone. No bearer: the cookies are the refresh. */
 export async function refreshSession(cookies, { proxy = null } = {}) {
   const reply = await sxmCall('session/v1/sessions/refresh', { cookies, body: {}, proxy });

@@ -172,32 +172,52 @@ export const RadioPage = ({
 );
 
 /**
- * The event page's slice of this: the channels that name either side.
+ * A fixture's or a team's own broadcasts, on SiriusXM.
  *
- * Nothing is fetched at render. Searching SiriusXM is an upstream call on the
- * reader's own session, and an event page is opened far more often than a
- * reader wants radio for it -- so the section offers a button, and app.js asks
- * `/radio/find` only when it is pressed. Rendered only for a connected reader,
- * like the playlist rail above it.
+ * Drawn for a connected reader on a league SiriusXM carries by team, and
+ * filled in by app.js the moment the page is up: `data-radio-find` is the
+ * fragment route, and nothing upstream is asked at render, so the fixture page
+ * stays as fast as it was. The rows arrive as HTML from the same component the
+ * lineup page uses, so there is one row template and it is on the server.
+ *
+ * @param {{find: string, sides: string[]}} props what to look up, and who for
  */
-export const RadioEventSection = ({ event }) => (
-  <section
-    class="own-line radio-line"
-    {...radioAssets()}
-    data-radio-find={`/radio/find?event=${event.id}`}
-  >
+export const RadioTeamSection = ({ find, sides }) => (
+  <section class="own-line radio-line" {...radioAssets()} data-radio-find={find}>
     <h2>On SiriusXM</h2>
     <p class="muted small">
-      SiriusXM carries most major-league games on a channel of their own. Look one up for this
-      fixture and it plays here, on your subscription.
+      {sides.length === 1
+        ? `${sides[0]}'s own broadcast, when SiriusXM is carrying it. `
+        : `Each side's own broadcast, when SiriusXM is carrying it. `}
+      Team feeds appear close to kickoff and go away after the final whistle. These play on your
+      subscription, here and nowhere else.
     </p>
-    <p>
-      <button type="button" class="ghost small-btn" data-radio-find-button>
-        Find this game on SiriusXM
-      </button>
-    </p>
-    <div data-radio-results />
+    <div data-radio-results>
+      <p class="muted small radio-looking">Looking on SiriusXM…</p>
+    </div>
   </section>
+);
+
+/**
+ * The answer, per side. A side with nothing is said so, in words, because
+ * "no feed yet" and "the lookup broke" must never look the same; a side whose
+ * lookup failed says what SiriusXM said.
+ */
+export const RadioSidesFragment = ({ sides }) => (
+  <>
+    {sides.map((side) => (
+      <div class="radio-side">
+        <h3 class="card-title">{side.team}</h3>
+        {side.error ? (
+          <p class="feedback error">{side.error}</p>
+        ) : side.stations.length === 0 ? (
+          <p class="muted small">No {side.team} feed on SiriusXM right now.</p>
+        ) : (
+          <RadioRows channels={side.stations} />
+        )}
+      </div>
+    ))}
+  </>
 );
 
 /**
@@ -270,7 +290,7 @@ export const RadioSettings = ({ session, pending, notice, error }) => (
         </div>
       </form>
     ) : (
-      <form method="post" action="/api/radio/connect" class="card">
+      <form method="post" action="/api/radio/connect/password" class="card">
         <h3 class="card-title">Connect your SiriusXM account</h3>
         {session?.unreadable ? (
           <p class="feedback error">
@@ -284,12 +304,31 @@ export const RadioSettings = ({ session, pending, notice, error }) => (
             name="email"
             required
             placeholder="you@example.com"
-            autocomplete="email"
+            autocomplete="username"
           />
         </label>
-        <button class="cta" type="submit">
-          Send sign-in code
-        </button>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" />
+        </label>
+        <p class="muted small">
+          The password is used once, to sign in as the SiriusXM app would, and is not stored. What
+          is kept is the session it produces, encrypted. No password, or would rather not? Leave it
+          blank and have SiriusXM email you a code instead.
+        </p>
+        <div class="card-actions">
+          <button class="cta" type="submit">
+            Connect
+          </button>
+          <button
+            class="ghost small-btn"
+            type="submit"
+            formaction="/api/radio/connect"
+            formnovalidate
+          >
+            Email me a code instead
+          </button>
+        </div>
       </form>
     )}
   </section>

@@ -55,7 +55,7 @@ import {
 } from './views/pages.jsx';
 import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
-import { RadioPage, RadioRows } from './views/radio.jsx';
+import { RadioPage, RadioSidesFragment } from './views/radio.jsx';
 
 export const app = new Hono();
 
@@ -467,7 +467,13 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
    *
    * Per-viewer, and safe only because this page is not one of the cached() ones.
    */
-  const ownChannels = await ownChannelsForTeam({ userId: user?.id, team });
+  const [ownChannels, radioSession] = await Promise.all([
+    ownChannelsForTeam({ userId: user?.id, team }),
+    // A row read, not a lookup: the team's feed is asked for by app.js.
+    user && config.radio.enabled && radio.hasTeamRadio(team.league_slug)
+      ? radio.storedSession(user.id)
+      : null,
+  ]);
 
   return c.html(
     await render(
@@ -477,6 +483,11 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
         events={events}
         following={following}
         ownChannels={ownChannels}
+        radio={
+          radioSession && !radioSession.unreadable
+            ? { find: `/radio/find?team=${team.id}`, sides: [team.display_name] }
+            : null
+        }
         live={live}
         liveTotal={liveTotal}
         stalled={stalled}
@@ -549,7 +560,9 @@ app.get('/events/:id', async (c) => {
     marketChannelsForEvent({ userId: user?.id, markets: marketsOf(event) }),
     // Whether the "On SiriusXM" section is drawn at all. A row read, no upstream
     // call: the lookup itself waits for the button.
-    user && config.radio.enabled ? radio.storedSession(user.id) : null,
+    user && config.radio.enabled && radio.hasTeamRadio(event.league_slug)
+      ? radio.storedSession(user.id)
+      : null,
     // Other people's open lists. Signed-in only, and it returns no URLs at all --
     // a shared channel is playable through the proxy and nowhere else, because
     // every other route hands over the address and the address is the owner's
@@ -572,7 +585,14 @@ app.get('/events/:id', async (c) => {
         marketChannels={marketChannels}
         sharedChannels={sharedChannels}
         streamDead={c.req.query('stream_dead') ?? null}
-        radioConnected={Boolean(radioSession && !radioSession.unreadable)}
+        radio={
+          radioSession && !radioSession.unreadable
+            ? {
+                find: `/radio/find?event=${event.id}`,
+                sides: [event.home_name, event.away_name].filter(Boolean),
+              }
+            : null
+        }
       />,
     ),
   );
@@ -2240,7 +2260,15 @@ const radioBack = (query) => `/settings?${query}#siriusxm`;
  * anything else is ours and must not read as "wrong code".
  */
 function radioFailure(err) {
-  if (err instanceof radio.SiriusXmError) return { message: err.message, status: err.status };
+  if (err instanceof radio.SiriusXmError) {
+    // Logged as well as shown: the page gets the sentence, the log gets what
+    // SXM actually said, which is the only way a failed sign-in is diagnosable
+    // from here without the reader's screen.
+    console.warn(
+      `[radio] ${err.status} ${err.message}${err.data ? ` -- ${JSON.stringify(err.data).slice(0, 300)}` : ''}`,
+    );
+    return { message: err.message, status: err.status };
+  }
   console.error('[radio]', err);
   return { message: 'SiriusXM did not answer. Try again in a moment.', status: 502 };
 }
@@ -2264,6 +2292,46 @@ app.post('/api/radio/connect', async (c) => {
     });
     radio.putPending(user.id, { ...state, email });
     return respond(c, { json: { ok: true, step: 'code' }, redirectTo: radioBack('siriusxm=code') });
+  } catch (err) {
+    const { message, status } = radioFailure(err);
+    return respond(c, {
+      json: { error: message },
+      status,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+});
+
+/**
+ * The password door. Nothing is stored but the session it produces -- the
+ * same row the code path writes -- and the password itself is in this handler
+ * and nowhere else, not even the log.
+ */
+app.post('/api/radio/connect/password', async (c) => {
+  const user = requireUser(c);
+  if (!config.radio.enabled) return c.json({ error: 'radio is off' }, 404);
+  const body = await c.req.parseBody();
+  const email = String(body.email ?? '').trim();
+  const password = String(body.password ?? '');
+  if (!email.includes('@') || !password) {
+    const message = 'Enter the email and password on your SiriusXM account.';
+    return respond(c, {
+      json: { error: message },
+      status: 400,
+      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+    });
+  }
+  try {
+    const session = await radio.passwordLogin(email, password, {
+      proxy: radio.proxyFor(user.id),
+      deviceGrant: config.radio.deviceGrant || null,
+    });
+    radio.dropPending(user.id);
+    await radio.saveSession(user.id, { email, ...session });
+    return respond(c, {
+      json: { ok: true, connected: true },
+      redirectTo: radioBack('siriusxm=connected'),
+    });
   } catch (err) {
     const { message, status } = radioFailure(err);
     return respond(c, {
@@ -2365,37 +2433,50 @@ app.get('/radio', async (c) => {
 });
 
 /**
- * The channels naming either side of a fixture, as rows.
+ * The team feeds for a fixture or a team, as rows.
  *
- * Both names are searched and the union is kept in lineup order, so a game on
- * a team channel and one on a league channel both surface. Answered as HTML
- * because the row already has one template, on the server.
+ * `?event=` looks up both sides; `?team=` one team. Only for a league SiriusXM
+ * carries by team -- anything else is 404, and the page never drew the section
+ * to ask. Each side is searched on the reader's own session, cached across
+ * readers, and settled separately so one side failing does not empty the
+ * other. Answered as HTML because the row has one template, on the server.
  */
 app.get('/radio/find', async (c) => {
   const user = requireUser(c);
   if (!config.radio.enabled) return c.text('radio is off', 404);
-  const event = await q.getEvent(Number(c.req.query('event')));
-  if (!event) return c.text('no such fixture', 404);
-  const names = [event.home_team_name, event.away_team_name, event.league_name]
-    .map((n) => String(n ?? '').trim())
-    .filter((n) => n.length >= 3);
-  if (names.length === 0) return c.text('This fixture has no names to look up.', 404);
-  try {
-    const found = await Promise.all(names.map((n) => radio.search(user.id, n)));
-    const seen = new Set();
-    const channels = found.flat().filter((ch) => {
-      if (seen.has(ch.stationId)) return false;
-      seen.add(ch.stationId);
-      return true;
+  const fragment = (node) =>
+    c.body(node, 200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'private, no-store',
     });
-    c.header('cache-control', 'private, no-store');
-    // A fragment, not a page: no doctype, no Layout, so not render(). It is
-    // dropped into a section app.js already has on the page.
-    const fragment =
-      channels.length === 0
-        ? '<p class="muted">SiriusXM has no channel naming this fixture right now. Game channels usually appear close to kickoff.</p>'
-        : await (<RadioRows channels={channels} />).toString();
-    return c.body(fragment, 200, { 'content-type': 'text/html; charset=utf-8' });
+
+  let leagueSlug = null;
+  let sides = [];
+  if (c.req.query('event')) {
+    const event = await q.getEvent(Number(c.req.query('event')));
+    if (!event) return c.text('no such fixture', 404);
+    leagueSlug = event.league_slug;
+    const teams = await q.teamNamesByIds([event.home_team_id, event.away_team_id]);
+    // In fixture order, home first, with the provider's own nickname when the
+    // row is there and the display name alone when it is not.
+    sides = [event.home_team_id, event.away_team_id]
+      .map(
+        (id, i) => teams.find((t) => t.id === id) ?? (i === 0 ? event.home_name : event.away_name),
+      )
+      .filter(Boolean);
+  } else if (c.req.query('team')) {
+    const [team] = await q.teamNamesByIds([c.req.query('team')]);
+    if (!team) return c.text('no such team', 404);
+    leagueSlug = team.league_slug;
+    sides = [team];
+  }
+  if (!radio.hasTeamRadio(leagueSlug))
+    return c.text('SiriusXM has no team feeds for this league.', 404);
+  if (sides.length === 0) return c.text('This fixture has no sides to look up.', 404);
+
+  try {
+    const result = await radio.sidesStations(user.id, leagueSlug, sides);
+    return fragment(await (<RadioSidesFragment sides={result} />).toString());
   } catch (err) {
     const { message, status } = radioFailure(err);
     return c.text(message, status);

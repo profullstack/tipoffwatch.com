@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
 import { describe, expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 
 /*
  * Shape assertions on the routes, for the properties that a session-less test
@@ -19,6 +19,7 @@ describe('radio routes', () => {
     expect(guard).toBeLessThan(fetchAt);
     for (const route of [
       "app.post('/api/radio/connect'",
+      "app.post('/api/radio/connect/password'",
       "app.post('/api/radio/connect/verify'",
       "app.post('/api/radio/disconnect'",
       "app.get('/radio/find'",
@@ -32,15 +33,26 @@ describe('radio routes', () => {
 
   test('a manifest leaves with root-relative proxy addresses and no-store', async () => {
     const src = await read('../apps/web/src/app.js');
-    expect(src).toContain('`/radio/proxy?u=${encodeURIComponent(target)}');
+    expect(src).toMatch(/`\/radio\/proxy\?u=\$\{encodeURIComponent\(target\)\}/);
     const resource = src.slice(src.indexOf('function radioResource'));
     expect(resource.slice(0, 2000)).toContain("'cache-control': 'no-store, private'");
+  });
+
+  test('the password is used once and never reaches a log or the database', async () => {
+    const src = await read('../apps/web/src/app.js');
+    const route = src.slice(src.indexOf("app.post('/api/radio/connect/password'"));
+    const body = route.slice(0, route.indexOf("app.post('/api/radio/connect/verify'"));
+    expect(body).toContain('radio.passwordLogin(email, password');
+    expect(body).not.toMatch(/console\.\w+\([^)]*password/);
+    expect(body).not.toMatch(/saveSession\([^)]*password/);
   });
 
   test('a wrong code keeps the sign-in; an expired one says so', async () => {
     const src = await read('../apps/web/src/app.js');
     const verify = src.slice(src.indexOf("app.post('/api/radio/connect/verify'"));
-    expect(verify.slice(0, 2500)).toContain('if (status === 400) radio.putPending(user.id, pending)');
+    expect(verify.slice(0, 2500)).toContain(
+      'if (status === 400) radio.putPending(user.id, pending)',
+    );
     expect(verify.slice(0, 2500)).toContain('That code has expired');
   });
 
@@ -55,11 +67,34 @@ describe('radio routes', () => {
     expect(build).toContain("external: ['mpegts.js']");
   });
 
+  test('the team lookup is gated on a league with team feeds, for a fixture and for a team', async () => {
+    const src = await read('../apps/web/src/app.js');
+    const find = src.slice(src.indexOf("app.get('/radio/find'"));
+    expect(find.slice(0, 2500)).toContain('radio.hasTeamRadio(leagueSlug)');
+    expect(find.slice(0, 2500)).toContain("c.req.query('event')");
+    expect(find.slice(0, 2500)).toContain("c.req.query('team')");
+    // The pages draw the section only for those leagues, and never look up at render.
+    expect(src).toContain('radio.hasTeamRadio(event.league_slug)');
+    expect(src).toContain('radio.hasTeamRadio(team.league_slug)');
+    expect(src.match(/radio\.sidesStations\(/g)).toHaveLength(1);
+  });
+
+  test('app.js looks the feeds up as soon as the section is on the page', async () => {
+    const client = await read('../apps/web/public/app.js');
+    const radio = client.slice(client.indexOf('function initRadioSection'));
+    expect(radio).toContain('section.dataset.radioFind');
+    expect(radio).toContain('look();');
+    expect(radio).toContain("retry.textContent = 'Try again'");
+  });
+
   test('app.js wires the radio sections at boot and after a client-side navigation', async () => {
     const client = await read('../apps/web/public/app.js');
     expect(client).toContain('function initRadio(');
     expect(client.match(/^initRadio\(\);/m)).not.toBeNull();
-    const nav = client.slice(client.indexOf('function initNavigation'), client.indexOf('function initNavigation') + 2500);
+    const nav = client.slice(
+      client.indexOf('function initNavigation'),
+      client.indexOf('function initNavigation') + 2500,
+    );
     expect(nav).toContain('initRadio();');
     // One stream per reader, across TV and radio alike.
     const radio = client.slice(client.indexOf('function initRadioSection'));

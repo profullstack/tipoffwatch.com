@@ -26,8 +26,7 @@ describe('cookie jar', () => {
 });
 
 describe('jwt expiry', () => {
-  const token = (exp) =>
-    `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+  const token = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
   test('reads exp in seconds and answers in ms', () => {
     expect(sxm.jwtExpiryMs(token(1_700_000_000))).toBe(1_700_000_000_000);
   });
@@ -139,7 +138,12 @@ describe('hls rewriting', () => {
       'audio_128k_v3.m3u8',
       '',
     ].join('\n');
-    const out = sxm.rewritePlaylist(master, 'https://cdn.siriusxm.com/ch/master.m3u8', '128', proxify);
+    const out = sxm.rewritePlaylist(
+      master,
+      'https://cdn.siriusxm.com/ch/master.m3u8',
+      '128',
+      proxify,
+    );
     expect(out).toContain('BANDWIDTH=128000');
     expect(out).not.toContain('256000');
     expect(out).toContain(proxify('https://cdn.siriusxm.com/ch/audio_128k_v3.m3u8'));
@@ -155,7 +159,12 @@ describe('hls rewriting', () => {
       '/abs/seg002.aac',
       '',
     ].join('\n');
-    const out = sxm.rewritePlaylist(media, 'https://cdn.siriusxm.com/ch/a/media.m3u8', '256', proxify);
+    const out = sxm.rewritePlaylist(
+      media,
+      'https://cdn.siriusxm.com/ch/a/media.m3u8',
+      '256',
+      proxify,
+    );
     const lines = out.split('\n');
     expect(lines[1]).toBe('#EXT-X-TARGETDURATION:10');
     expect(lines[2]).toContain(
@@ -186,9 +195,9 @@ describe('key decoding', () => {
   const bytes = Buffer.from('0123456789abcdef');
   test('base64, base64url, hex and literal', () => {
     expect(sxm.decodeKeyJson({ key: bytes.toString('base64') }).equals(bytes)).toBe(true);
-    expect(sxm.decodeKeyJson({ result: { value: bytes.toString('base64url') } }).equals(bytes)).toBe(
-      true,
-    );
+    expect(
+      sxm.decodeKeyJson({ result: { value: bytes.toString('base64url') } }).equals(bytes),
+    ).toBe(true);
     // A literal that is neither alphabet: taken as the bytes it is.
     expect(sxm.decodeKeyJson({ data: 'raw key sixteen!' }).length).toBe(16);
   });
@@ -224,7 +233,12 @@ describe('otp login', () => {
       fetch: async (req) => {
         const url = new URL(req.url);
         const auth = req.headers.get('authorization');
-        calls.push({ method: req.method, path: url.pathname, auth, cookie: req.headers.get('cookie') });
+        calls.push({
+          method: req.method,
+          path: url.pathname,
+          auth,
+          cookie: req.headers.get('cookie'),
+        });
         const json = (data, status = 200, headers = {}) =>
           new Response(JSON.stringify(data), {
             status,
@@ -250,6 +264,14 @@ describe('otp login', () => {
           case 'POST /identity/v1/identities/authenticate/otp':
             if (auth !== 'Bearer otp-grant') return json({}, 403);
             return json({ grant: 'identity-grant' });
+          case 'POST /identity/v1/identities/authenticate/password': {
+            if (!auth) return json({ error: 'auth' }, 401);
+            const body = await req.json();
+            if (body.handle !== 'me@example.com' || body.password !== 'hunter2') {
+              return json({ error: 'bad credentials' }, 401);
+            }
+            return json({ grant: 'identity-grant' }, 200, { 'set-cookie': 'pw=1' });
+          }
           case 'POST /session/v1/sessions/authenticated':
             if (auth !== 'Bearer identity-grant') return json({}, 403);
             return json(session('access-1'), 200, { 'set-cookie': 'refresh=r1; HttpOnly' });
@@ -304,7 +326,7 @@ describe('otp login', () => {
     expect(calls[4].cookie).toContain('sxm=jar1');
   });
 
-  test('an unknown email is the reader\'s problem, not ours', async () => {
+  test("an unknown email is the reader's problem, not ours", async () => {
     await expect(
       sxm.startOtpLogin('nobody@example.com', {
         deviceGrant: JSON.stringify({ grant: 'device-grant' }),
@@ -319,6 +341,37 @@ describe('otp login', () => {
     await expect(sxm.completeOtpLogin(state, '000000')).rejects.toMatchObject({
       status: 400,
       message: expect.stringContaining('not accepted'),
+    });
+  });
+
+  test('the password door: anonymous session, then the grant, then the session', async () => {
+    calls.length = 0;
+    const result = await sxm.passwordLogin('me@example.com', 'hunter2', {
+      deviceGrant: JSON.stringify({ grant: 'device-grant' }),
+    });
+    expect(result.accessToken).toBe('access-1');
+    expect(result.cookies).toContain('refresh=r1');
+    const paths = calls.map((c) => `${c.method} ${c.path}`);
+    expect(paths).toEqual([
+      'POST /identity/v1/identities/authenticate/password',
+      'POST /session/v1/sessions/anonymous',
+      'POST /identity/v1/identities/authenticate/password',
+      'POST /session/v1/sessions/authenticated',
+    ]);
+    expect(calls[2].auth).toBe('Bearer anon-token');
+    expect(calls[3].auth).toBe('Bearer identity-grant');
+    // The jar from the anonymous session rides along to the password call.
+    expect(calls[2].cookie).toContain('anon=1');
+  });
+
+  test('a wrong password is a 400 in words, never a 502', async () => {
+    await expect(
+      sxm.passwordLogin('me@example.com', 'nope', {
+        deviceGrant: JSON.stringify({ grant: 'device-grant' }),
+      }),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('email and password'),
     });
   });
 

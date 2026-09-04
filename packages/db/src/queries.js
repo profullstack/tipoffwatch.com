@@ -782,6 +782,17 @@ export async function deleteSiriusXm(userId) {
   await sql`delete from siriusxm_sessions where user_id = ${userId}`;
 }
 
+/** The two halves of a team's name, and its league, for matching a station to it. */
+export async function teamNamesByIds(ids) {
+  const wanted = (ids ?? []).map(Number).filter(Number.isFinite);
+  if (wanted.length === 0) return [];
+  return sql`
+    select t.id, t.name, t.display_name, l.slug as league_slug
+    from teams t left join leagues l on l.id = t.league_id
+    where t.id = any(${pgArray(wanted)}::bigint[])
+  `;
+}
+
 /* ----------------------------------------------------- sharing a playlist -- */
 /**
  * Record a probe verdict on a SHARED entry.

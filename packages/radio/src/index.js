@@ -31,6 +31,7 @@ export {
   isSiriusXmUrl,
   looksLikePlaylist,
   parseStationId,
+  passwordLogin,
   QUALITIES,
   rewritePlaylist,
   SiriusXmError,
@@ -38,4 +39,12 @@ export {
   stationId,
   sxmFetch,
 } from './siriusxm.js';
+export {
+  hasTeamRadio,
+  matchesTeam,
+  sidesStations,
+  TEAM_RADIO_LEAGUES,
+  teamStations,
+  teamTerms,
+} from './teams.js';
 export { sharedFetch } from './upstream-cache.js';

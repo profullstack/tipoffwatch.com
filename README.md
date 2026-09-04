@@ -100,13 +100,22 @@ Secrets belong on the service and in the logicsrc vault, not in a committed
 
 ## Radio (SiriusXM)
 
-A reader connects their own SiriusXM subscription in settings — the email on the
-account and the code SiriusXM sends to it, the way the SiriusXM app signs in —
-and the sports and news lineups play on `/radio` and on a fixture's page. The
+A reader connects their own SiriusXM subscription in settings — email and
+password, or the code SiriusXM emails them, the two doors the SiriusXM app
+itself offers; only the resulting session is kept — and the sports and news lineups play on `/radio` and on a fixture's page. The
 session is sealed with the playlist key and every byte is fetched by the server
 as that reader; the browser never sees a SiriusXM address or a bearer. The player
 is `@profullstack/player` with its audio bar, bundled to `vendor-player.js` and
 fetched on the first press of Play.
+
+For the leagues SiriusXM carries by team (NFL, NBA, MLB, NHL, WNBA, the college
+football and basketball conferences, MLS), a fixture's page and a team's page
+draw an **On SiriusXM** section that looks up each side's own feed as soon as
+the page is up: the team name is parsed (`packages/radio/src/teams.js`),
+SiriusXM is searched for it on the reader's session, and only channels that
+actually name the team are kept. Lookups are cached across readers for ten
+minutes, so a busy fixture costs one search per side, not one per view. Team
+feeds appear close to kickoff and vanish after; the section says which.
 
 Knobs, all read at request time:
 
