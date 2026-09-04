@@ -630,13 +630,14 @@ export const config = {
         })
         .filter(Boolean);
     },
-    /**
-     * A DEVICE_GRANT pasted from a browser session, for when SXM refuses to
-     * start a sign-in without one. Rarely needed; see packages/radio.
+    /*
+     * There is deliberately no DEVICE_GRANT setting. The token SXM asks for
+     * at sign-in is minted at runtime by packages/radio, which loads the web
+     * player in a headless Chromium through the proxy and reads the cookie,
+     * as media-streamer does. Two environment knobs reach that code directly:
+     * PUPPETEER_EXECUTABLE_PATH (the Dockerfile sets it to Debian's Chromium)
+     * and SIRIUSXM_BROWSER_MINT=off, which the tests set.
      */
-    get deviceGrant() {
-      return opt('SIRIUSXM_DEVICE_GRANT');
-    },
   },
 
   /**

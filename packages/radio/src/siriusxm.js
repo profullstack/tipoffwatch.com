@@ -223,18 +223,165 @@ const OTP_BODY = (identityId) => ({
   language: 'en-US',
 });
 
+/* ---------------------------------------------------------- device grant -- */
+
+/**
+ * Mint DEVICE_GRANT the way media-streamer does: load the web player in a real
+ * headless browser, through the same proxy the fetches use, and read the cookie
+ * its JavaScript writes. Plain fetch cannot run that JavaScript, which is why
+ * the fetch spellings below almost always answer 403.
+ *
+ * Chromium comes from PUPPETEER_EXECUTABLE_PATH (the Docker image installs
+ * Debian's and sets it), or puppeteer-core's usual guesses. Resources are not
+ * blocked, since the player's bootstrap scripts are what set the cookie.
+ * SIRIUSXM_BROWSER_MINT=off skips this step -- the tests set it, so a box with
+ * a Chromium never reaches siriusxm.com from the suite.
+ */
+async function mintDeviceGrantViaBrowser({ proxy }) {
+  if ((process.env.SIRIUSXM_BROWSER_MINT ?? 'on') === 'off') {
+    throw new SiriusXmError('browser mint is off (SIRIUSXM_BROWSER_MINT=off)', 502);
+  }
+  const { default: puppeteer } = await import('puppeteer-core');
+  const proxyUrl = proxy ? new URL(proxy) : null;
+  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+  const browser = await puppeteer.launch({
+    headless: true,
+    ...(executablePath ? { executablePath } : { channel: 'chrome' }),
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      ...(proxyUrl ? [`--proxy-server=${proxyUrl.protocol}//${proxyUrl.host}`] : []),
+    ],
+  });
+  try {
+    const page = await browser.newPage();
+    if (proxyUrl?.username) {
+      await page.authenticate({
+        username: decodeURIComponent(proxyUrl.username),
+        password: decodeURIComponent(proxyUrl.password),
+      });
+    }
+    await page.setUserAgent(USER_AGENT);
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+
+    // Every edge-gateway answer, so a failure says whether the device-grant
+    // XHR fired at all and what SXM said to it.
+    const apiLog = [];
+    page.on('response', async (res) => {
+      const url = res.url();
+      if (!url.includes('api.edge-gateway.siriusxm.com')) return;
+      const path = url.replace(/^https:\/\/api\.edge-gateway\.siriusxm\.com/, '');
+      const status = res.status();
+      let extra = '';
+      if (status >= 400 && path.startsWith('/device/')) {
+        extra = ` body=${(await res.text().catch(() => '')).slice(0, 200)}`;
+      }
+      apiLog.push(`${status} ${path.slice(0, 120)}${extra}`);
+    });
+
+    // The player is the surface that needs DEVICE_GRANT; the homepage may not
+    // bootstrap one at all.
+    const candidates = [
+      'https://www.siriusxm.com/player/',
+      'https://player.siriusxm.com/',
+      'https://www.siriusxm.com/listen',
+      'https://www.siriusxm.com/',
+    ];
+    const origins = [
+      'https://www.siriusxm.com',
+      'https://siriusxm.com',
+      'https://player.siriusxm.com',
+      'https://api.edge-gateway.siriusxm.com',
+    ];
+    for (const url of candidates) {
+      // domcontentloaded, not idle: SXM's trackers never settle, least of all
+      // through a proxy. A timeout still falls through to the cookie poll,
+      // since the cookie may have been written during the partial load.
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      } catch {
+        // poll anyway
+      }
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline) {
+        const cookies = await page.cookies(...origins);
+        const dg = cookies.find((c) => c.name === 'DEVICE_GRANT' && c.value);
+        if (dg) return parseDeviceGrant(dg.value);
+        await sleep(500);
+      }
+    }
+
+    const cookies = await page.cookies(...origins);
+    const cookieSummary = cookies.map((c) => `${c.name}@${c.domain ?? '?'}`).join(', ');
+    throw new SiriusXmError(
+      `browser: DEVICE_GRANT not minted across ${candidates.length} pages. ` +
+        `edge-gateway answers: [${apiLog.slice(0, 12).join(' | ') || 'none'}]. ` +
+        `Cookies: [${cookieSummary || 'none'}]`,
+      502,
+    );
+  } finally {
+    await browser.close();
+  }
+}
+
+/** A minted grant is reused until ten minutes before it expires. */
+const GRANT_REFRESH_BUFFER_MS = 10 * 60 * 1000;
+let mintedGrant = null; // { value, expiresAtMs }
+let inflightMint = null;
+
+export function resetDeviceGrantCache() {
+  mintedGrant = null;
+  inflightMint = null;
+}
+
 /**
  * The bootstrap token a bare session needs, when SXM asks for one.
  *
- * The web player mints DEVICE_GRANT in JavaScript, which no fetch can run, and
- * the REST spellings of the same thing usually answer 403 from anything that is
- * not a browser. So this is a last resort: an operator can paste one from a
- * browser session into SIRIUSXM_DEVICE_GRANT, and the fetch attempts are kept
- * because they cost nothing and occasionally work.
+ * In order, exactly as media-streamer does it:
+ *   1. A grant the caller handed in. The app never does; the tests do, to run
+ *      the anonymous-session dance against the fake gateway with no browser.
+ *   2. The last browser-minted grant, while it is well inside its TTL.
+ *   3. A headless browser loading the web player through the proxy, one mint
+ *      at a time no matter how many sign-ins are waiting on it.
+ *   4. The fetch spellings, which cost nothing and occasionally work.
+ *
+ * Nothing is read from configuration: the token is minted, not stored. When
+ * every step fails the error carries what each of them said.
  */
 async function bootstrapDeviceGrant({ proxy, pasted }) {
   if (pasted) return parseDeviceGrant(pasted);
 
+  if (mintedGrant && Date.now() + GRANT_REFRESH_BUFFER_MS < mintedGrant.expiresAtMs) {
+    return mintedGrant.value;
+  }
+
+  if (!inflightMint) {
+    inflightMint = mintDeviceGrantViaBrowser({ proxy })
+      .then((grant) => {
+        const expMs = grant.grantExpiresAt
+          ? Date.parse(grant.grantExpiresAt)
+          : Date.now() + 24 * 60 * 60 * 1000;
+        mintedGrant = { value: grant, expiresAtMs: expMs };
+        return grant;
+      })
+      .finally(() => {
+        inflightMint = null;
+      });
+  }
+  let browserErr;
+  try {
+    return await inflightMint;
+  } catch (err) {
+    browserErr = err;
+  }
+
+  return bootstrapDeviceGrantViaFetch({ proxy, browserErr });
+}
+
+async function bootstrapDeviceGrantViaFetch({ proxy, browserErr }) {
   const attempts = [
     {
       url: 'https://www.siriusxm.com/',
@@ -289,9 +436,9 @@ async function bootstrapDeviceGrant({ proxy, pasted }) {
     log.push(`${url}: HTTP ${res.status}`);
   }
   throw new SiriusXmError(
-    'SiriusXM would not start a sign-in from this server. It asks for a device token that only its own web player can mint; an operator can supply one in SIRIUSXM_DEVICE_GRANT.',
+    'SiriusXM would not start a sign-in from this server. It asks for a device token that only its web player mints, and the headless browser could not mint one.',
     502,
-    log,
+    { browser: browserErr?.message ?? String(browserErr), fetch: log },
   );
 }
 

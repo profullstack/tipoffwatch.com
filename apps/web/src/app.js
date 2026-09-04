@@ -2292,10 +2292,7 @@ app.post('/api/radio/connect', async (c) => {
     });
   }
   try {
-    const state = await radio.startOtpLogin(email, {
-      proxy: radio.proxyFor(user.id),
-      deviceGrant: config.radio.deviceGrant || null,
-    });
+    const state = await radio.startOtpLogin(email, { proxy: radio.proxyFor(user.id) });
     radio.putPending(user.id, { ...state, email });
     return respond(c, { json: { ok: true, step: 'code' }, redirectTo: radioBack('siriusxm=code') });
   } catch (err) {

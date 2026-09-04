@@ -21,6 +21,13 @@ RUN bun install --frozen-lockfile || bun install
 
 FROM base AS runtime
 ENV NODE_ENV=production
+# SiriusXM sign-in mints its DEVICE_GRANT by loading the web player in a headless
+# browser (packages/radio/src/siriusxm.js), the way media-streamer does. Debian's
+# Chromium brings every shared library with it; puppeteer-core finds it here.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Copy the whole deps stage, not just /app/node_modules. Bun's isolated linker puts
 # each workspace's dependencies in ITS OWN node_modules (apps/web/node_modules,
 # packages/*/node_modules) rather than hoisting them to the root, so copying only

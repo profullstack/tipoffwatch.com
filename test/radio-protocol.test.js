@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 process.env.DATABASE_URL ??= 'postgres://localhost:5432/unused';
 process.env.PLAYLIST_SECRET ??= 'test-secret-for-sealing-values';
+// The device-grant mint launches a real browser at siriusxm.com; never from a test.
+process.env.SIRIUSXM_BROWSER_MINT = 'off';
 
 const sxm = await import('../packages/radio/src/siriusxm.js');
 
@@ -395,10 +397,20 @@ describe('otp login', () => {
     await expect(sxm.refreshSession('stale=1')).rejects.toMatchObject({ status: 401 });
   });
 
-  test('without a device grant and with SXM insisting on one, the failure names the lever', async () => {
+  test('without a device grant and with SXM insisting on one, the failure says the browser could not mint', async () => {
     await expect(sxm.startOtpLogin('me@example.com', {})).rejects.toMatchObject({
       status: 502,
-      message: expect.stringContaining('SIRIUSXM_DEVICE_GRANT'),
+      message: expect.stringContaining('headless browser could not mint'),
     });
+  });
+
+  test('the browser mint is tried first, and its reason travels with the failure', async () => {
+    sxm.resetDeviceGrantCache();
+    let err;
+    await sxm.startOtpLogin('me@example.com', {}).catch((e) => (err = e));
+    expect(err.status).toBe(502);
+    expect(err.data.browser).toContain('SIRIUSXM_BROWSER_MINT=off');
+    expect(Array.isArray(err.data.fetch)).toBe(true);
+    expect(err.data.fetch.length).toBeGreaterThan(0);
   });
 });
