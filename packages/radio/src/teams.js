@@ -15,24 +15,27 @@
 import { search } from './session.js';
 
 /**
- * Leagues where a team has a station of its own, by our league slug.
+ * Leagues where a team has a station of its own, by OUR league slug.
  *
- * ESPN slugs. College is in because SiriusXM carries the big conferences by
- * school; MLS because it carries a game-of-the-week by club. Nothing outside
- * the United States, because that is where the team feeds are -- a Premier
- * League club has no SiriusXM channel to find, and searching for one is a
- * wasted call on a reader's session.
+ * `<sport>-<espn league id>`, slugified -- `baseball-mlb`, `soccer-usa-1` --
+ * which is what the leagues table holds, and not ESPN's bare ids, which is
+ * what this list held first and why every league read as "no team feeds".
+ * College is in because SiriusXM carries the big conferences by school; MLS
+ * because it carries a game-of-the-week by club. Nothing outside the United
+ * States, because that is where the team feeds are -- a Premier League club
+ * has no SiriusXM channel to find, and searching for one is a wasted call on
+ * a reader's session.
  */
 export const TEAM_RADIO_LEAGUES = new Set([
-  'nfl',
-  'nba',
-  'mlb',
-  'nhl',
-  'wnba',
-  'college-football',
-  'mens-college-basketball',
-  'womens-college-basketball',
-  'usa.1',
+  'football-nfl',
+  'basketball-nba',
+  'baseball-mlb',
+  'hockey-nhl',
+  'basketball-wnba',
+  'football-college-football',
+  'basketball-mens-college-basketball',
+  'basketball-womens-college-basketball',
+  'soccer-usa-1',
 ]);
 
 export const hasTeamRadio = (leagueSlug) => TEAM_RADIO_LEAGUES.has(String(leagueSlug ?? ''));

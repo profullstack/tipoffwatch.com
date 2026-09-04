@@ -78,6 +78,21 @@ export class SiriusXmError extends Error {
 
 /* ------------------------------------------------------------------ http -- */
 
+/**
+ * What a status means, when it did not come from SiriusXM at all.
+ *
+ * 402 is not in SiriusXM's vocabulary; it is the residential proxy refusing to
+ * carry the request because the plan's bandwidth is spent -- the same wall the
+ * ESPN sync hits. Every call goes through that proxy, so every call fails the
+ * same way, and "SiriusXM would not sign in (402)" blamed the wrong party.
+ */
+export function explainStatus(status, otherwise) {
+  if (status === 402) {
+    return 'The proxy this site reaches SiriusXM through is out of bandwidth (402). SiriusXM never received the request; top the proxy up and try again.';
+  }
+  return otherwise;
+}
+
 const MAX_ATTEMPTS = 4;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -330,7 +345,11 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
       proxy,
     });
     if (anon.status >= 400) {
-      throw new SiriusXmError(`anonymous session failed: ${anon.status}`, 502, anon.data);
+      throw new SiriusXmError(
+        explainStatus(anon.status, `anonymous session failed: ${anon.status}`),
+        502,
+        anon.data,
+      );
     }
     jar = mergeCookies(jar, anon.setCookie);
     bearer = extractSession(anon, jar).accessToken;
@@ -346,7 +365,11 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
       })
     : unauth;
   if (status.status >= 400) {
-    throw new SiriusXmError(`identity status failed: ${status.status}`, 502, status.data);
+    throw new SiriusXmError(
+      explainStatus(status.status, `identity status failed: ${status.status}`),
+      502,
+      status.data,
+    );
   }
   jar = mergeCookies(jar, status.setCookie);
   const identityId = status.data?.identityId;
@@ -362,7 +385,7 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
   });
   if (initiate.status >= 400) {
     throw new SiriusXmError(
-      `SiriusXM would not send a code (${initiate.status}).`,
+      explainStatus(initiate.status, `SiriusXM would not send a code (${initiate.status}).`),
       502,
       initiate.data,
     );
@@ -458,7 +481,11 @@ export async function passwordLogin(handle, password, { proxy = null, deviceGran
     const grant = await bootstrapDeviceGrant({ proxy, pasted: deviceGrant });
     const anon = await sxmCall('session/v1/sessions/anonymous', { bearer: grant.grant, proxy });
     if (anon.status >= 400) {
-      throw new SiriusXmError(`anonymous session failed: ${anon.status}`, 502, anon.data);
+      throw new SiriusXmError(
+        explainStatus(anon.status, `anonymous session failed: ${anon.status}`),
+        502,
+        anon.data,
+      );
     }
     jar = mergeCookies(jar, anon.setCookie);
     reply = await attempt(extractSession(anon, jar).accessToken);
@@ -467,8 +494,8 @@ export async function passwordLogin(handle, password, { proxy = null, deviceGran
     throw new SiriusXmError(
       [400, 401, 403, 404].includes(reply.status)
         ? 'SiriusXM did not accept that email and password.'
-        : `SiriusXM would not sign in (${reply.status}).`,
-      reply.status >= 500 ? 502 : 400,
+        : explainStatus(reply.status, `SiriusXM would not sign in (${reply.status}).`),
+      reply.status === 402 || reply.status >= 500 ? 502 : 400,
       reply.data,
     );
   }
@@ -717,7 +744,13 @@ async function apiJson(url, init, { bearer, proxy, unauthorized }) {
       text.slice(0, 300),
     );
   }
-  if (!res.ok) throw new SiriusXmError(`SiriusXM answered ${res.status}`, 502, text.slice(0, 300));
+  if (!res.ok) {
+    throw new SiriusXmError(
+      explainStatus(res.status, `SiriusXM answered ${res.status}`),
+      502,
+      text.slice(0, 300),
+    );
+  }
   try {
     return JSON.parse(text);
   } catch {

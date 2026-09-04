@@ -14,10 +14,19 @@ const { hasTeamRadio, matchesTeam, TEAM_RADIO_LEAGUES, teamTerms } = await impor
  */
 describe('leagues with team feeds', () => {
   test('the American national leagues, by our slug, and nothing abroad', () => {
-    for (const slug of ['nfl', 'nba', 'mlb', 'nhl', 'college-football', 'usa.1']) {
+    // OUR slugs, as the leagues table spells them -- verified against production
+    // 2026-09-04 -- not ESPN's bare ids, which is what this held first.
+    for (const slug of [
+      'football-nfl',
+      'basketball-nba',
+      'baseball-mlb',
+      'hockey-nhl',
+      'football-college-football',
+      'soccer-usa-1',
+    ]) {
       expect(hasTeamRadio(slug)).toBe(true);
     }
-    for (const slug of ['eng.1', 'uefa.champions', 'f1', 'atp', null, undefined, '']) {
+    for (const slug of ['mlb', 'nfl', 'soccer-eng-1', 'racing-f1', null, undefined, '']) {
       expect(hasTeamRadio(slug)).toBe(false);
     }
     expect(TEAM_RADIO_LEAGUES.size).toBeGreaterThan(5);

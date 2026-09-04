@@ -67,6 +67,24 @@ describe('radio routes', () => {
     expect(build).toContain("external: ['mpegts.js']");
   });
 
+  test('the stored session is read on its own line, never slotted into a Promise.all', async () => {
+    // It was, one position off from its destructuring, and every reader was
+    // told they were connected -- the share-candidates list is truthy.
+    const src = await read('../apps/web/src/app.js');
+    for (const route of [
+      "app.get('/settings'",
+      "app.get('/events/:id'",
+      '/:slug`, async (c) => {',
+    ]) {
+      const at = src.indexOf(route);
+      expect(at).toBeGreaterThan(-1);
+      const body = src.slice(at, at + 4000);
+      const arrays = [...body.matchAll(/Promise\.all\(\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
+      for (const arr of arrays) expect(arr).not.toContain('radio.storedSession');
+      expect(body).toMatch(/radioSession[\s\S]{0,120}await radio\.storedSession/);
+    }
+  });
+
   test('the team lookup is gated on a league with team feeds, for a fixture and for a team', async () => {
     const src = await read('../apps/web/src/app.js');
     const find = src.slice(src.indexOf("app.get('/radio/find'"));
