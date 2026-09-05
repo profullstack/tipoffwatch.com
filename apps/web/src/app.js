@@ -1,4 +1,4 @@
-import { createGateway } from '@profullstack/x402-gateway';
+import { createGateway, isTrainingAgent } from '@profullstack/x402-gateway';
 import { x402Gateway } from '@profullstack/x402-gateway/hono';
 import * as auth from '@tipoff/auth';
 import * as invites from '@tipoff/auth/invites';
@@ -170,6 +170,13 @@ const crawlGateway = createGateway({
   // The maps stay readable: a crawler that reads them may decide the API is
   // the cheaper way in, which is the point of publishing them.
   openPaths: ['/llms.txt', '/skill.md'],
+  /*
+   * Lightpanda is a headless browser sold to scrapers, and on 2026-09-02 a
+   * fleet of it fetched 8,500 pages here in a day from 104 countries. It is not
+   * on any robots list because it reads none, and it self-identifies, which is
+   * all the gate needs. A scraper is a crawler that has not paid yet.
+   */
+  isPaidAgent: (ua) => isTrainingAgent(ua) || /lightpanda/i.test(ua),
   contact: config.contactEmail ? `mailto:${config.contactEmail}` : `${config.siteUrl}/contact`,
 });
 app.use('*', x402Gateway(crawlGateway));
