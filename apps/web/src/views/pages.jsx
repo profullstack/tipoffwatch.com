@@ -161,6 +161,23 @@ export const ChannelRow = ({ ch }) => {
             .m3u
           </a>
         ) : null}
+        {/* Add this channel to the multiview grid. A plain link to a grid of one
+            without JavaScript; app.js rewrites it to carry whatever tiles the
+            reader already has, and remembers this one on the click. A new window,
+            because a grid is watched beside the site rather than instead of it --
+            and target also keeps it out of the client-side navigation. */}
+        {mine ? (
+          <a
+            class="ghost small-btn"
+            href={`/multiview?c=${mine}`}
+            target="_blank"
+            rel="noopener"
+            data-multiview-add={mine}
+            title="Watch this beside other channels"
+          >
+            Multiview
+          </a>
+        ) : null}
       </span>
     </li>
   );
@@ -2189,6 +2206,8 @@ export const Settings = ({
   prefs,
   passkeys,
   playlist,
+  lineAllowance = 1,
+  lineCeiling = 1,
   playlistMasked = null,
   playlistUnreadable = false,
   playlistNotice,
@@ -2359,6 +2378,68 @@ export const Settings = ({
       ) : null}
 
       {/*
+        How many streams at once.
+
+        The proxy used to hold every account to one open stream, which is what a
+        typical line permits and is why a second Play stopped the first. A line
+        sold with two or four connections was held to one too. The provider's
+        panel is asked at import and refresh; this is where the reader lowers
+        that (or supplies it, for a list whose provider would not say). It can
+        never raise the panel's number: two streams on a line that permits one
+        is what gets a subscription suspended.
+      */}
+      {playlist ? (
+        <div class="card" id="line">
+          <div class="card-head">
+            <h3 class="card-title">Streams at once</h3>
+            <p class="card-desc">
+              {playlist.panel_connections === null || playlist.panel_connections === undefined
+                ? 'Your provider did not say how many connections this line permits, so it is treated as one unless you say otherwise.'
+                : `Your provider reports this line permits ${playlist.panel_connections} connection${
+                    playlist.panel_connections === 1 ? '' : 's'
+                  }${
+                    playlist.panel_active !== null && playlist.panel_active !== undefined
+                      ? ` (${playlist.panel_active} in use when last checked)`
+                      : ''
+                  }.`}{' '}
+              Right now <a href="/multiview">Multiview</a> and “Play here” can hold{' '}
+              <strong>{lineAllowance}</strong> open at once
+              {playlist.panel_status && playlist.panel_status.toLowerCase() !== 'active'
+                ? ` — and your provider says the line is ${playlist.panel_status}`
+                : ''}
+              .
+            </p>
+          </div>
+          <form method="post" action="/api/playlist/connections">
+            <label class="field">
+              <span>Allow</span>
+              <select name="connections" class="input">
+                <option value="" selected={playlist.line_connections == null}>
+                  Whatever my provider reports
+                  {playlist.panel_connections ? ` (${playlist.panel_connections})` : ' (else 1)'}
+                </option>
+                {Array.from({ length: lineCeiling }, (_, i) => i + 1).map((n) => (
+                  <option value={String(n)} selected={playlist.line_connections === n}>
+                    {n === 1 ? '1 stream at a time' : `${n} streams at once`}
+                    {playlist.panel_connections && n > playlist.panel_connections
+                      ? ' (more than your provider allows — it will be held to theirs)'
+                      : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p class="muted small">
+              Only set this above one if your subscription really allows it. A provider that sees
+              more connections than it sold you suspends the line, and nothing here can undo that.
+            </p>
+            <button class="ghost small-btn" type="submit">
+              Save
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      {/*
         Opening the list to everybody signed in.
 
         Rendered only when there IS a list, and worded so the two consequences are
@@ -2382,9 +2463,9 @@ export const Settings = ({
             <p class="card-desc">
               Whoever you choose can play from it on a page for something it carries. They never get
               the address — it carries your provider username and password, so shared channels play
-              through us and the VLC, Infuse and .m3u buttons stay yours alone. Your line still
-              permits one connection at a time, so somebody else watching means you are not. See{' '}
-              <a href="/shared">whose lists are open</a>.
+              through us and the VLC, Infuse and .m3u buttons stay yours alone. Your line permits a
+              fixed number of connections at a time (see “Streams at once” above), so somebody else
+              watching is using one of yours. See <a href="/shared">whose lists are open</a>.
             </p>
           </div>
           <form method="post" action="/api/playlist/share">

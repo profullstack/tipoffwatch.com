@@ -739,6 +739,61 @@ export async function deletePlaylist(userId) {
   await sql`delete from user_playlists where user_id = ${userId}`;
 }
 
+/**
+ * The two numbers the stream cap is computed from, and nothing else.
+ *
+ * Read on every stream start, so it is its own narrow query rather than
+ * getPlaylist's `select *`: the row carries the sealed source URL and there is
+ * no reason for that to travel on a request that only wants a count.
+ */
+export async function lineOf(userId) {
+  const [row] = await sql`
+    select line_connections, panel_connections
+    from user_playlists where user_id = ${userId}
+  `;
+  return row ?? null;
+}
+
+/**
+ * The reader's own answer to "how many at once".
+ *
+ * Null clears it, meaning "whatever my provider reports". The range check lives
+ * in the schema; the route has already clamped to what the picker offers.
+ */
+export async function setLineConnections({ userId, connections }) {
+  const [row] = await sql`
+    update user_playlists set line_connections = ${connections ?? null}
+    where user_id = ${userId}
+    returning line_connections, panel_connections
+  `;
+  return row ?? null;
+}
+
+/**
+ * What the provider's panel said about the line, written at import and refresh.
+ *
+ * `maxConnections` null means the panel would not say, and that is stored as
+ * null rather than left alone: a line that moved from an Xtream panel to a plain
+ * file must stop being held to the old panel's number.
+ */
+export async function recordPanelInfo({
+  userId,
+  maxConnections = null,
+  activeConnections = null,
+  status = null,
+  expiresAt = null,
+}) {
+  await sql`
+    update user_playlists set
+      panel_connections = ${maxConnections},
+      panel_active = ${activeConnections},
+      panel_status = ${status},
+      panel_expires_at = ${expiresAt},
+      panel_checked_at = now()
+    where user_id = ${userId}
+  `;
+}
+
 /* -------------------------------------------------------------- siriusxm -- */
 /**
  * The reader's own SiriusXM session. Same rule as the playlist above: every
@@ -1040,6 +1095,9 @@ export async function sharedChannelById(channelId, { viewerId = null } = {}) {
   const [row] = await sql`
     select c.id, c.title, c.group_title, c.kind, c.stream_url,
            p.user_id as owner_id,
+           -- The OWNER's allowance, because it is the owner's line the stream is
+           -- counted against. See lineAllowance in @tipoff/playlists.
+           p.line_connections, p.panel_connections,
            coalesce(p.shared_label, u.display_name, '@' || u.handle::text, 'someone') as owner_label
     from user_playlist_channels c
     join user_playlists p on p.id = c.playlist_id

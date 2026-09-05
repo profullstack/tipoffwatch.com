@@ -720,6 +720,8 @@ function initNavigation() {
       initMarketTabs();
       initOwnChannelActions();
       initInlinePlayer();
+      initMultiview();
+      initMultiviewAdd();
       initRadio();
       initPush();
       initPasskeys();
@@ -759,6 +761,8 @@ reportTimezone();
 initMarketTabs();
 initOwnChannelActions();
 initInlinePlayer();
+initMultiview();
+initMultiviewAdd();
 initRadio();
 initPush();
 initPasskeys();
@@ -1487,6 +1491,448 @@ function initPlayerSection(section) {
   // socket to time out. pagehide rather than unload: it is the one that fires on
   // iOS and on a back/forward navigation.
   window.addEventListener('pagehide', teardown);
+}
+
+/* -------------------------------------------------------------- multiview -- */
+
+/**
+ * Several channels at once, on one page.
+ *
+ * What this is NOT is a way around the line's connection count. The number in
+ * `data-max` is what the reader's line permits (their provider's panel, lowered
+ * in settings if they chose), and no tile starts past it: the server would
+ * evict the oldest stream to make room, which on this page looks like tile one
+ * going black the moment tile three starts. Refusing up front, in words, is the
+ * kinder version of the same rule.
+ *
+ * Every tile is its own player from the same bundle the event page uses, muted
+ * to start -- four commentaries at once is noise, and a muted <video> is the one
+ * kind a browser will autoplay. Sound is solo: one tile audible at a time.
+ *
+ * "Pop out" moves the grid into a Document Picture-in-Picture window, which is
+ * the only always-on-top surface a browser offers, and the only one that can
+ * hold more than one <video>: the older element-level PiP is one video per
+ * browser, full stop, which is why "PiP for four games" could not be built out
+ * of it. Chromium has it; elsewhere a plain popup window is the fallback.
+ */
+
+const MULTIVIEW_KEY = 'tw.multiview';
+const MULTIVIEW_MAX = 4;
+
+/** The tiles the reader last had, so an event page can add to them. */
+function multiviewSet() {
+  try {
+    const v = JSON.parse(localStorage.getItem(MULTIVIEW_KEY) ?? '[]');
+    return Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveMultiviewSet(ids) {
+  try {
+    localStorage.setItem(MULTIVIEW_KEY, JSON.stringify(ids.slice(-MULTIVIEW_MAX)));
+  } catch {
+    // Private mode, or storage refused. The link still carries this one channel.
+  }
+}
+
+/**
+ * The Multiview link beside a channel on an event or team page.
+ *
+ * Ships as a link to a grid of one, which is what a reader without this script
+ * gets. With it, the href carries the tiles they already have plus this one --
+ * newest last, oldest dropped past four -- and a click remembers the set so the
+ * next page's link continues it.
+ */
+function initMultiviewAdd(root = document) {
+  for (const link of root.querySelectorAll('a[data-multiview-add]')) {
+    if (link.dataset.ready) continue;
+    link.dataset.ready = '1';
+    const id = Number(link.dataset.multiviewAdd);
+    if (!Number.isInteger(id) || id < 1) continue;
+
+    const withThis = () => [...multiviewSet().filter((x) => x !== id), id].slice(-MULTIVIEW_MAX);
+    const refresh = () => {
+      link.href = `/multiview?c=${withThis().join(',')}`;
+    };
+    refresh();
+    link.addEventListener('click', () => {
+      saveMultiviewSet(withThis());
+      refresh();
+    });
+  }
+}
+
+function initMultiview(root = document) {
+  const page = root.querySelector('[data-multiview]');
+  if (!page || page.dataset.ready) return;
+  page.dataset.ready = '1';
+
+  const grid = page.querySelector('[data-mv-grid]');
+  const stage = page.querySelector('.mv-stage');
+  if (!grid || !stage) return;
+
+  const template = page.querySelector('template[data-mv-tile]');
+  const emptyNote = page.querySelector('[data-mv-empty]');
+  const src = page.dataset.mvPlayerSrc;
+  const allowance = Math.max(1, Number(page.dataset.max) || 1);
+  const maxTiles = Math.max(1, Number(page.dataset.maxTiles) || MULTIVIEW_MAX);
+  const playable = canTransmux();
+
+  /** tile element -> { stop, video }. A reservation has both null while the bundle loads. */
+  const running = new Map();
+
+  const tiles = () => [...grid.querySelectorAll('.mv-tile')];
+  const ids = () => tiles().map((t) => Number(t.dataset.mvTileId));
+
+  const say = (tile, text, isError = false) => {
+    tile.querySelector('.mv-state')?.remove();
+    if (!text) return;
+    const p = document.createElement('p');
+    p.className = `mv-state small${isError ? ' error' : ' muted'}`;
+    p.textContent = text;
+    tile.querySelector('.mv-screen')?.append(p);
+  };
+
+  const label = (tile) => {
+    const toggle = tile.querySelector('[data-mv-toggle]');
+    if (toggle) toggle.textContent = running.has(tile) ? 'Stop' : 'Play';
+  };
+
+  /** The address and the remembered set follow the grid, so a reload is the same grid. */
+  const sync = () => {
+    const list = ids();
+    grid.dataset.count = String(list.length);
+    emptyNote?.classList.toggle('is-hidden', list.length > 0);
+    saveMultiviewSet(list);
+    try {
+      history.replaceState(
+        {},
+        '',
+        list.length ? `${location.pathname}?c=${list.join(',')}` : location.pathname,
+      );
+    } catch {
+      // Not a real page (a test), or history is off. The grid itself is fine.
+    }
+  };
+
+  const stopTile = (tile) => {
+    const r = running.get(tile);
+    if (!r) return;
+    running.delete(tile);
+    try {
+      r.stop?.();
+    } catch {}
+    r.video?.remove();
+    tile.dataset.playing = '';
+    label(tile);
+  };
+
+  const roomFor = (tile) => {
+    if (running.size < allowance) return true;
+    say(
+      tile,
+      allowance === 1
+        ? 'Your line permits one stream at a time. Stop another tile first, or raise the number in settings if your provider allows more.'
+        : `Your line permits ${allowance} streams at once. Stop another tile first.`,
+    );
+    return false;
+  };
+
+  const startTile = async (tile) => {
+    if (running.has(tile)) return;
+    if (!playable) {
+      say(
+        tile,
+        'This browser cannot play these streams. Open the channel in VLC from its game page.',
+      );
+      return;
+    }
+    if (!roomFor(tile)) return;
+
+    // Reserved before the bundle is awaited: four tiles starting together would
+    // otherwise all pass the count above and all open, on a line that permits one.
+    running.set(tile, { stop: null, video: null });
+    tile.dataset.playing = '1';
+    label(tile);
+    say(tile, 'Starting…');
+
+    let player;
+    try {
+      player = await loadPlayerBundle(src);
+    } catch {
+      running.delete(tile);
+      tile.dataset.playing = '';
+      label(tile);
+      say(tile, 'The player could not be loaded. Reload the page.', true);
+      return;
+    }
+    // Stopped or removed while the bundle was arriving.
+    if (!tile.isConnected || !running.has(tile)) return;
+
+    if (!player.supported()) {
+      running.delete(tile);
+      tile.dataset.playing = '';
+      label(tile);
+      say(tile, 'This browser cannot play these streams.', true);
+      return;
+    }
+
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.controls = false;
+    // Muted so it autoplays, and because four commentaries is noise. The Sound
+    // button on the tile is how one of them becomes audible.
+    video.muted = true;
+    video.volume = 1;
+    tile.querySelector('.mv-screen')?.prepend(video);
+
+    const stop = player.attach(
+      video,
+      tile.dataset.play,
+      (message) => {
+        // Terminal: the player has given up on this stream.
+        running.delete(tile);
+        video.remove();
+        tile.dataset.playing = '';
+        label(tile);
+        setSound(tile, false);
+        say(tile, message, true);
+      },
+      (message) => say(tile, message),
+    );
+    running.set(tile, { stop, video });
+    video.addEventListener('playing', () => say(tile, null), { once: true });
+  };
+
+  const setSound = (tile, on) => {
+    const button = tile.querySelector('[data-mv-sound]');
+    if (button) button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  };
+
+  /** One audible tile at a time. */
+  const solo = (tile) => {
+    for (const [t, r] of running) {
+      if (!r.video) continue;
+      r.video.muted = t !== tile;
+      setSound(t, t === tile);
+    }
+  };
+
+  const wire = (tile) => {
+    if (tile.dataset.wired) return;
+    tile.dataset.wired = '1';
+    tile.querySelector('[data-mv-toggle]')?.addEventListener('click', () => {
+      if (running.has(tile)) stopTile(tile);
+      else startTile(tile);
+    });
+    tile.querySelector('[data-mv-sound]')?.addEventListener('click', () => {
+      const r = running.get(tile);
+      if (!r?.video) return;
+      if (r.video.muted) {
+        solo(tile);
+        // Unmuting is a gesture here, but a browser that still disagrees pauses
+        // rather than throws; keep the picture and go back to muted.
+        if (r.video.paused) {
+          r.video.muted = true;
+          setSound(tile, false);
+          r.video.play().catch(() => {});
+        }
+      } else {
+        r.video.muted = true;
+        setSound(tile, false);
+      }
+    });
+    tile.querySelector('[data-mv-remove]')?.addEventListener('click', () => {
+      stopTile(tile);
+      tile.remove();
+      sync();
+    });
+    label(tile);
+  };
+
+  const addTile = ({ id, title, group }) => {
+    if (!template || !Number.isInteger(id) || id < 1) return;
+    if (ids().includes(id)) {
+      const existing = tiles().find((t) => Number(t.dataset.mvTileId) === id);
+      if (existing) startTile(existing);
+      return;
+    }
+    if (tiles().length >= maxTiles) {
+      results.replaceChildren(note(`That is ${maxTiles} tiles already. Remove one first.`));
+      return;
+    }
+    const frag = template.content.cloneNode(true);
+    const tile = frag.querySelector('.mv-tile');
+    if (!tile) return;
+    tile.dataset.mvTileId = String(id);
+    tile.dataset.play = `/my/channels/${id}/stream.ts`;
+    const name = tile.querySelector('.mv-title');
+    if (name) {
+      name.textContent = title;
+      name.title = title;
+      if (group) {
+        const tag = document.createElement('span');
+        tag.className = 'league-tag channel-tag';
+        tag.textContent = group;
+        name.append(tag);
+      }
+    }
+    wire(tile);
+    grid.append(tile);
+    sync();
+    startTile(tile);
+  };
+
+  /* ---- finding a channel on the reader's own list ---- */
+
+  const results = page.querySelector('[data-mv-results]') ?? document.createElement('ul');
+  const form = page.querySelector('[data-mv-search-form]');
+  const input = form?.querySelector('input[name="q"]');
+  const note = (text) => {
+    const li = document.createElement('li');
+    li.className = 'muted small';
+    li.textContent = text;
+    return li;
+  };
+
+  let searchToken = 0;
+  const search = async () => {
+    const term = input?.value.trim() ?? '';
+    const mine = ++searchToken;
+    if (term.length < 2) {
+      results.replaceChildren();
+      results.classList.remove('is-open');
+      return;
+    }
+    let found = [];
+    try {
+      const res = await fetch(`${page.dataset.search}?q=${encodeURIComponent(term)}`, {
+        headers: { accept: 'application/json' },
+      });
+      found = (await res.json()).channels ?? [];
+    } catch {
+      found = [];
+    }
+    if (mine !== searchToken) return;
+    results.classList.add('is-open');
+    if (found.length === 0) {
+      results.replaceChildren(note('Nothing on your list matches that.'));
+      return;
+    }
+    results.replaceChildren(
+      ...found.map((ch) => {
+        const li = document.createElement('li');
+        const name = document.createElement('span');
+        name.className = 'mv-result-name';
+        name.textContent = ch.title;
+        if (ch.group) {
+          const tag = document.createElement('span');
+          tag.className = 'league-tag channel-tag';
+          tag.textContent = ch.group;
+          name.append(tag);
+        }
+        if (ch.live === false) {
+          const dead = document.createElement('span');
+          dead.className = 'muted small';
+          dead.textContent = ' not streaming when last checked';
+          name.append(dead);
+        }
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'ghost small-btn';
+        add.textContent = ids().includes(ch.id) ? 'Added' : 'Add';
+        add.addEventListener('click', () => {
+          addTile({ id: ch.id, title: ch.title, group: ch.group });
+          add.textContent = 'Added';
+        });
+        li.append(name, add);
+        return li;
+      }),
+    );
+  };
+
+  if (form && input) {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      search();
+    });
+    let timer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(search, 250);
+    });
+  }
+
+  /* ---- popping the grid out into its own always-on-top window ---- */
+
+  const popout = page.querySelector('[data-mv-popout]');
+  if (popout) {
+    popout.addEventListener('click', async () => {
+      if ('documentPictureInPicture' in window) {
+        try {
+          const box = grid.getBoundingClientRect();
+          // Asked for first, inside the click: it needs the gesture, and nothing
+          // may be awaited before it.
+          const pip = await window.documentPictureInPicture.requestWindow({
+            width: Math.max(320, Math.round(box.width) || 960),
+            height: Math.max(180, Math.round(box.height) || 540),
+          });
+          // The site's own stylesheets, by link and never by inline <style>: the
+          // window inherits this page's Content-Security-Policy, and style-src
+          // does not allow inline.
+          for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+            pip.document.head.append(link.cloneNode(true));
+          }
+          pip.document.title = document.title;
+          pip.document.body.className = 'mv-pip';
+          // The grid MOVES, videos and all. Playback continues across the move;
+          // that is the whole point of Document PiP over the element kind.
+          pip.document.body.append(grid);
+          popout.disabled = true;
+          popout.textContent = 'Popped out';
+          pip.addEventListener('pagehide', () => {
+            stage.prepend(grid);
+            popout.disabled = false;
+            popout.textContent = 'Pop out';
+          });
+          return;
+        } catch {
+          // Refused, or not in a gesture any more. Fall through to a window.
+        }
+      }
+      // No always-on-top surface in this browser. A plain popup is the next best
+      // thing -- and the tiles here are stopped FIRST, because the same account
+      // opening the same streams twice would evict its own.
+      for (const t of tiles()) stopTile(t);
+      window.open(location.href, 'tw-multiview', 'popup,width=960,height=560');
+    });
+  }
+
+  /* ---- leaving must drop the provider connections ---- */
+
+  const stopAll = () => {
+    for (const t of tiles()) stopTile(t);
+  };
+  const previousStop = window.__tipoffStopPlayer;
+  window.__tipoffStopPlayer = () => {
+    previousStop?.();
+    stopAll();
+  };
+  window.addEventListener('pagehide', stopAll);
+
+  /* ---- go ---- */
+
+  for (const tile of tiles()) wire(tile);
+  sync();
+  // The first `allowance` tiles start on their own, muted; the rest say why not.
+  // A page opened to watch four things should not need four clicks first.
+  tiles().forEach((tile, i) => {
+    if (i < allowance) startTile(tile);
+    else roomFor(tile);
+  });
 }
 
 /* ------------------------------------------------------------------ radio -- */

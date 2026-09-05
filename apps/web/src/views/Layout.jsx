@@ -239,6 +239,9 @@ export const Layout = (props) => {
             {/* Signed-in only: the page has nothing to play without a session, and
               a nav entry that leads to a sign-in wall is a wall with a sign on it. */}
             {props.user && config.radio.enabled ? <a href="/radio">Radio</a> : null}
+            {/* Signed-in only, like Radio, and for the same reason: it plays the
+              reader's own list and has nothing to show without one. */}
+            {props.user ? <a href="/multiview">Multiview</a> : null}
             {/* Shown to everybody, member or not. A member needs it to check what
               they have earned, and somebody who is not needs to be able to find
               out what it costs -- a link that disappears once you join is a link

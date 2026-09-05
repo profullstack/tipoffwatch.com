@@ -383,18 +383,24 @@ export const config = {
         return opt('STREAM_PROXY', '1') !== '0';
       },
       /**
-       * Concurrent in-page streams per account.
+       * The most in-page streams any one account may hold open, site-wide.
        *
-       * One, matching what a typical line permits. This exists to protect the
-       * READER's subscription, not our capacity -- a provider that sees two
-       * simultaneous connections from one credential suspends the account.
+       * A CEILING, not the allowance. What a given line actually permits comes
+       * from the line itself -- the provider's panel is asked at import, and the
+       * reader can lower it in settings -- and the proxy enforces the smaller of
+       * that and this (see lineAllowance in @tipoff/playlists). A line nobody has
+       * asked about is still held to one, which is what a typical subscription
+       * permits and what this enforced for everyone until multiview existed.
+       *
+       * So this number is about MONEY rather than about any provider: every
+       * stream through the proxy is bandwidth billed twice, and four tiles on a
+       * multiview page is four of them. Four matches the grid.
        *
        * At the ceiling the OLDEST stream is dropped, not the newest: pressing
        * Play on another channel says which channel is wanted now, so it takes the
-       * line over. Raising this above 1 only makes sense for a line that really
-       * permits more; it does not make the player better behaved.
+       * line over.
        */
-      maxPerUser: num('STREAM_PROXY_MAX_PER_USER', 1),
+      maxPerUser: num('STREAM_PROXY_MAX_PER_USER', 4),
     },
   },
 

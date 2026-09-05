@@ -98,6 +98,29 @@ proxy forwarding to a closed socket while the container reports healthy.
 Secrets belong on the service and in the logicsrc vault, not in a committed
 `.env`.
 
+## Multiview, and how many streams a line permits
+
+The in-page player used to hold every account to ONE open stream and evict the
+older one when a second started — so two fixture pages in two tabs could never
+both play. That number is a fact about the reader's provider line, not about
+the site: a line sold with one connection suspends the account on the second,
+and a line sold with four does not. It now comes from the line. At import and
+on every refresh the provider's Xtream panel (`player_api.php`, derived from the
+playlist address) is asked for `max_connections`, the answer is stored on
+`user_playlists.panel_connections`, and the reader can lower it (never raise it)
+under **Streams at once** in settings. The proxy enforces the smallest of the
+panel's word, the reader's choice and `STREAM_PROXY_MAX_PER_USER`, which is now
+a site-wide ceiling of four rather than the allowance itself. A list whose
+provider will not say is still held to one unless the reader says otherwise.
+
+`/multiview?c=<id>,<id>,…` plays up to four of the reader's own channels in a
+grid, each through the same `/my/channels/:id/stream.ts` route as the Play
+button, muted to start with one audible at a time. **Pop out** moves the grid
+into a Document Picture-in-Picture window — the only always-on-top surface a
+browser offers that can hold more than one video; element-level PiP is one per
+browser — and falls back to a plain popup elsewhere. The **Multiview** button
+beside a channel on a fixture or team page adds it to the grid.
+
 ## Radio (SiriusXM)
 
 A reader connects their own SiriusXM subscription in settings — the email on
