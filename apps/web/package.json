@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@profullstack/player": "0.6.0",
+    "@profullstack/x402-gateway": "0.1.0",
     "@simplewebauthn/browser": "^13.2.0",
     "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
