@@ -2705,6 +2705,44 @@ ul.group-grid .meta {
 .mv-tile [data-mv-sound][aria-pressed="true"] {
   outline: 2px solid var(--accent, #6cf);
 }
+/* The audible tile is the lit one. Outline drawn inward, because the tile clips
+   its overflow and an outline on the outside would simply be cut off. */
+.mv-tile[data-sound="1"] {
+  outline: 3px solid var(--accent, #6cf);
+  outline-offset: -3px;
+}
+/* The picture is a control (click for sound, or Play when stopped). */
+.mv-screen[data-mv-screen] {
+  cursor: pointer;
+}
+/* The drag handle. touch-action none, or a finger on it scrolls the page
+   instead of moving the tile. */
+.mv-grab {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  letter-spacing: -0.15em;
+  padding-left: 0.35rem;
+  padding-right: 0.45rem;
+}
+.mv-tile.is-dragging {
+  opacity: 0.55;
+  cursor: grabbing;
+}
+.mv-grid.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.mv-grid.is-dragging .mv-tile {
+  transition: none;
+}
+.mv-others {
+  margin: 0.4rem 0 0;
+  color: #ffd27f;
+}
+.mv-others.is-hidden {
+  display: none;
+}
 
 .mv-live-list {
   list-style: none;

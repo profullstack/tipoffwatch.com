@@ -244,4 +244,74 @@ describe('app.js', () => {
     expect(a).toContain("link.addEventListener('click'");
     expect(a).toContain('saveMultiviewSet(withThis())');
   });
+
+  test('a click on the picture is the sound control, and Play on a stopped tile', () => {
+    const click = body.slice(body.indexOf("tile.querySelector('[data-mv-screen]')"));
+    const handler = click.slice(0, click.indexOf('});'));
+    expect(handler).toContain('if (running.has(tile)) toggleSound(tile);');
+    expect(handler).toContain('else startTile(tile);');
+    // The lit frame follows the sound, on the tile and not just the button.
+    expect(body).toContain("tile.dataset.sound = on ? '1' : '';");
+  });
+
+  test('tiles are rearranged by pointer drag, against the tile’s own document', () => {
+    expect(body).toContain("handle.addEventListener('pointerdown'");
+    expect(body).toContain('handle.setPointerCapture(event.pointerId)');
+    // After a pop-out the grid is in the PiP window; `document` would be the
+    // page underneath it.
+    expect(body).toContain('tile.ownerDocument');
+    expect(body).toContain(
+      "doc.elementFromPoint(event.clientX, event.clientY)?.closest('.mv-tile')",
+    );
+    // A finished drag is a new order, so the address and remembered set follow.
+    const done = body.slice(body.indexOf('const done = () => {'));
+    expect(done.slice(0, done.indexOf('};'))).toContain('sync();');
+  });
+
+  test('and by the arrow keys on the handle', () => {
+    expect(body).toContain(
+      'const delta = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];',
+    );
+    expect(body).toContain('moveTile(tile, delta);');
+    const move = body.slice(body.indexOf('const moveTile = (tile, delta) => {'));
+    expect(move.slice(0, move.indexOf('};'))).toContain('sync();');
+  });
+
+  test('names another Multiview window on this browser, without synchronising with it', () => {
+    expect(body).toContain("new BroadcastChannel('tw.multiview')");
+    expect(body).toContain("channel.postMessage({ type: 'hello', id: me })");
+    expect(body).toContain("channel.postMessage({ type: 'here', id: me })");
+    expect(body).toContain("channel.postMessage({ type: 'bye', id: me })");
+    expect(body).toContain('Another Multiview window is open in this browser.');
+    // Presence only: no tile ids ever cross the channel.
+    const presence = body.slice(body.indexOf("'BroadcastChannel' in window"));
+    expect(presence.slice(0, presence.indexOf('/* ---- go ---- */'))).not.toContain('ids()');
+  });
+});
+
+describe('the tile', () => {
+  const user = { id: 'u1', email: 'a@example.test', handle: 'a' };
+  const tiles = [{ id: 11, title: 'ESPN', group: null, kind: 'live' }];
+
+  test('has a drag handle and a clickable picture, both marked for app.js', async () => {
+    const html = await render(
+      Multiview({ user, hasList: true, tiles, allowance: 2, panelConnections: 2, live: [] }),
+    );
+    expect(html).toContain('data-mv-grab');
+    expect(html).toContain('aria-label="Move this tile: drag it, or press the arrow keys"');
+    expect(html).toContain('data-mv-screen');
+    expect(html).toContain('title="Click for sound"');
+    // The slot the other-window notice is written into, hidden by class and not
+    // by the attribute (a styled element ignores `hidden`).
+    expect(html).toContain('data-mv-others');
+    expect(html).toContain('class="mv-others small is-hidden"');
+  });
+
+  test('says how the grid is worked', async () => {
+    const html = await render(
+      Multiview({ user, hasList: true, tiles, allowance: 2, panelConnections: 2, live: [] }),
+    );
+    expect(html).toContain('Click a');
+    expect(html).toContain('tile to hear it, drag the ⋮⋮ handle to rearrange, ✕ to take one out.');
+  });
 });
