@@ -11,6 +11,8 @@ import {
   claimStreamSlot,
   firstLiveChannel,
   importPlaylist,
+  lineAllowance,
+  lineAllowanceFor,
   marketChannelsForEvent,
   maskPlaylistUrl,
   openStream,
@@ -25,17 +27,19 @@ import {
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import * as radio from '@tipoff/radio';
-import { oneChannelM3u, searchEverything } from '@tipoff/sports';
+import { normaliseTitle, oneChannelM3u, searchEverything } from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
+import { MAX_TILES, parseChannelIds } from './lib/multiview.js';
 import { buildFeed } from './lib/rss.js';
 import { SECURITY_HEADERS } from './lib/security-headers.js';
 import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
 import { Feeds } from './views/feeds.jsx';
 import { Contact, Privacy, Terms } from './views/legal.jsx';
+import { Multiview } from './views/multiview.jsx';
 import {
   About,
   Channels,
@@ -1098,6 +1102,46 @@ app.post('/api/playlist/refresh', async (c) => {
 });
 
 /**
+ * How many streams at once the reader says their line permits.
+ *
+ * Empty means "whatever my provider reports": the panel's number is read at
+ * import and refresh, and this setting can only ever lower it -- see
+ * lineAllowance. Clamped to the picker's range here and checked again by the
+ * schema, so a hand-made request cannot store nine.
+ */
+app.post('/api/playlist/connections', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const raw = String(body.connections ?? '').trim();
+  const ceiling = config.playlists.proxy.maxPerUser;
+  let connections = null;
+  if (raw !== '') {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > ceiling) {
+      const message = `Choose between 1 and ${ceiling}.`;
+      return respond(c, {
+        json: { error: message },
+        status: 400,
+        redirectTo: `/settings?playlist_error=${encodeURIComponent(message)}`,
+      });
+    }
+    connections = n;
+  }
+  const row = await q.setLineConnections({ userId: user.id, connections });
+  if (!row) {
+    return respond(c, {
+      json: { error: 'You have not added a list.' },
+      status: 404,
+      redirectTo: '/settings?playlist_error=You%20have%20not%20added%20a%20list.',
+    });
+  }
+  return respond(c, {
+    json: { connections, allowance: lineAllowance(row, ceiling) },
+    redirectTo: '/settings?playlist=connections#line',
+  });
+});
+
+/**
  * Open this account's list to everybody signed in, or close it again.
  *
  * Owner-only, and the query is keyed on the session's own user id rather than on
@@ -1234,7 +1278,10 @@ app.get('/shared/:channelId/stream.ts', async (c) => {
    * has opened their list to others must not be locked out of it by them.
    */
   const isOwner = row.owner_id === user.id;
-  if (!isOwner && streamSlotsOpen(row.owner_id) >= config.playlists.proxy.maxPerUser) {
+  // The OWNER's line sets the number: the row carries what their panel said and
+  // what they chose, and the ceiling is the site's.
+  const ownerMax = lineAllowance(row, config.playlists.proxy.maxPerUser);
+  if (!isOwner && streamSlotsOpen(row.owner_id) >= ownerMax) {
     return c.json({ error: 'that line is in use right now' }, 409);
   }
 
@@ -1245,7 +1292,7 @@ app.get('/shared/:channelId/stream.ts', async (c) => {
 
   // Against the owner, not the viewer. See point 1 above.
   const release = claimStreamSlot(row.owner_id, {
-    max: config.playlists.proxy.maxPerUser,
+    max: ownerMax,
     evict: () => stop.abort(),
   });
   if (!release) return c.json({ error: 'player is off' }, 404);
@@ -1517,7 +1564,10 @@ app.get('/events/:id/stream.ts', async (c) => {
    * stream is aborted here -- before the replacement connects, not alongside it.
    */
   const release = claimStreamSlot(user.id, {
-    max: config.playlists.proxy.maxPerUser,
+    // What THIS line permits -- the panel's word, the reader's choice, the site
+    // ceiling, whichever is smallest -- rather than one for everybody. One is
+    // still the answer for a line nobody has asked about.
+    max: await lineAllowanceFor(user.id),
     evict: () => stop.abort(),
   });
   if (!release) return c.json({ error: 'player is off' }, 404);
@@ -1630,6 +1680,82 @@ app.get('/my/channels', async (c) => {
   );
 });
 
+/* --------------------------------------------------------------- multiview -- */
+
+/**
+ * Several channels on one page, in a grid, from the reader's own line.
+ *
+ * The reason this page exists is a limit that was never the browser's. One
+ * event page per tab, two tabs, and the second stream stopped the first: that
+ * was the proxy holding every account to one open stream, because a typical
+ * provider line suspends an account that opens two. A line sold with two or four
+ * connections was being held to one anyway. Now the allowance is the line's own
+ * (see lineAllowance), and this page is where more than one of them is used.
+ *
+ * Tiles are channel row ids in the query string, so a grid is a link: it
+ * survives a reload, can be bookmarked, and the event page can add to it without
+ * the server keeping any state. Every id is resolved through ownChannelById,
+ * which joins on the session's user id, so an id from somebody else's list is
+ * simply not a tile. The sealed stream URL never reaches the view: a tile plays
+ * through /my/channels/:id/stream.ts like a row on an event page does.
+ *
+ * Not cached, and must not be: it names the reader's own channels.
+ */
+app.get('/multiview', async (c) => {
+  const user = requireUser(c);
+  const playlist = await q.getPlaylist(user.id);
+  const ids = parseChannelIds(c.req.query('c'));
+  const rows = playlist
+    ? await Promise.all(ids.map((id) => q.ownChannelById(user.id, id).catch(() => null)))
+    : [];
+  const tiles = rows
+    .filter(Boolean)
+    .map((ch) => ({ id: ch.id, title: ch.title, group: ch.group_title, kind: ch.kind }));
+  const live = await q.liveNow({ viewerId: user.id, limit: 12 }).catch(() => []);
+  const allowance = playlist ? lineAllowance(playlist, config.playlists.proxy.maxPerUser) : 1;
+
+  c.header('cache-control', 'no-store, private');
+  return c.html(
+    await render(
+      <Multiview
+        user={user}
+        hasList={Boolean(playlist)}
+        tiles={tiles}
+        allowance={allowance}
+        panelConnections={playlist?.panel_connections ?? null}
+        maxTiles={MAX_TILES}
+        live={live}
+        playerEnabled={config.playlists.proxy.enabled}
+      />,
+    ),
+  );
+});
+
+/**
+ * The reader's own channels by title, for adding a tile.
+ *
+ * The same query the site search runs, with the same normaliser, answered as
+ * JSON and without the sealed URL. Only ever this account's rows: the query joins
+ * on the session's user id.
+ */
+app.get('/api/my/channels/search', async (c) => {
+  const user = requireUser(c);
+  const term = String(c.req.query('q') ?? '').trim();
+  c.header('cache-control', 'no-store, private');
+  if (term.length < 2) return c.json({ channels: [] });
+  const rows = await q
+    .searchOwnChannels(user.id, { normTerm: normaliseTitle(term), limit: 12 })
+    .catch(() => []);
+  return c.json({
+    channels: rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      group: r.group_title ?? null,
+      live: r.is_live ?? null,
+    })),
+  });
+});
+
 /* ------------------------------------------------- one channel, by its id -- */
 
 /**
@@ -1701,7 +1827,7 @@ app.get('/my/channels/:channelId/stream.ts', async (c) => {
   else c.req.raw.signal?.addEventListener('abort', () => stop.abort(), { once: true });
 
   const release = claimStreamSlot(user.id, {
-    max: config.playlists.proxy.maxPerUser,
+    max: await lineAllowanceFor(user.id),
     evict: () => stop.abort(),
   });
   if (!release) return c.json({ error: 'player is off' }, 404);
@@ -2272,7 +2398,7 @@ app.get('/settings', async (c) => {
    * worked.
    */
   const playlistNotice =
-    added === 'renamed'
+    added === 'renamed' || added === 'connections'
       ? 'Saved.'
       : added === 'unchanged'
         ? 'Saved. Your provider is serving the same list as last time, so your channels are unchanged.'
@@ -2295,6 +2421,8 @@ app.get('/settings', async (c) => {
         }
         passkeys={passkeys}
         playlist={playlist}
+        lineAllowance={playlist ? lineAllowance(playlist, config.playlists.proxy.maxPerUser) : 1}
+        lineCeiling={config.playlists.proxy.maxPerUser}
         playlistMasked={playlistUrl ? maskPlaylistUrl(playlistUrl) : null}
         playlistUnreadable={Boolean(playlist) && !playlistUrl}
         playlistNotice={playlistNotice}

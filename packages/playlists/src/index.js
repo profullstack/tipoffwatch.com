@@ -10,8 +10,12 @@ import {
   parseM3uStream,
   rankChannelsForFixture,
 } from '@tipoff/sports';
+import { lineAllowance } from './line.js';
+import { lineInfo } from './panel.js';
 
+export { lineAllowance } from './line.js';
 export { maskPlaylistUrl } from './mask.js';
+export { lineInfo, panelApiUrl } from './panel.js';
 export { firstLiveChannel, probeStream, sniffBytes, verdictToStore } from './probe.js';
 export { claimStreamSlot, openStream, streamSlotsOpen } from './proxy.js';
 export { playlistSource } from './source.js';
@@ -148,6 +152,10 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
   const contentHash = hash.digest('hex');
   if (knownHash && knownHash === contentHash) {
     await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt(bytes) });
+    // Asked even when the list is byte-identical: the connection count is a fact
+    // about the account, and a provider that upgrades a line to two connections
+    // does not rewrite the playlist to say so.
+    await askPanel(userId, url);
     return { channels: null, unchanged: true };
   }
 
@@ -181,6 +189,7 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
 
   await q.replacePlaylistChannels({ userId, channels });
   await q.markPlaylistFresh({ userId, contentHash, nextAt: nextRefreshAt(bytes) });
+  await askPanel(userId, url);
   return {
     channels: channels.length,
     // The parser says so directly now: it knows it stopped feeding entries,
@@ -188,6 +197,51 @@ export async function importPlaylist({ userId, url, label, knownHash = null }) {
     truncated: list.truncated,
     unchanged: false,
   };
+}
+
+/**
+ * Ask the provider how many streams this line permits, and remember the answer.
+ *
+ * After the list is stored, never instead of it: a panel that is slow or missing
+ * must not turn a working import into a failure. Null is written as readily as a
+ * number -- a list that stops being an Xtream panel stops being held to the old
+ * panel's word.
+ */
+async function askPanel(userId, url) {
+  let info = null;
+  try {
+    info = await lineInfo(url);
+  } catch {
+    // lineInfo answers null for everything it anticipates; this is the rest.
+  }
+  // try/catch rather than .catch(): a database module that has been swapped for
+  // a fake in a test may not carry this query at all, and a synchronous
+  // TypeError there must not be what fails an import.
+  try {
+    await q.recordPanelInfo({
+      userId,
+      maxConnections: info?.maxConnections ?? null,
+      activeConnections: info?.activeConnections ?? null,
+      status: info?.status ?? null,
+      expiresAt: info?.expiresAt ?? null,
+    });
+  } catch {
+    // The list is stored; the count is a nicety.
+  }
+}
+
+/**
+ * How many streams THIS account's line may carry at once, for the proxy.
+ *
+ * One narrow read per stream start. The ceiling comes from config and the rest
+ * from the row; see line.js for how they combine. An account with no list at all
+ * gets one, which is what the proxy enforced for everyone before this existed.
+ *
+ * @param {string} userId
+ */
+export async function lineAllowanceFor(userId) {
+  const row = await q.lineOf(userId).catch(() => null);
+  return lineAllowance(row, config.playlists.proxy.maxPerUser);
 }
 
 /**
