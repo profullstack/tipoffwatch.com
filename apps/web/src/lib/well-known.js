@@ -1,3 +1,4 @@
+import { robotsTxt as gatewayRobots } from '@profullstack/x402-gateway/robots';
 import { brand, config, href, Word } from '@tipoff/config';
 
 /**
@@ -31,52 +32,31 @@ const DISALLOW = ['/login', '/signup', '/auth/', '/api/'];
 const ALLOW = ['/api/v1'];
 
 /**
- * Crawlers named explicitly, so their operators can see they are welcome.
+ * Which crawlers pay and which read free is decided in one place, the
+ * gateway package, and robots.txt is generated from the same lists it
+ * enforces with. The training crawlers it names get `Disallow: /` plus the
+ * one page that sells them a pass; the retrieval crawlers get the wildcard
+ * rules, repeated under their own names so that a crawler which obeys only
+ * the group matching its name still stays off the sign-in page.
  *
- * The trap this avoids: a crawler that finds a group matching its own name obeys
- * THAT group and ignores `User-agent: *` entirely. Naming GPTBot and then
- * listing the auth paths only under the wildcard would invite it straight into
- * /login -- which is the exact traffic that made robots.txt necessary here. So
- * every named group gets the same rules, generated rather than repeated.
+ * AwarioBot was 47% of all requests, fetching /login about once a second from
+ * a single address. It was told to stop here, re-read this file, and carried
+ * on -- so app.js refuses it outright. Its group stays because a crawler that
+ * later starts behaving will read it and comply without anyone having to
+ * remember why.
  */
-const NAMED = [
-  'GPTBot',
-  'OAI-SearchBot',
-  'ChatGPT-User',
-  'ClaudeBot',
-  'Claude-User',
-  'PerplexityBot',
-  'Google-Extended',
-  'Applebot-Extended',
-  'CCBot',
-  'Bingbot',
-];
+export {
+  RETRIEVAL_AGENTS as RETRIEVAL,
+  TRAINING_AGENTS as TRAINING,
+} from '@profullstack/x402-gateway/agents';
 
-const group = (agent) =>
-  [
-    `User-agent: ${agent}`,
-    'Allow: /',
-    ...ALLOW.map((p) => `Allow: ${p}`),
-    ...DISALLOW.map((p) => `Disallow: ${p}`),
-  ].join('\n');
-
-/**
- * AwarioBot was 47% of all requests, fetching /login about once a second from a
- * single address. It was told to stop here, re-read this file, and carried on --
- * so app.js refuses it outright. This group stays because a crawler that later
- * starts behaving will read it and comply without anyone having to remember why.
- */
 export const robotsTxt = () =>
-  [
-    'User-agent: AwarioBot',
-    'Disallow: /',
-    '',
-    ...NAMED.map((a) => `${group(a)}\n`),
-    group('*'),
-    '',
-    `Sitemap: ${url('/sitemap.xml')}`,
-    '',
-  ].join('\n');
+  gatewayRobots({
+    siteUrl: config.siteUrl,
+    disallow: DISALLOW,
+    allow: ALLOW,
+    refused: ['AwarioBot'],
+  });
 
 /**
  * llms.txt -- the site in one file, for a model that has one request to spend.

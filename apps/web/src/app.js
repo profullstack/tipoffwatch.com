@@ -1,3 +1,5 @@
+import { createGateway, isTrainingAgent } from '@profullstack/x402-gateway';
+import { x402Gateway } from '@profullstack/x402-gateway/hono';
 import * as auth from '@tipoff/auth';
 import * as invites from '@tipoff/auth/invites';
 import { brand, config, href } from '@tipoff/config';
@@ -141,6 +143,43 @@ app.use('*', async (c, next) => {
   }
   return next();
 });
+
+/*
+ * Crawlers that may come in, for a price.
+ *
+ * Search and retrieval crawlers read the site free, the same as people: they
+ * send readers back. A TRAINING crawler copies pages into a corpus and sends
+ * nobody back, and on the sibling site one of them was more than 95% of all
+ * traffic. robots.txt (lib/well-known.js) asks those to stay out; this is what
+ * happens when they come in anyway: every page answers 402 with an x402 offer,
+ * or the sales page at /crawl, and paying it buys a signed pass for a day.
+ *
+ * After the outright block above -- a crawler refused everywhere is not sold
+ * anything -- and before the session lookup, which a 402 does not need. With
+ * no COINPAY_X402_KEY or CRAWL_PAY_TO the gateway still answers 402, with an
+ * empty offer: nothing is sold, but nothing is given away either.
+ */
+const crawlGateway = createGateway({
+  siteUrl: config.siteUrl,
+  siteName: brand.name,
+  coinpay: { apiKey: config.coinpay.x402Key, baseUrl: config.coinpay.baseUrl },
+  payTo: config.crawl.payTo,
+  priceCents: config.crawl.priceCents,
+  currency: config.crawl.currency,
+  passMinutes: config.crawl.passMinutes,
+  // The maps stay readable: a crawler that reads them may decide the API is
+  // the cheaper way in, which is the point of publishing them.
+  openPaths: ['/llms.txt', '/skill.md'],
+  /*
+   * Lightpanda is a headless browser sold to scrapers, and on 2026-09-02 a
+   * fleet of it fetched 8,500 pages here in a day from 104 countries. It is not
+   * on any robots list because it reads none, and it self-identifies, which is
+   * all the gate needs. A scraper is a crawler that has not paid yet.
+   */
+  isPaidAgent: (ua) => isTrainingAgent(ua) || /lightpanda/i.test(ua),
+  contact: config.contactEmail ? `mailto:${config.contactEmail}` : `${config.siteUrl}/contact`,
+});
+app.use('*', x402Gateway(crawlGateway));
 
 /*
  * Security headers, on everything.
