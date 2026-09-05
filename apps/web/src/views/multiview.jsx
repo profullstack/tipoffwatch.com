@@ -27,10 +27,25 @@ const Tile = ({ tile }) => (
     data-mv-tile-id={tile.id}
     data-play={`/my/channels/${tile.id}/stream.ts`}
   >
-    <div class="mv-screen">
+    {/* The picture is the sound control: a click on it makes this the audible
+        tile, a second click mutes it again. The Sound button below does the
+        same and is what a keyboard reaches. */}
+    <div class="mv-screen" data-mv-screen title="Click for sound">
       <p class="mv-state muted small">Waiting for the player…</p>
     </div>
     <div class="mv-bar">
+      {/* Dragged to rearrange, or focused and moved with the arrow keys. A
+          handle rather than the whole bar, so the buttons beside it stay
+          buttons and a touch on the title does not start a drag. */}
+      <button
+        type="button"
+        class="ghost small-btn mv-grab"
+        data-mv-grab
+        aria-label="Move this tile: drag it, or press the arrow keys"
+        title="Drag to rearrange"
+      >
+        ⋮⋮
+      </button>
       <span class="mv-title" title={tile.title}>
         {tile.title}
         {tile.group ? <span class="league-tag channel-tag">{tile.group}</span> : null}
@@ -98,10 +113,16 @@ export const Multiview = ({
         ) : (
           <>
             <p class="muted small">
-              Up to {maxTiles} channels from your own line on one screen, side by side. Pop it out
-              and the grid stays on top of whatever else you are doing.{' '}
+              Up to {maxTiles} channels from your own line on one screen, side by side. Click a tile
+              to hear it, drag the ⋮⋮ handle to rearrange, ✕ to take one out. Pop it out and the
+              grid stays on top of whatever else you are doing.{' '}
               {permits(allowance, panelConnections)} <a href="/settings#line">Change that</a>.
             </p>
+            {/* Filled by app.js when another Multiview window on this browser
+                answers. Two grids of the same line are the usual way to hit the
+                allowance without meaning to, and the page should say so rather
+                than let a tile in the other window go black. */}
+            <p class="mv-others small is-hidden" data-mv-others role="status" />
             <div class="mv-controls">
               <form class="mv-search" data-mv-search-form action="/search" method="get">
                 <input

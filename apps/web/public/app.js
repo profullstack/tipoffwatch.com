@@ -1507,7 +1507,10 @@ function initPlayerSection(section) {
  *
  * Every tile is its own player from the same bundle the event page uses, muted
  * to start -- four commentaries at once is noise, and a muted <video> is the one
- * kind a browser will autoplay. Sound is solo: one tile audible at a time.
+ * kind a browser will autoplay. Sound is solo: one tile audible at a time, chosen
+ * by clicking the picture (or its Sound button), and lit so it can be told apart.
+ * Tiles are rearranged by dragging the handle on the bar, or with the arrow keys
+ * on it; the address and the remembered set follow the order.
  *
  * "Pop out" moves the grid into a Document Picture-in-Picture window, which is
  * the only always-on-top surface a browser offers, and the only one that can
@@ -1710,6 +1713,89 @@ function initMultiview(root = document) {
   const setSound = (tile, on) => {
     const button = tile.querySelector('[data-mv-sound]');
     if (button) button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    // On the tile too, so the whole frame lights up: with four pictures the
+    // question "which one am I hearing" is answered by looking, not reading.
+    tile.dataset.sound = on ? '1' : '';
+  };
+
+  /** Sound on this tile, and only this tile -- or off again if it already had it. */
+  const toggleSound = (tile) => {
+    const r = running.get(tile);
+    if (!r?.video) return;
+    if (r.video.muted) {
+      solo(tile);
+      // Unmuting is a gesture here, but a browser that still disagrees pauses
+      // rather than throws; keep the picture and go back to muted.
+      if (r.video.paused) {
+        r.video.muted = true;
+        setSound(tile, false);
+        r.video.play().catch(() => {});
+      }
+    } else {
+      r.video.muted = true;
+      setSound(tile, false);
+    }
+  };
+
+  /**
+   * Move a tile by `delta` places in the grid. The <video> travels with it:
+   * moving a node within its document does not restart the media element, which
+   * is the same property the pop-out relies on when it adopts the whole grid.
+   */
+  const moveTile = (tile, delta) => {
+    const all = tiles();
+    const from = all.indexOf(tile);
+    const to = Math.max(0, Math.min(all.length - 1, from + delta));
+    if (from < 0 || to === from) return;
+    const target = all[to];
+    if (to > from) target.after(tile);
+    else target.before(tile);
+    sync();
+  };
+
+  /**
+   * Drag by the handle. Pointer events rather than HTML drag-and-drop, which
+   * touch has never had, and resolved against the tile's OWN document: after a
+   * pop-out the grid lives in the PiP window and `document` is the wrong one.
+   *
+   * A swap happens when the pointer is over another tile; the dragged tile then
+   * occupies that slot and sits under the pointer itself, so nothing flaps.
+   */
+  const wireDrag = (tile, handle) => {
+    let dragging = false;
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragging = true;
+      handle.setPointerCapture(event.pointerId);
+      tile.classList.add('is-dragging');
+      grid.classList.add('is-dragging');
+      event.preventDefault();
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      const doc = tile.ownerDocument;
+      const over = doc.elementFromPoint(event.clientX, event.clientY)?.closest('.mv-tile');
+      if (!over || over === tile || over.parentNode !== tile.parentNode) return;
+      const all = tiles();
+      if (all.indexOf(over) > all.indexOf(tile)) over.after(tile);
+      else over.before(tile);
+    });
+    const done = () => {
+      if (!dragging) return;
+      dragging = false;
+      tile.classList.remove('is-dragging');
+      grid.classList.remove('is-dragging');
+      sync();
+    };
+    handle.addEventListener('pointerup', done);
+    handle.addEventListener('pointercancel', done);
+    handle.addEventListener('keydown', (event) => {
+      const delta = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      moveTile(tile, delta);
+      handle.focus();
+    });
   };
 
   /** One audible tile at a time. */
@@ -1728,23 +1814,15 @@ function initMultiview(root = document) {
       if (running.has(tile)) stopTile(tile);
       else startTile(tile);
     });
-    tile.querySelector('[data-mv-sound]')?.addEventListener('click', () => {
-      const r = running.get(tile);
-      if (!r?.video) return;
-      if (r.video.muted) {
-        solo(tile);
-        // Unmuting is a gesture here, but a browser that still disagrees pauses
-        // rather than throws; keep the picture and go back to muted.
-        if (r.video.paused) {
-          r.video.muted = true;
-          setSound(tile, false);
-          r.video.play().catch(() => {});
-        }
-      } else {
-        r.video.muted = true;
-        setSound(tile, false);
-      }
+    tile.querySelector('[data-mv-sound]')?.addEventListener('click', () => toggleSound(tile));
+    // The picture itself: a click on a playing tile is "let me hear this one",
+    // on a stopped tile it is Play. Nothing else on the page is under it.
+    tile.querySelector('[data-mv-screen]')?.addEventListener('click', () => {
+      if (running.has(tile)) toggleSound(tile);
+      else startTile(tile);
     });
+    const grab = tile.querySelector('[data-mv-grab]');
+    if (grab) wireDrag(tile, grab);
     tile.querySelector('[data-mv-remove]')?.addEventListener('click', () => {
       stopTile(tile);
       tile.remove();
@@ -1922,6 +2000,49 @@ function initMultiview(root = document) {
     stopAll();
   };
   window.addEventListener('pagehide', stopAll);
+
+  /* ---- other Multiview windows on this browser ---- */
+
+  // Two grids of the same line share one allowance, and the second one's third
+  // tile evicts the first one's oldest without a word in either window. The
+  // pages find each other over a BroadcastChannel and say so. Presence only:
+  // nothing is synchronised, because two windows playing one set is precisely
+  // the mistake this exists to name.
+  const others = page.querySelector('[data-mv-others]');
+  if (others && 'BroadcastChannel' in window) {
+    const me = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const seen = new Set();
+    const show = () => {
+      const n = seen.size;
+      others.textContent =
+        n === 0
+          ? ''
+          : n === 1
+            ? `Another Multiview window is open in this browser. Your line's ${allowance} stream${
+                allowance === 1 ? '' : 's'
+              } are shared between them; close the one you are not watching.`
+            : `${n} other Multiview windows are open in this browser. Your line's ${allowance} stream${
+                allowance === 1 ? '' : 's'
+              } are shared between all of them.`;
+      others.classList.toggle('is-hidden', n === 0);
+    };
+    let channel = null;
+    try {
+      channel = new BroadcastChannel('tw.multiview');
+      channel.addEventListener('message', (event) => {
+        const { type, id } = event.data ?? {};
+        if (!id || id === me) return;
+        if (type === 'bye') seen.delete(id);
+        else seen.add(id);
+        if (type === 'hello') channel.postMessage({ type: 'here', id: me });
+        show();
+      });
+      channel.postMessage({ type: 'hello', id: me });
+      window.addEventListener('pagehide', () => channel.postMessage({ type: 'bye', id: me }));
+    } catch {
+      // No channel, no notice. The grid is unaffected.
+    }
+  }
 
   /* ---- go ---- */
 
