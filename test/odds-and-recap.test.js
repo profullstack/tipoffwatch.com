@@ -23,6 +23,16 @@ const nflOdds = [
       home: { close: { odds: '-185' }, open: { odds: '-175' } },
       away: { close: { odds: '154' }, open: { odds: '148' } },
     },
+    // Spreads and totals carry their own open/close, and a total's line is
+    // prefixed with o or u rather than being a bare number.
+    pointSpread: {
+      home: { close: { line: '-3.5' }, open: { line: '-2.5' } },
+      away: { close: { line: '+3.5' }, open: { line: '+2.5' } },
+    },
+    total: {
+      over: { close: { line: 'o44.5' }, open: { line: 'o46.5' } },
+      under: { close: { line: 'u44.5' }, open: { line: 'u46.5' } },
+    },
   },
 ];
 
@@ -107,6 +117,46 @@ describe('oddsFromCompetition', () => {
     // The spread and total survive, so the recap still has a line to show.
     expect(line.details).toBe('USC -37.5');
     expect(line.spread).toBe(-37.5);
+  });
+
+  /*
+   * The opening line, which was being discarded. Measured 2026-09-06, all 16 NFL
+   * games on the board had moved off their opening number, several a long way, so
+   * this is the difference between a line and a story about a line.
+   */
+  test('the opening line is captured alongside the current one', () => {
+    const line = espn.oddsFromCompetition({ odds: nflOdds }, { state: 'pre' });
+    expect(line.opening).toEqual({
+      spread: -2.5,
+      overUnder: 46.5,
+      homeMoneyline: -175,
+      awayMoneyline: 148,
+    });
+    // The current values are still the close, not the open.
+    expect(line.homeMoneyline).toBe(-185);
+    expect(line.spread).toBe(-3.5);
+  });
+
+  /* A total comes back as "o44.5" on the over and "u44.5" on the under. */
+  test('a total is read out of its prefixed label', () => {
+    const withTotal = [
+      {
+        provider: { name: 'DraftKings' },
+        details: 'SEA -3.5',
+        overUnder: 46.5,
+        total: { over: { open: { line: 'o44.5' } }, under: { open: { line: 'u44.5' } } },
+      },
+    ];
+    expect(espn.oddsFromCompetition({ odds: withTotal }).opening.overUnder).toBe(44.5);
+  });
+
+  /*
+   * pickcenter carries one settled number and no history, so a line recovered
+   * after the whistle has no opening. It must not claim the close was the open.
+   */
+  test('a line recovered after the whistle has no opening', () => {
+    const line = espn.oddsFromCompetition({ odds: mlbPickcenter }, { state: 'post' });
+    expect(line.opening).toBeNull();
   });
 
   test('soccer carries a draw price and no favourite', () => {

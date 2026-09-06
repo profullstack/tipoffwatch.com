@@ -376,13 +376,56 @@ const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Numbe
  * pre-game price never reaches that, so the bound costs nothing live.
  */
 const MONEYLINE_LIMIT = 10_000;
-function moneyline(book, which) {
+function moneyline(book, which, when = 'close') {
+  // pickcenter carries one number with no history, so it answers for the close and
+  // has nothing to say about the open.
   const fromPickcenter =
-    which === 'draw' ? book.drawOdds?.moneyLine : book[`${which}TeamOdds`]?.moneyLine;
+    when === 'close'
+      ? which === 'draw'
+        ? book.drawOdds?.moneyLine
+        : book[`${which}TeamOdds`]?.moneyLine
+      : null;
   const slot = book.moneyline?.[which];
-  const value = num(fromPickcenter ?? slot?.close?.odds ?? slot?.open?.odds);
+  const scoreboard = when === 'open' ? slot?.open?.odds : (slot?.close?.odds ?? slot?.open?.odds);
+  const value = num(fromPickcenter ?? scoreboard);
   if (value === null || Math.abs(value) > MONEYLINE_LIMIT) return null;
   return value;
+}
+
+/**
+ * A spread or total as it stood when the market opened, or as it stands now.
+ *
+ * Separate from the moneyline helper because these come back as prefixed strings.
+ * A total reads "o44.5" on the over and "u44.5" on the under, so the number has to
+ * be pulled out of the label rather than parsed straight.
+ */
+function lineAt(book, key, side, when) {
+  const raw = book[key]?.[side]?.[when]?.line;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  return num(String(raw).replace(/^[ou]/i, ''));
+}
+
+/**
+ * Where the market opened, when the provider says.
+ *
+ * This rides on the same response as everything else here and was being discarded.
+ * It is not a nicety: measured 2026-09-06, **all 16** NFL games on the board had
+ * moved off their opening number, and several had moved a long way. Green Bay at
+ * Minnesota opened +105 and sat at -122 with the spread flipped from +1.5 to -1.5;
+ * the Jets at Tennessee went -170 to -135 on a spread that came in from -3 to -1.5.
+ * "It opened here and it is here now" is most of what a line is worth knowing.
+ *
+ * Null on pickcenter, which carries a single settled number and no history, so a
+ * game whose line was recovered after the whistle simply has no opening to show.
+ */
+function openingFrom(book) {
+  const opening = {
+    spread: lineAt(book, 'pointSpread', 'home', 'open'),
+    overUnder: lineAt(book, 'total', 'over', 'open'),
+    homeMoneyline: moneyline(book, 'home', 'open'),
+    awayMoneyline: moneyline(book, 'away', 'open'),
+  };
+  return Object.values(opening).some((v) => v !== null) ? opening : null;
 }
 
 /**
@@ -437,6 +480,9 @@ export function oddsFromCompetition(comp, { state = 'pre', now = new Date() } = 
     awayMoneyline: moneyline(book, 'away'),
     // Soccer prices the draw and nothing else does. Absent rather than zero.
     drawMoneyline: moneyline(book, 'draw'),
+    // Where the market opened, so the page can show which way it has moved. Null
+    // for a line recovered from pickcenter after the whistle, which has no history.
+    opening: openingFrom(book),
     capturedAt: now.toISOString(),
     // What the game's state was when this was captured, so the page can say
     // "closing line" only when it has earned it rather than for any stored line.

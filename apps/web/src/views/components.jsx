@@ -392,29 +392,71 @@ export const OddsPanel = ({ event }) => {
   const winner = (which) =>
     which === 'home' ? (event.home_name ?? 'Home') : (event.away_name ?? 'Away');
 
+  /*
+   * How far the market has moved, per number.
+   *
+   * Only drawn where the open and the current value actually differ, so a line that
+   * has not budged says nothing rather than repeating itself. The arrow is the
+   * direction of travel and nothing more; which direction is "good" depends on
+   * which side you are on, and the page does not take a side.
+   */
+  const moved = (from, to, fmt = (v) => String(v)) => {
+    if (from === null || from === undefined || to === null || to === undefined) return null;
+    if (from === to) return null;
+    return (
+      <span class="odds-move" title={`Opened at ${fmt(from)}`}>
+        {fmt(from)} <span class="arrow">&rarr;</span>
+      </span>
+    );
+  };
+
+  const open = odds.opening ?? {};
+  const mlOpen = { home: open.homeMoneyline, away: open.awayMoneyline, draw: null };
+
   return (
     <section class="odds-panel">
       <h2>{done ? 'Closing line' : 'The line'}</h2>
       <ul class="stat odds-stat">
         {odds.details ? (
           <li>
-            <strong>{odds.details}</strong>
+            <strong>
+              {/* Signed, always. A spread that opened at +1.5 and sits at -1.5 has
+                  crossed from one side to the other, and printing the opening as a
+                  bare "1.5" hides exactly the movement worth showing. */}
+              {moved(open.spread, odds.spread, american)}
+              {odds.details}
+            </strong>
             <span>{odds.spread != null ? 'Spread' : 'Price'}</span>
           </li>
         ) : null}
         {odds.overUnder != null ? (
           <li>
-            <strong class="num">{odds.overUnder}</strong>
+            <strong class="num">
+              {moved(open.overUnder, odds.overUnder)}
+              {odds.overUnder}
+            </strong>
             <span>Total{settled?.points != null ? ` · finished ${settled.points}` : ''}</span>
           </li>
         ) : null}
         {ml.map((m) => (
           <li>
-            <strong class="num">{american(m.price)}</strong>
+            <strong class="num">
+              {moved(mlOpen[m.side], m.price, american)}
+              {american(m.price)}
+            </strong>
             <span>{m.label}</span>
           </li>
         ))}
       </ul>
+
+      {/* Said once, in words, under the numbers that carry the arrows. Without it
+          an arrow is just decoration and a reader has to guess which of the two
+          numbers is the current one. */}
+      {odds.opening ? (
+        <p class="muted small odds-opened">
+          Struck-through figures are where {odds.provider ?? 'the book'} opened this market.
+        </p>
+      ) : null}
 
       {settled ? (
         <p class="odds-settled">
