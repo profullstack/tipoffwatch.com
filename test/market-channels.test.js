@@ -169,7 +169,7 @@ describe('pairing a market with a line', () => {
 
 describe('reaching one channel by its id', () => {
   let db;
-  let ids = {};
+  const ids = {};
 
   beforeAll(async () => {
     db = await new PGlite({ extensions: { citext, pg_trgm } });

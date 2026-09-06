@@ -15,6 +15,7 @@
     "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
+    "@tipoff/live": "workspace:*",
     "@tipoff/notify": "workspace:*",
     "@tipoff/payments": "workspace:*",
     "@tipoff/playlists": "workspace:*",

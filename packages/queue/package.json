@@ -10,6 +10,7 @@
   "dependencies": {
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
+    "@tipoff/live": "workspace:*",
     "@tipoff/notify": "workspace:*",
     "@tipoff/playlists": "workspace:*",
     "@tipoff/sports": "workspace:*",

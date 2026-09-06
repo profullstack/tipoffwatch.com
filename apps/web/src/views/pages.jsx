@@ -10,6 +10,7 @@ import {
   TeamRow,
 } from './components.jsx';
 import { Layout } from './Layout.jsx';
+import { LiveUpsell } from './live.jsx';
 import { RadioSettings, RadioTeamSection } from './radio.jsx';
 
 /*
@@ -114,7 +115,7 @@ const PlayButton = ({ channelId }) => (
  * The status span ships empty. Everything it ever says is a fact the page did not
  * have when it was rendered.
  */
-export const ChannelRow = ({ ch }) => {
+export const ChannelRow = ({ ch, managed = false }) => {
   /*
    * Addressed by ROW ID, not by a position in a ranked list.
    *
@@ -150,17 +151,25 @@ export const ChannelRow = ({ ch }) => {
       <span class="own-channel-state" />
       <span class="own-channel-actions">
         {mine ? <PlayButton channelId={mine} /> : null}
-        <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
-          VLC
-        </a>
-        <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
-          Infuse
-        </a>
-        {mine ? (
-          <a class="ghost small-btn" href={`/my/channels/${mine}/playlist.m3u`}>
-            .m3u
-          </a>
-        ) : null}
+        {/* A managed list is OUR line, bought with a pass. It plays here and
+            nowhere else: every one of these three hands over the stream address,
+            which on a managed list is our reseller credential. Same shape as
+            SharedChannelRow, for the same reason. */}
+        {managed ? null : (
+          <>
+            <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+              VLC
+            </a>
+            <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
+              Infuse
+            </a>
+            {mine ? (
+              <a class="ghost small-btn" href={`/my/channels/${mine}/playlist.m3u`}>
+                .m3u
+              </a>
+            ) : null}
+          </>
+        )}
         {/* Add this channel to the multiview grid. A plain link to a grid of one
             without JavaScript; app.js rewrites it to carry whatever tiles the
             reader already has, and remembers this one on the click. A new window,
@@ -1049,7 +1058,7 @@ export const TeamPage = ({
           </p>
           <ul class="own-channels">
             {[...ownChannels.matches, ...(ownChannels.competition ?? [])].map((ch) => (
-              <ChannelRow ch={ch} />
+              <ChannelRow ch={ch} managed={Boolean(ownChannels?.managed)} />
             ))}
           </ul>
         </section>
@@ -1376,6 +1385,9 @@ export const EventPage = ({
   followingAway,
   followingLeague,
   ownChannels = { hasList: false, channelCount: 0, matches: [] },
+  // The live TV pass for sale -- plans and connection count -- or null when
+  // passes are off or the reader already has a list. Null draws no card.
+  liveOffer = null,
   // The broadcaster listings paired with the reader's own entries, or null when
   // they have no list or nothing in it matched. Null is what makes the section
   // render exactly as it always did.
@@ -1804,7 +1816,7 @@ export const EventPage = ({
               </p>
               <ul class="own-channels">
                 {ownChannels.matches.map((ch) => (
-                  <ChannelRow ch={ch} />
+                  <ChannelRow ch={ch} managed={Boolean(ownChannels?.managed)} />
                 ))}
               </ul>
             </>
@@ -1826,7 +1838,7 @@ export const EventPage = ({
               </p>
               <ul class="own-channels">
                 {ownChannels.competition.map((ch) => (
-                  <ChannelRow ch={ch} />
+                  <ChannelRow ch={ch} managed={Boolean(ownChannels?.managed)} />
                 ))}
               </ul>
             </>
@@ -1910,6 +1922,17 @@ export const EventPage = ({
 
       <section class="stream">
         <h2>Watch</h2>
+        {/* The upsell, for a reader with no list of their own: a pass puts channels
+            on this page. Above the offers and the "nobody is sharing" line, because
+            it is the one thing here that works for every game. */}
+        {liveOffer && !ownChannels?.hasList ? (
+          <LiveUpsell
+            plans={liveOffer.plans}
+            connections={liveOffer.connections}
+            eventId={event.id}
+            signedIn={Boolean(user)}
+          />
+        ) : null}
         {entitlement ? (
           <p class="ok">
             You have access to this game.{' '}
@@ -2220,6 +2243,9 @@ export const Settings = ({
   member = false,
   shareCandidates = [],
   radio = null,
+  // The live TV pass behind a managed list, or null. Only read when the list is
+  // ours; a list of their own has no pass to report on.
+  livePass = null,
 }) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
@@ -2312,6 +2338,23 @@ export const Settings = ({
           </div>
           {playlist.last_error ? <p class="feedback error">{playlist.last_error}</p> : null}
 
+          {/* Our line, bought with a pass. No address to show -- it is ours, not
+              theirs -- and the pass, not the list, is what to manage. */}
+          {playlist.managed ? (
+            <p class="muted small">
+              This is your <a href="/live">Live TV pass</a>
+              {livePass ? (
+                <>
+                  , good until <LocalTime at={livePass.expires_at} />
+                </>
+              ) : (
+                ', which has ended'
+              )}
+              . It plays here and in Multiview, to your own session only. To go back to a list of
+              your own, add its address below; yours is kept and comes back when the pass ends.
+            </p>
+          ) : null}
+
           {/*
             The address, which used to be shown nowhere at all.
 
@@ -2326,7 +2369,7 @@ export const Settings = ({
             the layout around it. With JS off the Show button never appears and
             the masked value stands.
           */}
-          {playlistUnreadable ? (
+          {playlist.managed ? null : playlistUnreadable ? (
             <p class="feedback error">
               This address can no longer be decrypted, so it cannot be refreshed or shown. Paste it
               again below to fix it.
@@ -2456,7 +2499,7 @@ export const Settings = ({
         offerable at all. Shared channels play through the proxy only; VLC, Infuse
         and .m3u stay owner-only, because each of those is the credential itself.
       */}
-      {playlist ? (
+      {playlist?.managed ? null : playlist ? (
         <div class="card" id="sharing">
           <div class="card-head">
             <h3 class="card-title">Who can see your list</h3>
@@ -2591,7 +2634,13 @@ export const Settings = ({
         instead, which asks for it deliberately.
       */}
       <form method="post" action="/api/playlist" data-playlist-form>
-        <h3 class="card-title">{playlist ? 'Edit your list' : 'Add a list'}</h3>
+        <h3 class="card-title">
+          {playlist?.managed
+            ? 'Use a list of your own instead'
+            : playlist
+              ? 'Edit your list'
+              : 'Add a list'}
+        </h3>
         <label class="field">
           <span>Playlist URL</span>
           <input

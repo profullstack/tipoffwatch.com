@@ -1,0 +1,16 @@
+{
+  "name": "@tipoff/live",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./provider": "./src/provider.js"
+  },
+  "dependencies": {
+    "@tipoff/auth": "workspace:*",
+    "@tipoff/config": "workspace:*",
+    "@tipoff/db": "workspace:*",
+    "@tipoff/playlists": "workspace:*"
+  }
+}
