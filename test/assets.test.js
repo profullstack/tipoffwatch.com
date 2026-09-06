@@ -18,6 +18,19 @@ const ROUTE_SERVED = new Map([
   ['/favicon.ico', 'icons/favicon.ico'], // root alias for the generated icon
 ]);
 
+/*
+ * Routes served out of a package rather than out of public/.
+ *
+ * Exempting these would defeat the test: the bug it guards is a path that
+ * resolves to nothing. So they are checked the same way, through the module
+ * resolver -- if the dependency is dropped or its exports map stops naming the
+ * file, this fails exactly as a deleted icon does.
+ */
+const PACKAGE_SERVED = new Map([
+  ['/vendor-multiview.js', '@profullstack/multiview'],
+  ['/vendor-multiview.css', '@profullstack/multiview/multiview.css'],
+]);
+
 async function referencedPaths() {
   const found = new Set();
   for (const file of SOURCES) {
@@ -45,6 +58,13 @@ describe('static asset references', () => {
     expect(referenced.size).toBeGreaterThan(10);
 
     const missing = [...referenced].filter((p) => {
+      if (PACKAGE_SERVED.has(p)) {
+        try {
+          return !existsSync(Bun.fileURLToPath(import.meta.resolve(PACKAGE_SERVED.get(p))));
+        } catch {
+          return true;
+        }
+      }
       if (ROUTE_SERVED.has(p)) {
         const backing = ROUTE_SERVED.get(p);
         return backing !== null && !existsSync(PUBLIC + backing);

@@ -1,6 +1,6 @@
 {
   "name": "tipoffwatch.com",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Sports calendar and reminder PWA. Follow any team in the world, get told before they play.",
@@ -25,5 +25,8 @@
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
     "@electric-sql/pglite": "^0.5.5"
+  },
+  "dependencies": {
+    "@profullstack/multiview": "^0.1.0"
   }
 }

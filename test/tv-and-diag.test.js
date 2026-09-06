@@ -180,51 +180,15 @@ describe('the report endpoint', () => {
 });
 
 describe('multiview on a remote', () => {
-  const src = read('../apps/web/public/app.js');
-  const fn = src.slice(src.indexOf('function initMultiview('));
-  const body = fn.slice(0, fn.indexOf('\n}\n'));
-
-  test('detects a remote by the absence of a pointer, never by user agent', () => {
-    expect(body).toContain("window.matchMedia('(pointer: none)').matches");
-    expect(body).toContain("!window.matchMedia('(pointer: fine)').matches");
-    // A user agent test is a guess that ages; a phone must keep its drag.
-    expect(body).not.toContain('userAgent');
-  });
-
-  test('every tile is focusable and answers OK', () => {
-    expect(body).toContain('tile.tabIndex = 0;');
-    expect(body).toContain("if (event.key === 'Enter' || event.key === ' ')");
-    // Same meaning as a click on the picture: sound when playing, Play when not.
-    const keyHandler = body.slice(body.indexOf("tile.addEventListener('keydown'"));
-    expect(keyHandler.slice(0, 400)).toContain('if (running.has(tile)) toggleSound(tile);');
-  });
-
-  test('the arrows move between tiles, two at a time across a 2x2 grid', () => {
-    expect(body).toContain('ArrowLeft: -1, ArrowRight: 1, ArrowUp: -2, ArrowDown: 2');
-    expect(body).toContain('const cols = grid.clientWidth > 640 ? 2 : 1;');
-    // A press that would leave the grid does nothing rather than wrapping.
-    expect(body).toContain('if (to < 0 || to >= all.length) return;');
-  });
-
-  test('pop out is removed where it cannot work', () => {
-    expect(body).toContain(
-      "if (popout && (remoteOnly || !('documentPictureInPicture' in window))) {",
-    );
-    expect(body).toContain('popout.remove();');
-  });
-
-  test('a remote lands on a tile rather than on the nav', () => {
-    expect(body).toContain('if (remoteOnly) tiles()[0]?.focus();');
-  });
-
-  test('the page is marked so the stylesheet can answer', () => {
-    expect(body).toContain("page.dataset.remote = '1'");
-    const css = read('../apps/web/public/styles.css');
-    expect(css).toContain('[data-remote] .mv-grab');
-    // Focus and sound must stay distinguishable: on a TV they are rarely the
-    // same tile, and one outline for both says nothing.
-    expect(css).toContain('[data-remote] .mv-tile[data-sound="1"]');
-    expect(css).toContain('.mv-tile:focus-visible');
+  /*
+   * The D-pad behaviour lives in @profullstack/multiview now and is tested
+   * there. What this file still owns is the page: the copy that tells a reader
+   * with a remote what the remote does.
+   */
+  test('is the package’s job, and the package is wired in', () => {
+    const src = read('../apps/web/public/app.js');
+    expect(src).toContain("import('/vendor-multiview.js')");
+    expect(src).not.toContain("matchMedia('(pointer: none)')");
   });
 });
 

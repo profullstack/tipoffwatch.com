@@ -190,128 +190,105 @@ describe('the route', () => {
   });
 });
 
-describe('app.js', () => {
+describe('app.js, which now only wires the package', () => {
   const src = read('../apps/web/public/app.js');
-  const fn = src.slice(src.indexOf('function initMultiview('));
-  const body = fn.slice(0, fn.indexOf('\n}\n'));
+
+  /*
+   * The grid itself moved to @profullstack/multiview, where its behaviour is
+   * tested against a stub browser. What is worth pinning HERE is the contract
+   * between the site and the package -- the three things that would silently
+   * break the page if they drifted, and which the package cannot check for
+   * itself because they are the host's to supply.
+   */
+
+  test('loads the package rather than carrying its own copy', () => {
+    expect(src).toContain("import('/vendor-multiview.js')");
+    // The six hundred lines really are gone, not merely unused.
+    expect(src).not.toContain('function initMultiview(');
+    expect(src).not.toContain('data-mv-popout');
+    expect(src).not.toContain('documentPictureInPicture');
+  });
+
+  test('names the storage key and the player global, which are the host’s', () => {
+    expect(src).toContain("storageKey: 'tw.multiview'");
+    // The SAME global the single-stream player uses, so a page carrying both
+    // fetches the quarter-megabyte demuxer once rather than twice.
+    expect(src).toContain("playerGlobal: '__tipoffPlayer'");
+    expect(src).toContain('window.__tipoffPlayer');
+  });
+
+  test('fetches it only on a page that needs it', () => {
+    const fn = src.slice(src.indexOf('function initMultiviewFeature('));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    expect(body).toContain("root.querySelector('[data-multiview]')");
+    expect(body).toContain("root.querySelector('a[data-multiview-add]')");
+    expect(body).toContain('if (!needed) return;');
+    // A grid that fails to load leaves the page a reader without JavaScript
+    // has always had, so the failure is swallowed rather than announced.
+    expect(body).toContain('.catch(');
+  });
 
   test('runs at boot and after a client-side navigation', () => {
-    expect(src.split('initMultiview();').length - 1).toBe(2);
-    expect(src.split('initMultiviewAdd();').length - 1).toBe(2);
+    expect(src.split('initMultiviewFeature();').length - 1).toBe(2);
   });
 
-  test('never starts a tile past the line’s allowance', () => {
-    expect(body).toContain('if (running.size < allowance) return true;');
-    // Reserved BEFORE the bundle is awaited, or four tiles starting together all
-    // pass the count and all open.
-    expect(body.indexOf('running.set(tile, { stop: null, video: null })')).toBeLessThan(
-      body.indexOf('await loadPlayerBundle(src)'),
+  test('the promise is cached, so one navigation does not fetch it twice', () => {
+    expect(src).toContain('if (!multiviewModule) {');
+  });
+
+  test('the stylesheet comes from the package too', () => {
+    expect(read('../apps/web/src/views/multiview.jsx')).toContain(
+      '<link rel="stylesheet" href="/vendor-multiview.css" />',
     );
+    // And the site's own stylesheet no longer carries a copy to drift.
+    expect(read('../apps/web/public/styles.css')).not.toContain('.mv-tile {');
   });
 
-  test('tiles start muted, and sound is solo', () => {
-    expect(body).toContain('video.muted = true;');
-    expect(body).toContain('r.video.muted = t !== tile;');
-  });
-
-  test('pops out through Document Picture-in-Picture, by moving the grid', () => {
-    expect(body).toContain('window.documentPictureInPicture.requestWindow(');
-    expect(body).toContain('pip.document.body.append(grid)');
-    // Stylesheets go by link, never inline: the window inherits the page's CSP.
-    expect(body).toContain('link[rel="stylesheet"]');
-    expect(body).not.toContain("createElement('style')");
-    // And the grid comes home when the window closes.
-    expect(body).toContain("pip.addEventListener('pagehide'");
-    expect(body).toContain('stage.prepend(grid)');
-  });
-
-  test('falls back to a plain window, stopping this page’s streams first', () => {
-    const fallback = body.slice(body.indexOf("window.open(location.href, 'tw-multiview'"));
-    const before = body.slice(0, body.indexOf("window.open(location.href, 'tw-multiview'"));
-    expect(fallback).toContain('popup');
-    expect(before.trimEnd().endsWith('for (const t of tiles()) stopTile(t);')).toBe(true);
-  });
-
-  test('leaving drops every provider connection', () => {
-    expect(body).toContain("window.addEventListener('pagehide', stopAll)");
-    expect(body).toContain('window.__tipoffStopPlayer = () => {');
-  });
-
-  test('the event-page link carries the remembered tiles and remembers this one', () => {
-    const add = src.slice(src.indexOf('function initMultiviewAdd('));
-    const a = add.slice(0, add.indexOf('\n}\n'));
-    expect(a).toContain("link.href = `/multiview?c=${withThis().join(',')}`");
-    expect(a).toContain("link.addEventListener('click'");
-    expect(a).toContain('saveMultiviewSet(withThis())');
-  });
-
-  test('a click on the picture is the sound control, and Play on a stopped tile', () => {
-    const click = body.slice(body.indexOf("tile.querySelector('[data-mv-screen]')"));
-    const handler = click.slice(0, click.indexOf('});'));
-    expect(handler).toContain('if (running.has(tile)) toggleSound(tile);');
-    expect(handler).toContain('else startTile(tile);');
-    // The lit frame follows the sound, on the tile and not just the button.
-    expect(body).toContain("tile.dataset.sound = on ? '1' : '';");
-  });
-
-  test('tiles are rearranged by pointer drag, against the tile’s own document', () => {
-    expect(body).toContain("handle.addEventListener('pointerdown'");
-    expect(body).toContain('handle.setPointerCapture(event.pointerId)');
-    // After a pop-out the grid is in the PiP window; `document` would be the
-    // page underneath it.
-    expect(body).toContain('tile.ownerDocument');
-    expect(body).toContain(
-      "doc.elementFromPoint(event.clientX, event.clientY)?.closest('.mv-tile')",
+  test('both package files are served, resolved through node_modules', () => {
+    const app = read('../apps/web/src/app.js');
+    expect(app).toContain("['/vendor-multiview.js', '@profullstack/multiview', 'text/javascript']");
+    expect(app).toContain(
+      "['/vendor-multiview.css', '@profullstack/multiview/multiview.css', 'text/css']",
     );
-    // A finished drag is a new order, so the address and remembered set follow.
-    const done = body.slice(body.indexOf('const done = () => {'));
-    expect(done.slice(0, done.indexOf('};'))).toContain('sync();');
+    // Resolved at boot: a missing dependency should stop the container, not
+    // 404 a file the page cannot work without.
+    expect(app).toContain('import.meta.resolve(spec)');
   });
 
-  test('and by the arrow keys on the handle', () => {
-    expect(body).toContain(
-      'const delta = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];',
-    );
-    expect(body).toContain('moveTile(tile, delta);');
-    const move = body.slice(body.indexOf('const moveTile = (tile, delta) => {'));
-    expect(move.slice(0, move.indexOf('};'))).toContain('sync();');
-  });
-
-  test('names another Multiview window on this browser, without synchronising with it', () => {
-    expect(body).toContain("new BroadcastChannel('tw.multiview')");
-    expect(body).toContain("channel.postMessage({ type: 'hello', id: me })");
-    expect(body).toContain("channel.postMessage({ type: 'here', id: me })");
-    expect(body).toContain("channel.postMessage({ type: 'bye', id: me })");
-    expect(body).toContain('Another Multiview window is open in this browser.');
-    // Presence only: no tile ids ever cross the channel.
-    const presence = body.slice(body.indexOf("'BroadcastChannel' in window"));
-    expect(presence.slice(0, presence.indexOf('/* ---- go ---- */'))).not.toContain('ids()');
+  test('the package is a real dependency, so the lockfile pins the bytes', () => {
+    const pkg = JSON.parse(read('../package.json'));
+    const web = JSON.parse(read('../apps/web/package.json'));
+    const deps = { ...pkg.dependencies, ...web.dependencies };
+    expect(deps['@profullstack/multiview']).toBeTruthy();
   });
 });
 
-describe('the tile', () => {
-  const user = { id: 'u1', email: 'a@example.test', handle: 'a' };
-  const tiles = [{ id: 11, title: 'ESPN', group: null, kind: 'live' }];
+describe('the “Where to watch” rows', () => {
+  /*
+   * These rows are hand-rolled rather than ChannelRow, because they pair a
+   * broadcaster listing with the reader's own entry -- and that copy drifted
+   * from the component it was copied from. Twice: it never gained the Multiview
+   * button, and it never gained the managed-list rule, so a pass holder was
+   * being offered VLC and .m3u links carrying our reseller credential.
+   */
+  const src = read('../apps/web/src/views/pages.jsx');
+  const fn = src.slice(src.indexOf('const BroadcastMarkets = ('));
+  const body = fn.slice(0, fn.indexOf('\n};\n'));
 
-  test('has a drag handle and a clickable picture, both marked for app.js', async () => {
-    const html = await render(
-      Multiview({ user, hasList: true, tiles, allowance: 2, panelConnections: 2, live: [] }),
-    );
-    expect(html).toContain('data-mv-grab');
-    expect(html).toContain('aria-label="Move this tile: drag it, or press the arrow keys"');
-    expect(html).toContain('data-mv-screen');
-    expect(html).toContain('title="Click for sound"');
-    // The slot the other-window notice is written into, hidden by class and not
-    // by the attribute (a styled element ignores `hidden`).
-    expect(html).toContain('data-mv-others');
-    expect(html).toContain('class="mv-others small is-hidden"');
+  test('offer Multiview, like every other playable row', () => {
+    expect(body).toContain('data-multiview-add={ch.id}');
+    expect(body).toContain('href={`/multiview?c=${ch.id}`}');
   });
 
-  test('says how the grid is worked', async () => {
-    const html = await render(
-      Multiview({ user, hasList: true, tiles, allowance: 2, panelConnections: 2, live: [] }),
-    );
-    expect(html).toContain('Click a');
-    expect(html).toContain('tile to hear it, drag the ⋮⋮ handle to rearrange, ✕ to take one out.');
+  test('withhold the credential-bearing links on a managed list', () => {
+    expect(body).toContain('{managed ? null : (');
+    expect(body).toContain('playerLinks(ch.url).vlc');
+    expect(body).toContain('/playlist.m3u`}');
+    // The flag has to actually reach the section.
+    expect(src).toContain('managed={Boolean(ownChannels?.managed)}');
+  });
+
+  test('still play through the proxy, which needs no credential', () => {
+    expect(body).toContain('data-play={`/my/channels/${ch.id}/stream.ts`}');
   });
 });
