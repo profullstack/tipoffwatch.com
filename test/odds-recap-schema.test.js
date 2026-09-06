@@ -184,6 +184,10 @@ describe('results browsing', () => {
       ['football/nfls/2', 25, 'post'],
       ['football/nfls/3', 24 * 30, 'post'],
       ['football/nfls/4', 1, 'in'],
+      // Finished, and yet kicks off in eleven days. The provider really does emit
+      // these, usually a postponement it has closed out, and newest-first puts them
+      // above every real result.
+      ['football/nfls/5', -24 * 11, 'post'],
     ]) {
       await db.query(
         `insert into events (provider, provider_key, league_id, starts_at, name, state)
@@ -200,6 +204,7 @@ describe('results browsing', () => {
          join leagues l on l.id = e.league_id and l.superseded_by is null
          where e.state = 'post'
            and e.starts_at > now() - ($1 * interval '1 day')
+           and e.starts_at <= now()
            and e.league_id = $2
          order by e.starts_at desc`,
         [days, league.id],
@@ -216,6 +221,18 @@ describe('results browsing', () => {
    */
   test('the window is what keeps a results page from becoming an archive', async () => {
     expect(await results(365)).toHaveLength(3);
+  });
+
+  /*
+   * The bound that was missing when this first shipped. A fixture cannot have
+   * finished before it started, but the provider marks some future-dated rows as
+   * finished anyway -- and with only a lower bound they sort to the top of a
+   * newest-first list and stay there. Five were above every real result on the
+   * live page, dated up to eleven days out.
+   */
+  test('a finished game dated in the future is not a recent result', async () => {
+    expect(await results(7)).not.toContain('football/nfls/5');
+    expect(await results(365)).not.toContain('football/nfls/5');
   });
 });
 
@@ -302,5 +319,14 @@ describe('the queries still say what these tests assert', () => {
     const body = src.slice(from, src.indexOf('export async function', from + 1));
     expect(body).not.toMatch(/^\s*select e\.\*/m);
     expect(body).toContain('select e.id, e.starts_at');
+
+    /*
+     * The upper bound, asserted inside this function rather than against the whole
+     * file. A file-wide toContain passes vacuously: startingSoon already carries
+     * "e.starts_at <= now() + (? * interval '1 hour')", which contains the shorter
+     * string, so the guard matched whether or not recentResults had the bound at
+     * all. Checked by deleting the fix and watching the test still pass.
+     */
+    expect(body).toMatch(/and e\.starts_at <= now\(\)\s*$/m);
   });
 });
