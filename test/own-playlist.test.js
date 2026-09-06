@@ -210,15 +210,39 @@ describe('one account cannot reach another', () => {
     expect(rows).toEqual([]);
   });
 
-  test('one list per account: adding again replaces rather than accumulates', async () => {
+  /*
+   * The rule this replaces, and why it changed.
+   *
+   * 0015 allowed one list per account and enforced it with a UNIQUE on user_id, so
+   * adding a second address REPLACED the first. That protected against a row
+   * quietly accumulating credentials, and it also meant a reader with two
+   * subscriptions could only ever tell us about one -- and destroyed the other by
+   * trying. 0035 drops the constraint and moves the concern to a cap in the
+   * handler, where changing it does not need a migration.
+   *
+   * The old upsert cannot even be expressed now: `on conflict (user_id)` fails
+   * outright with 42P10, there being no constraint to match.
+   */
+  test('several lines per account: adding accumulates rather than replaces', async () => {
     await db.query(
-      `insert into user_playlists (user_id, label, source_url) values ($1, 'second', 'sealed-b')
-       on conflict (user_id) do update set label = excluded.label, source_url = excluded.source_url`,
+      `insert into user_playlists (user_id, label, source_url, position)
+       values ($1, 'second', 'sealed-b', 1)`,
       [alice],
     );
-    const { rows } = await db.query(`select label from user_playlists where user_id = $1`, [alice]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].label).toBe('second');
+    const { rows } = await db.query(
+      `select label from user_playlists where user_id = $1 order by position, id`,
+      [alice],
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.label)).toContain('second');
+  });
+
+  test('the one-list constraint really is gone', async () => {
+    const { rows } = await db.query(
+      `select conname from pg_constraint
+        where conrelid = 'user_playlists'::regclass and contype = 'u'`,
+    );
+    expect(rows.map((r) => r.conname)).not.toContain('user_playlists_user_id_key');
   });
 
   test('deleting the account takes the credentials with it', async () => {

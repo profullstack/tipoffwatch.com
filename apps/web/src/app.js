@@ -1147,34 +1147,66 @@ function playlistNoticeFor(result) {
  * hash goes with it, so an unchanged provider file leaves all 7,000 channel rows
  * (and their probe verdicts) alone instead of deleting and reinserting them.
  */
+/**
+ * How many provider lines one account may hold.
+ *
+ * 0015 allowed exactly one and said why: every list is a stored credential, and an
+ * account quietly accumulating them is a liability rather than a feature. Dropping
+ * that constraint does not make the concern wrong, it makes it a product decision
+ * -- so the limit moved here, where changing it does not need a migration. Five is
+ * more subscriptions than anybody watching sport actually has, and low enough that
+ * a compromised session cannot turn the row into a credential dump.
+ */
+const MAX_PLAYLISTS = 5;
+
 app.post('/api/playlist', async (c) => {
   const user = requireUser(c);
   const body = await c.req.parseBody();
   const url = String(body.url ?? '').trim();
   const label = String(body.label ?? '').trim();
+  // Which of the reader's lines this is about. Absent means "a new one", which is
+  // what the add form posts.
+  const playlistId = Number(body.playlist_id) || null;
 
   try {
-    const existing = await q.getPlaylist(user.id);
+    const target = playlistId ? await q.getPlaylistFor({ userId: user.id, playlistId }) : null;
+    if (playlistId && !target) throw new Error('That list is not one of yours.');
 
     if (!url) {
+      const existing = target ?? (await q.getPlaylist(user.id));
       if (!existing) throw new Error('Add the address of your playlist.');
-      const row = await q.renamePlaylist({ userId: user.id, label: label || existing.label });
+      const row = await q.renamePlaylist({
+        userId: user.id,
+        playlistId: existing.id,
+        label: label || existing.label,
+      });
       return respond(c, {
         json: { renamed: true, label: row?.label ?? null },
         redirectTo: playlistNoticeFor({ renamed: true }),
       });
     }
 
-    const same = existing ? auth.open(existing.source_url) === url : false;
+    // The cap applies to ADDING, never to editing one that already exists --
+    // otherwise a reader at the limit could not fix a typo in an address.
+    if (!playlistId && (await q.playlistCount(user.id)) >= MAX_PLAYLISTS) {
+      throw new Error(
+        `That is ${MAX_PLAYLISTS} lists, which is as many as we hold. Remove one first.`,
+      );
+    }
+
+    const same = target ? auth.open(target.source_url) === url : false;
     const result = await importPlaylist({
       userId: user.id,
+      playlistId,
       url,
       label,
-      knownHash: same ? (existing.content_hash ?? null) : null,
+      knownHash: same ? (target.content_hash ?? null) : null,
     });
-    // An address of their own makes the list theirs again. Their pass keeps
+    // An address of their own makes that list theirs again. Their pass keeps
     // running and /live offers to switch back; nothing here provisions.
-    if (existing?.managed) await q.setPlaylistManaged({ userId: user.id, managed: false });
+    if (target?.managed) {
+      await q.setPlaylistManaged({ userId: user.id, playlistId: target.id, managed: false });
+    }
     return respond(c, { json: result, redirectTo: playlistNoticeFor(result) });
   } catch (err) {
     return respond(c, {
@@ -1510,30 +1542,38 @@ app.get('/shared/:channelId/check', async (c) => {
 
 app.post('/api/playlist/delete', async (c) => {
   const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const playlistId = Number(body.playlist_id) || null;
+
   /*
-   * Removing a managed list gives back the list it replaced, if there was one.
-   * Deleting the row outright would take the parked address with it, and that
-   * address is the one thing the reader cannot re-type from memory.
+   * One list, named by the reader.
+   *
+   * The restore dance that used to live here is gone with the stash. Removing a
+   * managed list no longer has to give anything back, because taking the pass
+   * never took anything away: our line was added beside their own lists and
+   * removing it leaves them exactly as they were.
+   *
+   * The id is required rather than optional. `deletePlaylist(userId)` with no id
+   * still means "every list this reader has", which is right for closing an
+   * account and catastrophic as the fallback for a button labelled Remove.
    */
-  const existing = await q.getPlaylist(user.id);
-  const stashed =
-    existing?.managed && existing.stashed_source_url
-      ? auth.open(existing.stashed_source_url)
-      : null;
-  if (stashed) {
-    await q.setPlaylistManaged({ userId: user.id, managed: false });
-    try {
-      await importPlaylist({ userId: user.id, url: stashed, label: existing.stashed_label ?? '' });
-    } catch (err) {
-      return respond(c, {
-        json: { error: err.message },
-        status: 400,
-        redirectTo: `/settings?playlist_error=${encodeURIComponent(err.message)}`,
-      });
-    }
-    return respond(c, { json: { restored: true }, redirectTo: '/settings?playlist=restored' });
+  if (!playlistId) {
+    return respond(c, {
+      json: { error: 'Say which list to remove.' },
+      status: 400,
+      redirectTo: '/settings?playlist_error=Say%20which%20list%20to%20remove.',
+    });
   }
-  await q.deletePlaylist(user.id);
+  const target = await q.getPlaylistFor({ userId: user.id, playlistId });
+  if (!target) {
+    return respond(c, {
+      json: { error: 'That list is not one of yours.' },
+      status: 400,
+      redirectTo: '/settings?playlist_error=That%20list%20is%20not%20one%20of%20yours.',
+    });
+  }
+
+  await q.deletePlaylist(user.id, playlistId);
   return respond(c, { json: { deleted: true }, redirectTo: '/settings' });
 });
 
@@ -2546,10 +2586,14 @@ app.post('/api/timezone', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = requireUser(c);
-  const [prefs, passkeys, playlist, member, shareCandidates] = await Promise.all([
+  const [prefs, passkeys, playlist, playlists, member, shareCandidates] = await Promise.all([
     q.getPrefs(user.id),
     q.listPasskeys(user.id),
     q.getPlaylist(user.id),
+    // All of them, for the "other lines" card. getPlaylist still answers for the
+    // main card, which is the first row and carries the address and the sharing
+    // controls; this is the same ordering, read whole.
+    q.getPlaylists(user.id),
     isMember(user),
     // Fetched unconditionally rather than only for a member: the picker has to be
     // populated the instant somebody joins, and a second round trip after the
@@ -2604,6 +2648,7 @@ app.get('/settings', async (c) => {
         }
         passkeys={passkeys}
         playlist={playlist}
+        playlists={playlists}
         livePass={livePass}
         lineAllowance={playlist ? lineAllowance(playlist, config.playlists.proxy.maxPerUser) : 1}
         lineCeiling={config.playlists.proxy.maxPerUser}
