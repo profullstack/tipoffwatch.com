@@ -2792,3 +2792,23 @@ ul.group-grid .meta {
   margin: 0.4rem 0 0;
   font-size: 0.9rem;
 }
+
+/* Where the market opened, shown before the number it moved to. Struck through
+   and quiet, because the current number is the one being quoted and the opening
+   one is context. */
+.odds-move {
+  font-size: 0.75em;
+  font-weight: 400;
+  color: var(--muted);
+  margin-right: 0.35rem;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.odds-move .arrow {
+  text-decoration: none;
+  display: inline-block;
+  margin-left: 0.15rem;
+}
+.odds-opened {
+  margin: 0 0 0.4rem;
+}

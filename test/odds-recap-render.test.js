@@ -212,6 +212,61 @@ describe('a game not yet played', () => {
   test('draws no recap section at all', async () => {
     expect(await page(upcoming())).not.toContain('>Recap<');
   });
+
+  /*
+   * Where the market opened. All 16 NFL games on the board had moved off their
+   * opening number when this was measured, so a line with no movement shown is
+   * usually a line missing half its story.
+   */
+  test('shows where the market opened when it has moved', async () => {
+    const withOpen = {
+      ...upcoming(),
+      odds: {
+        ...OPENING,
+        opening: { spread: -2.5, overUnder: 46.5, homeMoneyline: -175, awayMoneyline: 148 },
+      },
+    };
+    const out = await page(withOpen);
+    expect(out).toContain('odds-move');
+    expect(out).toContain('Opened at -2.5');
+    expect(out).toContain('Opened at 46.5');
+    expect(out).toContain('DraftKings opened this market');
+  });
+
+  /* A number that has not budged says nothing rather than repeating itself. */
+  test('a number that has not moved gets no arrow', async () => {
+    const unmoved = {
+      ...upcoming(),
+      odds: {
+        ...OPENING,
+        opening: {
+          spread: OPENING.spread,
+          overUnder: OPENING.overUnder,
+          homeMoneyline: OPENING.homeMoneyline,
+          awayMoneyline: OPENING.awayMoneyline,
+        },
+      },
+    };
+    expect(await page(unmoved)).not.toContain('odds-move');
+  });
+
+  /*
+   * A spread that opened +1.5 and sits at -1.5 has crossed sides. Printing the
+   * opening as a bare "1.5" hides exactly the movement worth showing.
+   */
+  test('an opening spread keeps its sign', async () => {
+    const flipped = {
+      ...upcoming(),
+      odds: { ...OPENING, spread: -1.5, details: 'MIN -1.5', opening: { spread: 1.5 } },
+    };
+    expect(await page(flipped)).toContain('Opened at +1.5');
+  });
+
+  test('a line with no opening recorded draws no arrows', async () => {
+    const out = await page({ ...upcoming(), odds: { ...OPENING, opening: null } });
+    expect(out).not.toContain('odds-move');
+    expect(out).not.toContain('opened this market');
+  });
 });
 
 describe('a fixture with no line', () => {
