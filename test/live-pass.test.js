@@ -203,6 +203,22 @@ describe('the module', () => {
   });
 });
 
+describe('the provider host', () => {
+  /*
+   * The default was `api.argontv.nl`, which has no DNS record at all. Not a 404,
+   * not a refused connection: it does not resolve. So with the variable unset
+   * every call failed at name resolution, which looks identical to the provider
+   * being down and tells you nothing about the real problem. Checked against DNS
+   * on 2026-09-06: distributors.argontv.nl resolves and answers, the other does
+   * not exist.
+   */
+  test('defaults to a host that actually resolves', () => {
+    const cfg = read('../packages/config/src/index.js');
+    expect(cfg).toContain("opt('IPTV_ARGON_API_BASE_URL', 'https://distributors.argontv.nl')");
+    expect(cfg).not.toContain("'https://api.argontv.nl'");
+  });
+});
+
 describe('the pages', () => {
   const plans = plansForSale();
 
