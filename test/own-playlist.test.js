@@ -274,7 +274,11 @@ describe('matching what a provider actually writes', () => {
     { title: 'NFL 01: 8PM Las Vegas Raiders  vs  Houston Texans', url: 'nfl1' },
     { title: 'DAZN UK | Event 7: 8PM Raiders @ Texans', url: 'dazn' },
     {
-      title: 'US (ESPN+ 021) | Soccer: Betis vs. R. Sociedad (2026-08-21 14:50:00)',
+      // The date this carried was a fixed one in the past, which the matcher
+      // now drops as a recording -- correctly, since an entry dated a fortnight
+      // ago is a different match. What this row is here to prove is the
+      // ABBREVIATION ("R. Sociedad"), so the date is gone rather than the row.
+      title: 'US (ESPN+ 021) | Soccer: Betis vs. R. Sociedad',
       url: 'laliga',
     },
     { title: 'NCAAF06: UConn vs. Syracuse', url: 'cfb' },

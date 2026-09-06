@@ -349,6 +349,28 @@ export const config = {
     refreshMinutes: num('PLAYLIST_REFRESH_MINUTES', 5),
 
     /**
+     * Which commentary languages a reader is offered, as provider tags.
+     *
+     * A provider list is international: the same fixture appears with Dutch,
+     * Polish and Swedish commentary, tagged "(NL)", "(PL)", "(SE)". Offering
+     * those to a reader who wants English is worse than offering nothing,
+     * because they look like the match and are unwatchable.
+     *
+     * Only entries the provider actually TAGGED are filtered. Most of a list
+     * carries no tag and is never touched, so this narrows the noise without
+     * emptying the page.
+     *
+     * A comma list, and an empty value switches the filter off entirely.
+     */
+    get languages() {
+      const raw = opt('PLAYLIST_LANGUAGES', 'en');
+      return raw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+    },
+
+    /**
      * Bytes per minute of refresh interval, for lists too big to poll every five.
      *
      * The provider offers no conditional request, so every poll downloads the

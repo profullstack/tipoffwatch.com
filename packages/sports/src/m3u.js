@@ -154,6 +154,51 @@ function hasWhole(normTitle, name) {
  * ("Premier League", "US Open", "Liga MX"), because a contiguous PHRASE of the
  * name is matched alongside its individual words. See leagueSignals.
  */
+/**
+ * A nationality in a league's name is not evidence about a channel.
+ *
+ * "English Premier League" put "english" among the words that mark a channel as
+ * carrying this competition, so "Al Jazeera English" and "France 24 English"
+ * were offered for an Arsenal fixture -- two news channels, matched on the one
+ * word they share with the league's country. The nationality still contributes
+ * to the multi-word PHRASES below, where "english premier league" is a genuine
+ * signal; it just cannot stand alone.
+ */
+const COUNTRY_ADJECTIVE = new Set([
+  'english',
+  'british',
+  'scottish',
+  'welsh',
+  'irish',
+  'american',
+  'australian',
+  'canadian',
+  'french',
+  'german',
+  'spanish',
+  'italian',
+  'dutch',
+  'portuguese',
+  'brazilian',
+  'argentine',
+  'mexican',
+  'japanese',
+  'chinese',
+  'korean',
+  'indian',
+  'russian',
+  'turkish',
+  'greek',
+  'polish',
+  'swedish',
+  'norwegian',
+  'danish',
+  'finnish',
+  'belgian',
+  'swiss',
+  'austrian',
+]);
+
 const GENERIC_LEAGUE = new Set([
   'league',
   'leagues',
@@ -346,7 +391,7 @@ function namesForeignCompetition(norm, words, foreign, ours) {
 export function leagueSignals(leagueName, leagueAbbr) {
   const words = new Set();
   for (const t of [...tokens(leagueName ?? ''), ...tokens(leagueAbbr ?? '')]) {
-    if (!GENERIC_LEAGUE.has(t)) words.add(t);
+    if (!GENERIC_LEAGUE.has(t) && !COUNTRY_ADJECTIVE.has(t)) words.add(t);
   }
   const short = normaliseTeam(leagueAbbr ?? '').replace(/\s+/g, '');
   if (short.length >= 2 && !GENERIC_LEAGUE.has(short)) words.add(short);
@@ -804,8 +849,79 @@ function contradicts(words, team, matched) {
  *
  * @param {Array<{title:string,url:string}>} channels
  */
+/**
+ * A title that names an explicit calendar date is a recording, not tonight.
+ *
+ * Provider lists carry both: a 24/7 team feed sits next to a shelf of old
+ * broadcasts, and the old ones name the teams FAR more precisely than any live
+ * channel does. "(SE) ViaPlay 27 (D): 03-15-2024 7:55pm | Chelsea - Arsenal"
+ * matched both sides of Chelsea at Arsenal perfectly and was, for a while, the
+ * single thing this site offered for that fixture -- a two-year-old Swedish
+ * recording, ranked above the club's own channel and above the UK broadcaster
+ * carrying the match.
+ *
+ * Recognised rather than guessed at: a four-digit year, in any of the shapes
+ * these lists use. A date that IS today is left alone, because a provider
+ * labelling tonight's game with tonight's date is telling the truth.
+ *
+ * @param {string} title
+ * @param {Date} [now]
+ */
+export function datedElsewhere(title, now = new Date()) {
+  const t = String(title ?? '');
+
+  /*
+   * A past year standing on its own, which is how a season is written.
+   *
+   * "Classic Premier League | Manchester City _ Liverpool | 2008/09" carries no
+   * full date but is unmistakably an archive. Only years STRICTLY BEFORE this
+   * one count: a listing dated later this year, or next, is a fixture that has
+   * not happened yet and must not be swept away with the recordings.
+   */
+  for (const y of t.match(/\b(19|20)\d{2}\b/g) ?? []) {
+    if (Number(y) < now.getUTCFullYear()) return true;
+  }
+
+  // mm-dd-yyyy, dd/mm/yyyy, yyyy-mm-dd, and the dotted forms of each.
+  const m = t.match(/(\d{1,4})[-/.](\d{1,2})[-/.](\d{2,4})/);
+  if (!m) return false;
+  const nums = m.slice(1).map(Number);
+  const year = nums.find((n) => n > 1900 && n < 2200);
+  if (!year) return false;
+  // Same year AND the same month-day is the only thing treated as current; a
+  // list that says 2024 is never tonight whatever the rest of it says.
+  if (year !== now.getUTCFullYear()) return true;
+  const md = nums.filter((n) => n !== year);
+  const today = [now.getUTCMonth() + 1, now.getUTCDate()];
+  return !(md.includes(today[0]) && md.includes(today[1]));
+}
+
+/**
+ * The language a provider tagged this feed with, or null when it says nothing.
+ *
+ * These lists prefix a country in brackets -- "(NL) ViaPlay", "(PL) ViaPlay",
+ * "(SE) ViaPlay" -- and that prefix is the only honest signal of what language
+ * the commentary is in. Untagged is NOT treated as foreign: most of a list is
+ * untagged, and refusing everything unlabelled would empty the page.
+ *
+ * Only the tags that actually appear in these lists are mapped. A code we do
+ * not know returns its own lowercase form, so a caller asking for 'en' simply
+ * will not match it.
+ *
+ * @param {string} title
+ * @returns {string|null}
+ */
+export function feedLanguage(title) {
+  const m = String(title ?? '').match(/^\s*(?:4K:\s*)?\(([A-Za-z]{2,3})\)/);
+  if (!m) return null;
+  const code = m[1].toLowerCase();
+  const ENGLISH = new Set(['uk', 'us', 'usa', 'ie', 'au', 'nz', 'ca', 'gb', 'en', 'eng']);
+  return ENGLISH.has(code) ? 'en' : code;
+}
+
 export function rankChannelsForFixture(channels, fixture) {
-  const { home, away, eventName, leagueName, leagueAbbr, sport, foreignMarkers } = fixture ?? {};
+  const { home, away, eventName, leagueName, leagueAbbr, sport, foreignMarkers, languages, now } =
+    fixture ?? {};
   const certain = [];
   const likely = [];
   const competition = [];
@@ -824,9 +940,30 @@ export function rankChannelsForFixture(channels, fixture) {
     Boolean,
   );
 
+  /*
+   * Two facts about the ENTRY rather than about the fixture, applied before any
+   * of the matching below.
+   *
+   * A dated recording is the more dangerous of the two, because it matches
+   * BETTER than the real thing: an old broadcast names both teams exactly,
+   * where a live channel is called "Arsenal" or "Premier Sports 1". Left in, it
+   * wins every time, and the reader is handed a two-year-old game.
+   *
+   * Language is the reader's preference and is applied as a filter only when
+   * the provider actually tagged the feed. Most entries carry no tag at all,
+   * and dropping those would empty the page.
+   */
+  const wantLanguages = languages && languages.length ? new Set(languages) : null;
+  const clock = now ?? new Date();
+
   for (const c of channels ?? []) {
     const norm = normaliseTeam(c.title);
     if (!norm) continue;
+    if (datedElsewhere(c.title, clock)) continue;
+    if (wantLanguages) {
+      const lang = feedLanguage(c.title);
+      if (lang && !wantLanguages.has(lang)) continue;
+    }
     const words = new Set(norm.split(' '));
     const found = (name) => tokens(name).filter((t) => words.has(t));
 

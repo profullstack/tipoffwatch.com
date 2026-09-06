@@ -470,6 +470,11 @@ export async function ownChannelsForEvent({ userId, event }) {
       sport: event.sport,
       // What the provider's own tag would have to say for this NOT to be our game.
       foreignMarkers: await foreignMarkersFor(event.sport),
+      // What the reader can actually understand. English by default, because
+      // that is who these brands are written for; a provider tag in another
+      // language is dropped rather than offered. Untagged entries -- most of a
+      // list -- are never filtered, only the ones the provider labelled.
+      languages: config.playlists.languages,
     },
   });
 }
@@ -500,6 +505,7 @@ export async function ownChannelsForTeam({ userId, team }) {
       // most visible.
       sport: team.sport,
       foreignMarkers: await foreignMarkersFor(team.sport),
+      languages: config.playlists.languages,
     },
   });
 }
