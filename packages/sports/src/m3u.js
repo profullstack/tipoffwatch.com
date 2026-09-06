@@ -13,7 +13,7 @@
  * key="value" attributes or nothing at all.
  */
 
-import { spellsOut } from './broadcasters.js';
+import { broadcastWords, GUESSED, spellsOut } from './broadcasters.js';
 import { normaliseTeam } from './sportsdb.js';
 
 /*
@@ -401,6 +401,28 @@ export function matchTerms({ home, away, eventName, leagueName, leagueAbbr } = {
 }
 
 /**
+ * The same, for a BROADCASTER's name rather than a fixture's.
+ *
+ * matchTerms drops the words that name no team in particular, and "network", "tv",
+ * "sport", "main", "event" and "channel" are all on that list -- which is right for
+ * "Manchester United" and wrong here, where those words are most of what a channel
+ * is called. Several broadcasters are made of nothing else: "Match TV", "Sport TV",
+ * "Sport 1", "The Sports Network", "Main Event". Every one of them produced an
+ * EMPTY term list, and an empty term list makes playlistCandidates return nothing
+ * at all -- so the row was never fetched, the ranker never saw it, and a reader
+ * with that exact channel on their line was told none of their channels named the
+ * game. Nothing further down could have recovered it.
+ *
+ * The fixture words are still preferred, because they are the selective ones and
+ * the candidate window is finite. This only refuses to hand back nothing.
+ */
+export function broadcastTerms(name) {
+  const terms = matchTerms({ eventName: name });
+  if (terms.length > 0) return terms;
+  return broadcastWords(name).filter((w) => w.length >= 2);
+}
+
+/**
  * Does this channel appear to be carrying this fixture?
  *
  * Kept as the STRICT test -- both full names present -- because it is what the
@@ -599,9 +621,44 @@ export function nameMatchRank(channelTitle, broadcaster) {
      */
     if (rest && (rest.every(isStationMark) || rest.some(isCallSign))) return LITERAL;
   } else {
-    const words = new Set(nameTokens(channelTitle));
     const own = nameTokens(broadcaster);
-    if (own.length > 0 && own.every((t) => words.has(t))) return LITERAL;
+
+    /*
+     * The channel's OWN name first, with the shelf its provider filed it under
+     * removed -- the same reading the short-name branch above has always used.
+     *
+     * This used to ask the whole title, and the group label answered half the
+     * question. Nearly every US list writes "USA|" in front of every row, so
+     * "USA Network" found its second word in "USA| MLB NETWORK HD" and its first
+     * in the shelf, called that a literal match, and offered MLB Network for a
+     * game on USA. The row actually carrying it -- "USA| USA HD" -- says the name
+     * once rather than twice, only spellsOut recognises it, and
+     * marketsWithOwnChannels keeps just the best rank, so the true channel was
+     * discarded in favour of three wrong ones.
+     *
+     * Nothing about this is specific to USA. Any broadcaster with a word its
+     * provider also uses as a shelf label -- a country, a region, a city, a genre
+     * -- had the same hole: "NBC Sports Boston" against "BOSTON| NBC SPORTS HD",
+     * "Sport TV" against "SPORT| RTP TV".
+     */
+    if (own.length > 0) {
+      const inOwnName = new Set(nameTokens(channelName(channelTitle)));
+      if (own.every((t) => inOwnName.has(t))) return LITERAL;
+
+      /*
+       * Failing that, the label may still be telling the truth.
+       *
+       * "BOSTON| NBC SPORTS" is NBC Sports Boston, written across the separator
+       * rather than after it, and refusing it outright would cost a real channel.
+       * So the words are still accepted from the whole title -- at the standing of
+       * a guess, because a shelf label is the provider's filing rather than the
+       * channel's name, and anything the channel says about itself outranks it.
+       */
+      const anywhere = new Set(nameTokens(channelTitle));
+      if (own.every((t) => anywhere.has(t))) {
+        return Math.max(GUESSED, spellsOut(broadcaster, channelName(channelTitle)));
+      }
+    }
   }
 
   /*

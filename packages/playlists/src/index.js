@@ -3,6 +3,7 @@ import { open, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
+  broadcastTerms,
   channelMatchesName,
   marketsWithOwnChannels,
   matchTerms,
@@ -597,10 +598,7 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
    */
   const broadcasters = broadcastersFor(event);
   const terms = [
-    ...new Set([
-      ...matchTerms(fixture),
-      ...broadcasters.flatMap((name) => matchTerms({ eventName: name })),
-    ]),
+    ...new Set([...matchTerms(fixture), ...broadcasters.flatMap((name) => broadcastTerms(name))]),
   ];
 
   const [channelCount, rows] = await Promise.all([
@@ -708,9 +706,7 @@ export async function marketChannelsForEvent({ userId, markets }) {
    * exactly what marketsWithOwnChannels is about to look for.
    */
   const terms = [
-    ...new Set(
-      markets.flatMap((m) => (m.channels ?? []).flatMap((name) => matchTerms({ eventName: name }))),
-    ),
+    ...new Set(markets.flatMap((m) => (m.channels ?? []).flatMap((name) => broadcastTerms(name)))),
   ];
   const rows = await q.playlistCandidates(userId, { terms });
   if (rows.length === 0) return null;
