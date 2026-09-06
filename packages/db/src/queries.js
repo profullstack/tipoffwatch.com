@@ -2331,6 +2331,12 @@ export async function recentResults({
     left join teams at on at.id = e.away_team_id
     where e.state = 'post'
       and e.starts_at > now() - (${windowDays} * interval '1 day')
+      -- Bounded at both ends. A fixture cannot have finished before it started,
+      -- but the provider does mark future-dated rows as finished, most often a
+      -- postponement it has closed out. With only the lower bound those sort to the
+      -- very top of a newest-first list and stay there: five of them, dated up to
+      -- eleven days out, sat above every real result on the live page.
+      and e.starts_at <= now()
       and (${sport}::text is null or l.sport = ${sport})
       and (${leagueId}::bigint is null or e.league_id = ${leagueId})
       and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
@@ -2355,6 +2361,12 @@ export async function recentResultsCount({
     from events e join leagues l on l.id = e.league_id and l.superseded_by is null
     where e.state = 'post'
       and e.starts_at > now() - (${windowDays} * interval '1 day')
+      -- Bounded at both ends. A fixture cannot have finished before it started,
+      -- but the provider does mark future-dated rows as finished, most often a
+      -- postponement it has closed out. With only the lower bound those sort to the
+      -- very top of a newest-first list and stay there: five of them, dated up to
+      -- eleven days out, sat above every real result on the live page.
+      and e.starts_at <= now()
       and (${sport}::text is null or l.sport = ${sport})
       and (${leagueId}::bigint is null or e.league_id = ${leagueId})
       and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
