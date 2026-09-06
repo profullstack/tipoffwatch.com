@@ -797,6 +797,16 @@ export const config = {
     /** Schedule pages are identical for every visitor, so they are rendered once and
      *  served from Redis. Personalisation is layered client-side. */
     scheduleTtlSeconds: num('CACHE_SCHEDULE_TTL', 60),
+    /**
+     * Results pages hold still, so they are cached far longer than live ones.
+     *
+     * The sixty seconds above is set by the live tick: a schedule page carries games
+     * in progress, and five minutes there means telling somebody a match is on that
+     * finished four minutes ago. A finished game has no such property -- its score
+     * is final and the only thing still to arrive is the box score, which the play
+     * poller fills in on its own schedule anyway. Fifteen minutes.
+     */
+    resultsTtlSeconds: num('CACHE_RESULTS_TTL', 900),
     enabled: bool('CACHE_ENABLED', true),
   },
 

@@ -6,6 +6,8 @@ import {
   FollowButton,
   KickoffTime,
   LocalTime,
+  OddsPanel,
+  oddsOf,
   setScoreOf,
   TeamRow,
 } from './components.jsx';
@@ -477,6 +479,13 @@ export const LiveSection = ({
   extraClass = '',
   stalled = 0,
   countTitle = null,
+  // Defaults preserve every existing call site: the three sections that used this
+  // before all want the broadcaster and none of them wants a line. The results
+  // section wants the opposite of both, which is why these became props.
+  showBroadcast = true,
+  showOdds = false,
+  moreHref = null,
+  moreLabel = null,
 }) => (
   <section class={`live-now ${extraClass}`.trim()}>
     <div class="live-head">
@@ -502,8 +511,68 @@ export const LiveSection = ({
         {stalled === 1 ? '' : 's'} last refreshed too long ago to trust.
       </p>
     ) : null}
-    <EventList events={events} emptyText={emptyText} showBroadcast />
+    <EventList
+      events={events}
+      emptyText={emptyText}
+      showBroadcast={showBroadcast}
+      showOdds={showOdds}
+    />
+    {/* Only when the list is actually a sample of something larger. A "see all"
+        under a complete list sends the reader to the same six rows again. */}
+    {moreHref && total > events.length ? (
+      <p class="more-link">
+        <a href={moreHref}>{moreLabel ?? 'See more'}</a>
+      </p>
+    ) : null}
   </section>
+);
+
+/**
+ * Everything that has finished.
+ *
+ * The site had no such page. Fixtures were browsable up to kickoff and, once they
+ * were over, only findable by someone who already held the URL -- so the play logs
+ * being collected for finished games, and now the box scores, were reachable by
+ * nobody who had not been watching live.
+ *
+ * Optionally narrowed to one sport, on the same `?sport=` parameter search uses, so
+ * a link from a sport page keeps its subject.
+ */
+export const ResultsPage = ({ user, events, total, sport = null, windowDays = 7 }) => (
+  <Layout
+    title={sport ? `${sport.replace(/-/g, ' ')} results` : brand.copy.resultsTitle}
+    user={user}
+    canonical={sport ? `/results?sport=${encodeURIComponent(sport)}` : '/results'}
+    description={
+      `Final scores from the last ${windowDays} days` +
+      `${sport ? ` in ${sport.replace(/-/g, ' ')}` : ''}. Box score, scoring plays and the ` +
+      `closing line on every finished game.`
+    }
+  >
+    <h1>{brand.copy.resultsTitle}</h1>
+    <p class="muted">{brand.copy.resultsBlurb}</p>
+
+    {sport ? (
+      <p class="muted">
+        Narrowed to {sport.replace(/-/g, ' ')}.{' '}
+        <a class="link-quiet" href="/results">
+          Show every sport instead
+        </a>
+      </p>
+    ) : null}
+
+    {total > events.length ? (
+      <p class="muted small">
+        {total.toLocaleString('en-US')} finished in the last {windowDays} days. Showing the most
+        recent {events.length}.
+      </p>
+    ) : null}
+
+    {/* No broadcaster: a channel listing for a game that has already been played
+        is the one piece of a row that has certainly stopped being useful. The line
+        is kept, because on a finished game it is a fact about what was expected. */}
+    <EventList events={events} emptyText={brand.copy.resultsEmpty} showOdds />
+  </Layout>
 );
 
 export const SportsIndex = ({
@@ -906,9 +975,13 @@ export const LeaguePage = ({
   soonTotal = 0,
   soonHours = 4,
   stalled = 0,
+  results = [],
+  resultsTotal = 0,
+  resultsDays = 7,
 }) => {
   const liveEmpty = `Nothing in ${league.name} is on right now.`;
   const soonEmpty = `Nothing in ${league.name} starts in the next ${soonHours} hours.`;
+  const resultsEmpty = `Nothing in ${league.name} has finished in the last ${resultsDays} days.`;
   return (
     <Layout
       title={league.name}
@@ -991,6 +1064,23 @@ export const LeaguePage = ({
         total={soonTotal}
         countTitle={`${soonTotal} in the next ${soonHours} hours`}
         extraClass="starting-soon"
+        showOdds
+      />
+      {/* Last, and after the two forward-looking sections, because a league page is
+        primarily about what is still to come. It is here at all because this was the
+        only way into a finished fixture other than knowing its URL. */}
+      <LiveSection
+        title={brand.copy.resultsTitle}
+        blurb={brand.copy.resultsBlurb}
+        emptyText={resultsEmpty}
+        events={results ?? []}
+        total={resultsTotal}
+        countTitle={`${resultsTotal} in the last ${resultsDays} days`}
+        extraClass="results"
+        showBroadcast={false}
+        showOdds
+        moreHref={`/results?sport=${encodeURIComponent(league.sport)}`}
+        moreLabel={`All ${league.sport.replace(/-/g, ' ')} results`}
       />
     </Layout>
   );
@@ -1008,12 +1098,20 @@ export const TeamPage = ({
   soonTotal = 0,
   soonHours = 4,
   stalled = 0,
+  results = [],
+  resultsTotal = 0,
+  resultsDays = 30,
   // The team's own SiriusXM feed, for a connected reader on a league that has
   // them. See views/radio.jsx.
   radio = null,
 }) => {
   const liveEmpty = `${team.display_name} are not playing right now.`;
   const soonEmpty = `${team.display_name} are not on in the next ${soonHours} hours.`;
+  // A month rather than the week the league page uses. One team plays once or twice
+  // in a week and often not at all, so a seven-day window would leave this section
+  // empty for most teams most of the time -- which reads as a missing feature rather
+  // than as a quiet fortnight.
+  const resultsEmpty = `${team.display_name} have not played in the last ${resultsDays} days.`;
   return (
     <Layout
       title={team.display_name}
@@ -1114,6 +1212,20 @@ export const TeamPage = ({
         total={soonTotal}
         countTitle={`${soonTotal} in the next ${soonHours} hours`}
         extraClass="starting-soon"
+        showOdds
+      />
+      {/* The page's own description has promised "schedule, results and live
+        scores" since it was written, and until now delivered two of the three. */}
+      <LiveSection
+        title={brand.copy.resultsTitle}
+        blurb={brand.copy.resultsBlurb}
+        emptyText={resultsEmpty}
+        events={results ?? []}
+        total={resultsTotal}
+        countTitle={`${resultsTotal} in the last ${resultsDays} days`}
+        extraClass="results"
+        showBroadcast={false}
+        showOdds
       />
     </Layout>
   );
@@ -1292,6 +1404,194 @@ export const Following = ({ user, events, follows, cleared, vapidKey, calendarUr
 /** Whether a play carries the running score, which only some sports attach. */
 const hasScore = (p) => p.away_score != null && p.home_score != null;
 
+/**
+ * The stored box score, normalised.
+ *
+ * Same jsonb-or-string problem as the markets above and the odds beside them: the
+ * driver hands this back parsed on one path and as a string on another, and a
+ * renderer that assumes either one draws a blank on the other.
+ */
+const recapOf = (event) => {
+  const raw = event?.recap;
+  if (!raw) return null;
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * What a finished game looked like.
+ *
+ * Every part of this is optional and drawn only if present, because what the
+ * provider returns differs enormously by sport -- measured 2026-09-06, college
+ * football gives a linescore, fourteen team stats, ten leaders and an AP recap;
+ * volleyball gives a linescore and nothing else. A block that assumed any one of
+ * them would be empty for most of the catalogue, and a page that renders empty
+ * headings reads as broken rather than as sparse.
+ *
+ * The order is the order a person reads a result in: what happened (the wire
+ * recap), then the shape of it (the linescore), then who did it (the leaders), then
+ * the detail (the team table). The play-by-play log already on this page stays
+ * below, because it is the long version of the same story.
+ */
+const Recap = ({ event, recap }) => {
+  const ls = recap.linescores;
+  const away = event.away_name ?? 'Away';
+  const home = event.home_name ?? 'Home';
+  const leaders = recap.leaders ?? [];
+  const stats = recap.teamStats ?? [];
+
+  // Grouped sports (baseball, rugby league) label their rows; flat ones do not. The
+  // heading is only drawn where the group is a real distinction, so football does
+  // not get a spurious "General" above its table.
+  const groups = [...new Set(stats.map((s) => s.group).filter(Boolean))];
+
+  return (
+    <section class="recap">
+      <h2>Recap</h2>
+
+      {recap.article ? (
+        <div class="recap-article">
+          <h3>{recap.article.headline}</h3>
+          {recap.article.summary ? <p>{recap.article.summary}</p> : null}
+          {recap.article.source ? (
+            <p class="muted small">
+              {recap.article.source}
+              {recap.article.publishedAt ? (
+                <>
+                  {' · '}
+                  <LocalTime at={recap.article.publishedAt} />
+                </>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {ls && ls.labels.length > 0 ? (
+        // Wrapped, because a nine-inning linescore is wider than a phone and the
+        // page itself must never scroll sideways. Scoped to the table so the rest
+        // of the recap stays put while this one strip moves.
+        <div class="scroll-x">
+          <table class="linescore">
+            <caption class="sr-only">
+              Score by {ls.periodLabel ? ls.periodLabel.toLowerCase() : 'period'}
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">{ls.periodLabel ?? 'Period'}</th>
+                {ls.labels.map((l) => (
+                  <th scope="col" class="num">
+                    {l}
+                  </th>
+                ))}
+                <th scope="col" class="num total">
+                  T
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { name: away, cells: ls.away, total: event.away_score },
+                { name: home, cells: ls.home, total: event.home_score },
+              ].map((row) => (
+                <tr>
+                  <th scope="row">{row.name}</th>
+                  {ls.labels.map((_, i) => (
+                    <td class="num">{row.cells[i] ?? ''}</td>
+                  ))}
+                  <td class="num total">{row.total ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {leaders.length > 0 ? (
+        <>
+          <h3>Leaders</h3>
+          <ul class="leaders">
+            {leaders.map((l) => (
+              <li>
+                <span class="leader-cat">{l.category}</span>
+                <span class="leader-who">
+                  {l.name}
+                  {l.team ? <span class="meta"> {l.team}</span> : null}
+                </span>
+                {/* Already phrased by the provider per sport's convention --
+                    "25/29, 286 YDS, 2 TD" -- so it is printed rather than rebuilt. */}
+                <span class="leader-line num">{l.line}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {stats.length > 0 ? (
+        <>
+          <h3>Team stats</h3>
+          <div class="scroll-x">
+            <table class="teamstats">
+              <thead>
+                <tr>
+                  <th scope="col">{groups.length > 0 ? '' : 'Stat'}</th>
+                  <th scope="col" class="num">
+                    {away}
+                  </th>
+                  <th scope="col" class="num">
+                    {home}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.map((s, i) => (
+                  <>
+                    {/* A subheading row rather than a repeated column: the group
+                        changes every few rows and printing "Batting" fifteen times
+                        down a narrow table is most of its width. */}
+                    {s.group && s.group !== stats[i - 1]?.group ? (
+                      <tr class="stat-group">
+                        <th scope="colgroup" colspan="3">
+                          {s.group}
+                        </th>
+                      </tr>
+                    ) : null}
+                    <tr>
+                      <th scope="row">{s.label}</th>
+                      <td class="num">{s.away ?? ''}</td>
+                      <td class="num">{s.home ?? ''}</td>
+                    </tr>
+                  </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
+
+      {/* The crowd, the clock and the crew.
+
+        Attendance only when the stat tile above has not already said it. The
+        scoreboard and the summary both carry the number, so the event row usually
+        has it -- and a page that prints "51,144" twice, once as a headline figure
+        and once in a footnote, reads as a bug rather than as thoroughness. */}
+      {recap.officials?.length || recap.duration || (recap.attendance && !event.attendance) ? (
+        <p class="muted small recap-meta">
+          {recap.attendance && !event.attendance
+            ? `${recap.attendance.toLocaleString('en-US')} in attendance. `
+            : ''}
+          {recap.duration ? `Time of game ${recap.duration}. ` : ''}
+          {recap.officials?.length ? `Officials: ${recap.officials.join(', ')}.` : ''}
+        </p>
+      ) : null}
+    </section>
+  );
+};
+
 /** One side of the scoreboard. */
 /**
  * One side of the scoreboard.
@@ -1304,13 +1604,23 @@ const hasScore = (p) => p.away_score != null && p.home_score != null;
  *
  * At a neutral ground the question has no answer, so nothing is claimed.
  */
-const Side = ({ name, slug, logo, score, record, showScore, role }) => (
+const Side = ({ name, slug, logo, score, record, showScore, role, favorite = false }) => (
   <div class="side">
     {logo ? <img src={logo} alt="" width="56" height="56" /> : <span class="team-blank big" />}
     <div class="side-name">
       {role ? <span class={`role-tag ${role}`}>{role === 'home' ? 'Home' : 'Away'}</span> : null}
       {slug ? <a href={href.participant(slug)}>{name}</a> : <span>{name}</span>}
       {record ? <span class="meta">{record}</span> : null}
+      {/* Which side the book made favourite, said in words on the side it applies
+          to. The line itself reads "SEA -3.5", which only identifies a team to
+          someone who already knows the abbreviation -- across 354 leagues that is
+          nobody. Past tense once the game is over, because it is then a fact about
+          what was expected rather than a claim about what will happen. */}
+      {favorite ? (
+        <span class="fav-tag" title="The bookmaker's favourite">
+          Favourite
+        </span>
+      ) : null}
     </div>
     {showScore ? <span class="side-score num">{score ?? '—'}</span> : null}
   </div>
@@ -1429,6 +1739,12 @@ export const EventPage = ({
   const live = event.state === 'in';
   const done = event.state === 'post';
   const showScore = live || done;
+  const recap = done ? recapOf(event) : null;
+  // The favourite is marked on the side it belongs to rather than only stated in the
+  // line below, because "SEA -3.5" only tells you who is favoured if you already
+  // know the abbreviation -- which, across 354 leagues, is the thing a reader is
+  // least likely to have.
+  const odds = oddsOf(event);
 
   // Not every fixture is a contest between two named sides. A grand prix, a golf
   // tournament, a fight card and a tennis draw are all one event with a field, and
@@ -1452,8 +1768,16 @@ export const EventPage = ({
       canonical={`/events/${event.id}`}
       description={
         `${event.name}${event.league_name ? ` — ${event.league_name}` : ''}` +
-        `${event.venue ? ` at ${event.venue}` : ''}. Start time in your own time zone, live score, ` +
-        `and a free reminder before it starts.`
+        `${event.venue ? ` at ${event.venue}` : ''}. ` +
+        /* A finished game is not "starting soon", and this string is what a search
+           result shows for it. Promising a reminder before a game that has already
+           been played is the kind of copy that makes a page look automated -- and
+           these pages are now worth landing on, which is the point of storing a
+           box score at all. */
+        (done
+          ? `Final score${event.home_score !== null ? ` ${event.away_score}-${event.home_score}` : ''}, ` +
+            `box score${recap?.article ? ', recap' : ''} and how it was called beforehand.`
+          : 'Start time in your own time zone, live score, and a free reminder before it starts.')
       }
       /* The fixture, and the trail rendered just below, said in the vocabulary an
          answer engine reads. Neither adds a fact the page does not already show --
@@ -1501,6 +1825,7 @@ export const EventPage = ({
             record={event.away_record}
             showScore={showScore}
             role={event.neutral_site ? null : 'away'}
+            favorite={odds?.favorite === 'away'}
           />
         ) : (
           // One event, one field. The name carries it, since there is no matchup
@@ -1536,6 +1861,7 @@ export const EventPage = ({
             record={event.home_record}
             showScore={showScore}
             role={event.neutral_site ? null : 'home'}
+            favorite={odds?.favorite === 'home'}
           />
         ) : null}
       </section>
@@ -1592,6 +1918,13 @@ export const EventPage = ({
           </li>
         ) : null}
       </ul>
+
+      {/* Above the recap and below the fixture's own facts. For a game not yet
+          played this is the closest thing the page has to a preview; for one that
+          has been, it is the first line of the story the recap tells. */}
+      <OddsPanel event={event} />
+
+      {done && recap ? <Recap event={event} recap={recap} /> : null}
 
       <BroadcastMarkets
         event={event}

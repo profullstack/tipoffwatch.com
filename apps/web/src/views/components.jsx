@@ -279,7 +279,172 @@ export const SetScore = ({ event }) => {
   );
 };
 
-export const EventRow = ({ event, showBroadcast = false }) => (
+/* ------------------------------------------------------------------ odds --- */
+
+/**
+ * A stored betting line, or null.
+ *
+ * Read through one helper everywhere rather than touching `event.odds` directly,
+ * because the column is jsonb and comes back as an object from Postgres but as a
+ * string from anything that has been through JSON.stringify -- the API responses and
+ * the client-side live refresh both do. A page that reads `.details` off a string
+ * gets undefined and silently draws nothing.
+ */
+export const oddsOf = (event) => {
+  const raw = event?.odds;
+  if (!raw) return null;
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+/** American odds are only readable with the sign spelled out: -185, +154. */
+const american = (n) => (n === null || n === undefined ? null : n > 0 ? `+${n}` : String(n));
+
+/**
+ * Whether the home side beat the spread, and whether the game went over.
+ *
+ * `spread` is the HOME team's number in every sport ESPN prices, which is worth
+ * stating because the `details` string is not: it names whichever side is favoured,
+ * so it reads "USC -37.5" on one game and "CHC -126" on the next. Checked against
+ * two finished fixtures 2026-09-06 -- USC won by 16 as a 37.5-point favourite and
+ * correctly reads as not covering; the Marlins lost by 1 on a +1.5 run line and
+ * correctly reads as covering.
+ *
+ * Null rather than a guess wherever the question does not apply: a game with no
+ * spread (soccer is priced three-way and carries none), or one whose scores are
+ * missing. Exactly zero is a push, which is a real outcome and not a loss.
+ */
+export const settleOdds = (event, odds) => {
+  if (!odds) return null;
+  const home = event.home_score;
+  const away = event.away_score;
+  if (home === null || home === undefined || away === null || away === undefined) return null;
+
+  const out = {};
+  if (odds.spread !== null && odds.spread !== undefined) {
+    const margin = home - away + odds.spread;
+    out.ats = margin === 0 ? 'push' : margin > 0 ? 'home' : 'away';
+  }
+  if (odds.overUnder !== null && odds.overUnder !== undefined) {
+    const total = home + away;
+    out.total = total === odds.overUnder ? 'push' : total > odds.overUnder ? 'over' : 'under';
+    out.points = total;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+};
+
+/**
+ * The line, compressed to fit on a list row.
+ *
+ * Only the two numbers a glance wants -- who is favoured by how much, and the total.
+ * The book's name, the moneylines and the settlement all live on the event page,
+ * because a schedule row is a list of games rather than a betting slip.
+ */
+export const OddsChip = ({ event }) => {
+  const odds = oddsOf(event);
+  if (!odds) return null;
+  const parts = [odds.details, odds.overUnder != null ? `O/U ${odds.overUnder}` : null].filter(
+    Boolean,
+  );
+  if (parts.length === 0) return null;
+  return (
+    <span
+      class="odds-chip"
+      title={`Line${odds.provider ? ` from ${odds.provider}` : ''}${
+        odds.capturedState === 'pre' ? ', taken before the game started' : ''
+      }`}
+    >
+      {parts.join(' · ')}
+    </span>
+  );
+};
+
+/**
+ * The full line, and how it turned out.
+ *
+ * Placed on the event page for all three states, which is the point: the same block
+ * is a preview before kickoff, a reference during the game, and a piece of the recap
+ * after it. Only the wording moves.
+ *
+ * It never says "current". The line is a snapshot taken while the game was still
+ * `pre` -- see oddsFromCompetition -- and presenting a stored number as live would
+ * be the one genuinely misleading thing this feature could do. Before kickoff it is
+ * labelled with when it was taken; afterwards it is the closing line, which is what
+ * it actually is.
+ */
+export const OddsPanel = ({ event }) => {
+  const odds = oddsOf(event);
+  if (!odds) return null;
+  const done = event.state === 'post';
+  const settled = done ? settleOdds(event, odds) : null;
+  const ml = [
+    { side: 'away', label: event.away_name ?? 'Away', price: odds.awayMoneyline },
+    ...(odds.drawMoneyline != null
+      ? [{ side: 'draw', label: 'Draw', price: odds.drawMoneyline }]
+      : []),
+    { side: 'home', label: event.home_name ?? 'Home', price: odds.homeMoneyline },
+  ].filter((m) => m.price !== null && m.price !== undefined);
+
+  const winner = (which) =>
+    which === 'home' ? (event.home_name ?? 'Home') : (event.away_name ?? 'Away');
+
+  return (
+    <section class="odds-panel">
+      <h2>{done ? 'Closing line' : 'The line'}</h2>
+      <ul class="stat odds-stat">
+        {odds.details ? (
+          <li>
+            <strong>{odds.details}</strong>
+            <span>{odds.spread != null ? 'Spread' : 'Price'}</span>
+          </li>
+        ) : null}
+        {odds.overUnder != null ? (
+          <li>
+            <strong class="num">{odds.overUnder}</strong>
+            <span>Total{settled?.points != null ? ` · finished ${settled.points}` : ''}</span>
+          </li>
+        ) : null}
+        {ml.map((m) => (
+          <li>
+            <strong class="num">{american(m.price)}</strong>
+            <span>{m.label}</span>
+          </li>
+        ))}
+      </ul>
+
+      {settled ? (
+        <p class="odds-settled">
+          {settled.ats
+            ? settled.ats === 'push'
+              ? 'The game landed exactly on the spread — a push.'
+              : `${winner(settled.ats)} covered.`
+            : null}
+          {settled.ats && settled.total ? ' ' : null}
+          {settled.total
+            ? settled.total === 'push'
+              ? 'The total landed exactly on the number.'
+              : `The total went ${settled.total}.`
+            : null}
+        </p>
+      ) : null}
+
+      <p class="muted small">
+        {/* Named and dated, because an undated number invites the reader to assume
+            it is current -- and it never is after kickoff, since the provider stops
+            publishing one. */}
+        {odds.provider ? `${odds.provider}, ` : ''}
+        {done ? 'as it stood at the close' : 'taken '}
+        {done ? null : <LocalTime at={odds.capturedAt} />}. Shown for interest, not as advice.
+      </p>
+    </section>
+  );
+};
+
+export const EventRow = ({ event, showBroadcast = false, showOdds = false }) => (
   <li class={`event ${event.state}${event.following ? ' followed' : ''}`}>
     <RowTime event={event} />
 
@@ -340,6 +505,10 @@ export const EventRow = ({ event, showBroadcast = false }) => (
             {event.broadcast}
           </span>
         ) : null}
+        {/* Opt-in per list, like the broadcaster above. A line is what a schedule
+            row is missing and a results row has already answered, so it goes on the
+            surfaces that are about games not yet played. */}
+        {showOdds ? <OddsChip event={event} /> : null}
       </span>
     </div>
 
@@ -356,13 +525,13 @@ export const EventRow = ({ event, showBroadcast = false }) => (
   </li>
 );
 
-export const EventList = ({ events, emptyText, showBroadcast = false }) =>
+export const EventList = ({ events, emptyText, showBroadcast = false, showOdds = false }) =>
   events.length === 0 ? (
     <p class="empty">{emptyText ?? 'Nothing scheduled.'}</p>
   ) : (
     <ul class="events">
       {events.map((e) => (
-        <EventRow event={e} showBroadcast={showBroadcast} />
+        <EventRow event={e} showBroadcast={showBroadcast} showOdds={showOdds} />
       ))}
     </ul>
   );

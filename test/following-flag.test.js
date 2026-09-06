@@ -33,12 +33,12 @@ beforeAll(async () => {
   const matches = [
     ...source.matchAll(/exists \(\s*select 1 from follows vf[\s\S]*?\) as following/g),
   ];
-  // Six list queries carry the flag; if one loses it, that is the regression.
-  // The last two are liveNow and startingSoon, neither of which is about what you
-  // follow at all -- but both render the same EventRow, and a star that appears on
-  // four lists and not on the other two is the inconsistency this test exists to
-  // catch.
-  expect(matches.length).toBe(6);
+  // Seven list queries carry the flag; if one loses it, that is the regression.
+  // The last three are liveNow, startingSoon and recentResults, none of which is
+  // about what you follow at all -- but all three render the same EventRow, and a
+  // star that appears on four lists and not on the other three is the
+  // inconsistency this test exists to catch.
+  expect(matches.length).toBe(7);
   // Every copy must be identical, so testing one tests them all.
   const texts = new Set(matches.map((m) => m[0].replace(/\s+/g, ' ')));
   expect(texts.size).toBe(1);

@@ -373,6 +373,7 @@ export async function syncLeague(
     // Serialised here rather than in the query: upsertEvents builds its column list
     // from the object's keys, and a bare JS object lands as "[object Object]".
     score_detail: f.scoreDetail ? JSON.stringify(f.scoreDetail) : null,
+    odds: f.odds ? JSON.stringify(f.odds) : null,
     home_record: f.homeRecord,
     away_record: f.awayRecord,
     home_team_id: f.home ? (teamId.get(f.home.providerKey) ?? null) : null,
@@ -431,6 +432,10 @@ export async function syncLeagueScores(league) {
       markets: f.broadcastNames?.length
         ? [{ country: 'United States', channels: f.broadcastNames }]
         : [],
+      // The closest thing to a closing line we can get for free: this pass sees a
+      // fixture every minute right up to kickoff, and the field is gone immediately
+      // after it.
+      odds: f.odds ?? null,
     })),
   );
   return { events: fixtures.length };
@@ -501,10 +506,41 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
     state: 'post',
     catchupHours,
   });
-  const due = [...live, ...ended];
+
+  /*
+   * Fixtures owed a box score that the two queues above will not already reach.
+   *
+   * This is the whole reason the recap queue exists separately. A finished game with
+   * a play log is read by the `ended` queue anyway, and the recap comes out of that
+   * same response for free -- so it is not asked for here. What IS asked for here is
+   * the six sports that have a box score and no play log at all (volleyball, water
+   * polo, field hockey, rugby, rugby league, lacrosse): `plays_supported` keeps them
+   * out of the play queue entirely, correctly, and without this they would be the
+   * only sports on the site with no recap despite the provider having one.
+   *
+   * Drawn last and only into slots the other two left, so it can never take a read
+   * away from a game in progress. On a busy evening that is nothing, which is the
+   * right answer -- a finished volleyball match can wait for a quiet minute.
+   */
+  const already = new Set([...live, ...ended].map((e) => e.id));
+  const recapSlots = Math.max(0, limit - live.length - ended.length);
+  // Drawn even when there are no slots left to spend, because the row carries the
+  // BACKLOG and the backlog is the number worth logging. Skipping the query on a
+  // busy tick would print "recap-only 0/0" -- indistinguishable from a drained
+  // queue, when it may mean four hundred fixtures have been waiting all evening.
+  // That is the same mistake the two queues above were fixed for; it costs one
+  // indexed lookup against a partial index built for exactly this predicate.
+  const recapQueue = await q.eventsNeedingRecap({
+    limit: Math.max(1, recapSlots + already.size),
+    catchupHours,
+  });
+  const recapOnly = recapQueue.filter((e) => !already.has(e.id)).slice(0, recapSlots);
+
+  const due = [...live, ...ended, ...recapOnly];
   if (due.length === 0) return { events: 0, plays: 0 };
 
   let inserted = 0;
+  let recaps = 0;
   let failed = 0;
 
   // A finished game is done with for good; a live one is only done with for now.
@@ -512,6 +548,9 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
     event.state === 'post' ? q.markPlaysFinal(event.id) : q.markPlaysSynced(event.id);
 
   for (const event of due) {
+    // Only a finished game has a box score worth keeping. Parsing one off a game in
+    // progress would store a half-time table and then have to be told to replace it.
+    const wantRecap = event.state === 'post';
     try {
       const adapter = ADAPTERS[event.provider];
       // Stamped rather than skipped. An unstamped row stays at the front of the
@@ -519,10 +558,20 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
       // play-by-play would hold the whole cap and nothing else would be read again.
       if (!adapter?.fetchPlays) {
         await close(event);
+        // Closed on this side too, or a provider with no summary at all would sit in
+        // the recap queue for as long as the catch-up window is wide.
+        if (wantRecap) await q.saveRecap(event.id, null);
         continue;
       }
 
-      const plays = await adapter.fetchPlays(event.league_key, event.provider_key);
+      // One request, both results. Splitting these would double the app's largest
+      // bandwidth line to fetch two halves of the same response.
+      const { plays, recap } = adapter.fetchPlaysAndRecap
+        ? await adapter.fetchPlaysAndRecap(event.league_key, event.provider_key, {
+            recap: wantRecap,
+          })
+        : { plays: await adapter.fetchPlays(event.league_key, event.provider_key), recap: null };
+
       if (plays.length > 0) {
         const rows = plays.map((p) => ({
           event_id: event.id,
@@ -539,6 +588,13 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
         const added = await q.insertPlays(rows);
         inserted += added.length;
       }
+      // Written even when null, because the stamp is what closes the queue -- see
+      // eventsNeedingRecap. A fixture whose summary has no box score is answered
+      // once and never asked again.
+      if (wantRecap) {
+        await q.saveRecap(event.id, recap);
+        if (recap) recaps++;
+      }
       // Stamped even when empty, so a fixture with no summary is not retried on
       // every single tick ahead of games that actually have one.
       await close(event);
@@ -548,7 +604,7 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
       // Only the timestamp on the failure path, never the final flag: a transient
       // upstream blip must not be what decides a finished game has no recap. The
       // stamp alone sends it to the back of the queue, so it retries without
-      // holding a slot.
+      // holding a slot. recap_synced_at is left alone here for the same reason.
       await q.markPlaysSynced(event.id).catch(() => {});
     }
   }
@@ -561,11 +617,18 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   // whatever this tick's share happened to be.
   const liveDue = liveAll[0]?.total_due ?? liveAll.length;
   const endedDue = ended[0]?.total_due ?? ended.length;
+  // The recap backlog is reported even on the ticks where it got no slots, because
+  // zero reads against a backlog of four hundred is the number that says the
+  // catch-up window is doing nothing -- and it reads identically to a drained queue
+  // if only the batch size is printed. Same lesson as the two queues above.
+  // From the uncapped draw, not from this tick's share -- see recapQueue above.
+  const recapDue = recapQueue[0]?.total_due ?? recapQueue.length;
   log(
     `[plays] live ${live.length}/${liveDue}, ended ${ended.length}/${endedDue}, ` +
-      `${inserted} new, ${failed} failed`,
+      `recap-only ${recapOnly.length}/${recapDue}, ${inserted} new, ${recaps} recaps, ` +
+      `${failed} failed`,
   );
-  return { events: due.length, plays: inserted, failed, liveDue, endedDue };
+  return { events: due.length, plays: inserted, recaps, failed, liveDue, endedDue, recapDue };
 }
 
 /** Upper bound on TheSportsDB requests in a single pass. */

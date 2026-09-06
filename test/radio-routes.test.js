@@ -74,7 +74,13 @@ describe('radio routes', () => {
     ]) {
       const at = src.indexOf(route);
       expect(at).toBeGreaterThan(-1);
-      const body = src.slice(at, at + 4000);
+      // Wide enough to still contain the storedSession call after the route's own
+      // Promise.all grew. The window is only here to keep one route's body from
+      // being satisfied by the next route's code; it is not itself the assertion,
+      // so widening it costs nothing and a too-narrow one fails for the wrong
+      // reason -- it reads as "the session moved into a Promise.all" when what
+      // actually happened is that the fixture list above it got longer.
+      const body = src.slice(at, at + 6000);
       const arrays = [...body.matchAll(/Promise\.all\(\[([\s\S]*?)\]\)/g)].map((m) => m[1]);
       for (const arr of arrays) expect(arr).not.toContain('radio.storedSession');
       expect(body).toMatch(/radioSession[\s\S]{0,120}await radio\.storedSession/);

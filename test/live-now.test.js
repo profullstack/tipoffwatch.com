@@ -280,16 +280,23 @@ describe('how the page says it', () => {
   test('where to watch shows on the watch lists and nowhere else', () => {
     expect(components).toContain('showBroadcast && event.broadcast');
     /*
-     * One, and only one, now that both lists render through <LiveSection>.
+     * <LiveSection> is the only thing that ever turns this ON.
      *
-     * It used to be two: Live now and Starting soon, each with its own copy of the
-     * markup. Both exist to answer "what can I watch", which is the question a
-     * channel name answers. Every OTHER EventList on the site is about when
-     * something starts, and a broadcaster beside a kick-off time there is noise --
-     * that is the regression this guards, and the component is now the single
-     * place the flag is set, which is a stronger guarantee than counting was.
+     * It used to be two hand-written copies of the markup -- Live now and Starting
+     * soon -- and the guard was a count of one. The count stopped being the right
+     * assertion once the results sections started passing the flag explicitly to
+     * turn it OFF: they made the number five while keeping the property exactly as
+     * it was. So the invariant is stated directly instead. Both lists that answer
+     * "what can I watch" get a channel name; every other EventList on the site is
+     * about when something starts, where a broadcaster beside a kick-off time is
+     * noise, and none of them may switch it on.
      */
-    expect(page.match(/showBroadcast/g).length).toBe(1);
+    const enabling = page
+      .split('\n')
+      .filter((l) => l.includes('showBroadcast'))
+      // Turning it off, and handing it straight down to the list, are both fine.
+      .filter((l) => !/showBroadcast=\{(false|showBroadcast)\}/.test(l));
+    expect(enabling).toEqual(['  showBroadcast = true,']);
     const section = page.slice(page.indexOf('export const LiveSection'));
     expect(section.slice(0, section.indexOf('\n);\n'))).toContain('showBroadcast');
   });

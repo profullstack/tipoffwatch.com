@@ -119,6 +119,11 @@ const BRANDS = {
         'Kicking off in the next four hours, soonest first. Enough warning to find it, ' +
         'close enough that you do not have to remember.',
       soonEmpty: 'Nothing kicks off in the next four hours.',
+      resultsTitle: 'Final scores',
+      resultsBlurb:
+        'Games that have finished, most recent first. Open one for the box score, the ' +
+        'scoring plays and how it was called beforehand.',
+      resultsEmpty: 'Nothing has finished in the last week.',
 
       /*
        * The paid tier, in this brand's own words.
@@ -190,6 +195,9 @@ const BRANDS = {
         'Anything with a real start time landing in the next four hours, soonest first. ' +
         'Releases carrying only a date are not here -- they have no hour to count down to.',
       soonEmpty: 'Nothing with a start time lands in the next four hours.',
+      resultsTitle: 'Already out',
+      resultsBlurb: 'Finished and released, most recent first.',
+      resultsEmpty: 'Nothing has wrapped up in the last week.',
       notFound: 'Back to what is coming up',
 
       premiumTitle: 'Premium',
