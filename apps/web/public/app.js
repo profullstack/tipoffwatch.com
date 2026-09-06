@@ -1510,16 +1510,28 @@ function initPlayerSection(section) {
  * uses: the demuxer is a quarter of a megabyte, and a page carrying both
  * players must fetch it once rather than twice.
  */
-let multiviewModule = null;
-
+/*
+ * The cache hangs off the function, and that is load-bearing.
+ *
+ * It was `let multiviewModule` declared here, below the boot calls near the top
+ * of this file. A `let` is in the temporal dead zone until its own line runs, so
+ * the boot call read it before it existed and threw -- which, at top level,
+ * abandoned the rest of this file. Every page carrying multiview markup lost
+ * ALL of its behaviour: the player, the nav, everything after that line. An
+ * event page has the Multiview button on it, so "no streams play" was the
+ * symptom, and the grid page looked simply dead.
+ *
+ * A function declaration hoists whole, and a property on it is written when the
+ * function first runs. There is no window in which reading it can throw.
+ */
 function loadMultiview() {
-  if (!multiviewModule) {
-    multiviewModule = import('/vendor-multiview.js').then((m) => {
+  if (!loadMultiview.promise) {
+    loadMultiview.promise = import('/vendor-multiview.js').then((m) => {
       m.configure({ storageKey: 'tw.multiview', playerGlobal: '__tipoffPlayer' });
       return m;
     });
   }
-  return multiviewModule;
+  return loadMultiview.promise;
 }
 
 /**

@@ -233,7 +233,7 @@ describe('app.js, which now only wires the package', () => {
   });
 
   test('the promise is cached, so one navigation does not fetch it twice', () => {
-    expect(src).toContain('if (!multiviewModule) {');
+    expect(src).toContain('if (!loadMultiview.promise) {');
   });
 
   test('the stylesheet comes from the package too', () => {
@@ -290,5 +290,63 @@ describe('the “Where to watch” rows', () => {
 
   test('still play through the proxy, which needs no credential', () => {
     expect(body).toContain('data-play={`/my/channels/${ch.id}/stream.ts`}');
+  });
+});
+
+describe('the boot path, actually executed', () => {
+  /*
+   * The bug this exists for: `initMultiviewFeature()` is called near the top of
+   * app.js, and the loader's cache was a `let` declared six hundred lines below
+   * it. A `let` is in the temporal dead zone until its own line runs, so the
+   * boot call read it before it existed and threw -- at top level, which
+   * abandoned the rest of the file. Every page with multiview markup lost all of
+   * its behaviour, and an event page carries the Multiview button, so the report
+   * was "no streams play".
+   *
+   * Every test in this file was a string assertion against the source, and not
+   * one of them could see it. So this one RUNS the thing: the loader is invoked
+   * the way boot invokes it, in declaration order, and must not throw.
+   */
+  const src = read('../apps/web/public/app.js');
+
+  test('the loader can be called before its own declaration is reached', () => {
+    // The two functions, plus a call placed ABOVE them exactly as boot does it.
+    const from = src.indexOf('function loadMultiview()');
+    const to = src.indexOf('\n}\n', src.indexOf('function initMultiviewFeature(')) + 3;
+    const block = src.slice(from, to);
+    expect(block).toContain('function initMultiviewFeature(');
+
+    const page = { dataset: {} };
+    const root = { querySelector: (sel) => (sel === '[data-multiview]' ? page : null) };
+    const imports = [];
+    const program = `
+      const __import = (s) => { imports.push(s); return Promise.resolve({ configure() {}, initMultiview() {}, initMultiviewAdd() {} }); };
+      initMultiviewFeature(root);     // called BEFORE the declarations below
+      ${block.replace("import('/vendor-multiview.js')", "__import('/vendor-multiview.js')")}
+    `;
+    // Throws "Cannot access 'multiviewModule' before initialization" on the
+    // broken version, and returns cleanly on the fixed one.
+    expect(() => new Function('root', 'imports', program)(root, imports)).not.toThrow();
+    expect(imports).toEqual(['/vendor-multiview.js']);
+  });
+
+  test('the cache is hoisted with the function, not a binding below the call', () => {
+    expect(src).not.toMatch(/^let multiviewModule/m);
+    expect(src).toContain('loadMultiview.promise');
+  });
+
+  test('a page with no multiview markup never imports it', () => {
+    const from = src.indexOf('function loadMultiview()');
+    const to = src.indexOf('\n}\n', src.indexOf('function initMultiviewFeature(')) + 3;
+    const block = src.slice(from, to);
+    const imports = [];
+    const root = { querySelector: () => null };
+    const program = `
+      ${block.replace("import('/vendor-multiview.js')", "__import('/vendor-multiview.js')")}
+      const __import = (s) => { imports.push(s); return Promise.resolve({}); };
+      initMultiviewFeature(root);
+    `;
+    new Function('root', 'imports', program)(root, imports);
+    expect(imports).toEqual([]);
   });
 });
