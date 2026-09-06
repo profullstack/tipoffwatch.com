@@ -2781,3 +2781,57 @@ body.mv-pip .mv-screen {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ---- Multiview on a television ----------------------------------------- *
+ *
+ * A remote moves focus, not a pointer, so focus has to be as loud as a mouse
+ * hover is quiet. These rules are keyed off `[data-remote]`, which app.js sets
+ * only when the browser reports no fine pointer at all -- a phone or a laptop
+ * never sees them.
+ */
+
+/* The focused tile, on every device. A keyboard user at a desk gets this too:
+   a control that only shows focus on a TV is a control nobody can test. */
+.mv-tile:focus-visible {
+  outline: 4px solid var(--accent, #6cf);
+  outline-offset: -4px;
+}
+
+/* On a remote the grid IS the page. Chrome, margins and the drag handle are all
+   things a D-pad has to travel past to reach a picture. */
+[data-remote] .mv-grab {
+  display: none;
+}
+
+[data-remote] .mv-tile {
+  /* Focus is drawn inside the tile because the tile clips its own overflow;
+     thicker here than at a desk, because it is read across a room. */
+  outline-offset: -5px;
+}
+
+[data-remote] .mv-tile:focus,
+[data-remote] .mv-tile:focus-visible {
+  outline: 5px solid var(--accent, #6cf);
+}
+
+/* The audible tile stays distinguishable from the focused one: focus is where
+   you are, sound is what you hear, and on a TV they are usually not the same
+   tile. Different edge, different meaning. */
+[data-remote] .mv-tile[data-sound="1"] {
+  box-shadow: inset 0 0 0 5px var(--ok, #6ee7a8);
+}
+
+[data-remote] .mv-bar {
+  font-size: 1rem;
+  padding: 0.5rem 0.7rem;
+}
+
+[data-remote] .mv-actions .small-btn {
+  font-size: 1rem;
+  padding: 0.45rem 0.8rem;
+}
+
+/* Ten-foot type for the one line that explains the controls. */
+[data-remote] .mv-head .small {
+  font-size: 1.05rem;
+}
