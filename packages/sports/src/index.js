@@ -13,6 +13,7 @@ import * as sportsdb from './sportsdb.js';
  * linker until package.json says otherwise. The web app uses both of these.
  */
 export {
+  broadcastTerms,
   channelMatchesFixture,
   channelMatchesName,
   channelsForFixture,
@@ -22,6 +23,7 @@ export {
   MAX_CHANNELS,
   marketsWithOwnChannels,
   matchTerms,
+  nameMatchRank,
   oneChannelM3u,
   parseM3u,
   parseM3uStream,
