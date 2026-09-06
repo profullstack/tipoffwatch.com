@@ -52,6 +52,7 @@ import {
   marketsOf,
   NotFound,
   PushCheck,
+  ResultsPage,
   SearchPage,
   Settings,
   SharedLists,
@@ -355,6 +356,24 @@ async function cached(c, key, ttl, produce) {
 
 app.get('/healthz', (c) => c.text('ok'));
 
+/**
+ * How far back a results list reaches, in days.
+ *
+ * One number for /results and for the section on a league page, so the "All results"
+ * link under that section cannot lead to a page counting a different window -- which
+ * is what "12 in the last week" above a list of thirty would mean.
+ *
+ * Declared here rather than beside the /results route that reads it most. Route
+ * handlers run long after the module is evaluated so a later `const` would resolve
+ * fine at request time, but the league route above it would be reading an identifier
+ * from its temporal dead zone on any path that ever ran at import -- and a TDZ read
+ * does not fail locally where it is added, it kills the whole file at boot.
+ */
+const RESULTS_WINDOW_DAYS = 7;
+
+/** A team plays once or twice a week, so its own results reach back a month. */
+const TEAM_RESULTS_WINDOW_DAYS = 30;
+
 /*
  * Categories this brand does not carry, and where to send people instead.
  *
@@ -531,18 +550,34 @@ app.get(`/${brand.paths.collection}/:slug`, async (c) => {
    */
   const hours = config.sports.soonWindowHours;
   return cached(c, `page:league:${slug}`, config.cache.scheduleTtlSeconds, async () => {
-    const [teams, events, following, live, liveTotal, stalled, soon, soonTotal] = await Promise.all(
-      [
-        q.teamsForLeague(league.id, user?.id ?? null),
-        q.upcomingForLeague(league.id, { viewerId: user?.id ?? null }),
-        q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
-        q.liveNow({ viewerId: user?.id ?? null, leagueId: league.id }),
-        q.liveNowCount({ leagueId: league.id }),
-        q.stalledLiveCount(),
-        q.startingSoon({ hours, viewerId: user?.id ?? null, leagueId: league.id }),
-        q.startingSoonCount({ hours, leagueId: league.id }),
-      ],
-    );
+    const [
+      teams,
+      events,
+      following,
+      live,
+      liveTotal,
+      stalled,
+      soon,
+      soonTotal,
+      results,
+      resultsTotal,
+    ] = await Promise.all([
+      q.teamsForLeague(league.id, user?.id ?? null),
+      q.upcomingForLeague(league.id, { viewerId: user?.id ?? null }),
+      q.isFollowing({ userId: user?.id, subjectType: 'league', subjectId: league.id }),
+      q.liveNow({ viewerId: user?.id ?? null, leagueId: league.id }),
+      q.liveNowCount({ leagueId: league.id }),
+      q.stalledLiveCount(),
+      q.startingSoon({ hours, viewerId: user?.id ?? null, leagueId: league.id }),
+      q.startingSoonCount({ hours, leagueId: league.id }),
+      q.recentResults({
+        viewerId: user?.id ?? null,
+        leagueId: league.id,
+        windowDays: RESULTS_WINDOW_DAYS,
+        limit: 10,
+      }),
+      q.recentResultsCount({ leagueId: league.id, windowDays: RESULTS_WINDOW_DAYS }),
+    ]);
     return render(
       <LeaguePage
         user={user}
@@ -556,6 +591,9 @@ app.get(`/${brand.paths.collection}/:slug`, async (c) => {
         soon={soon}
         soonTotal={soonTotal}
         soonHours={hours}
+        results={results}
+        resultsTotal={resultsTotal}
+        resultsDays={RESULTS_WINDOW_DAYS}
       />,
     );
   });
@@ -566,16 +604,25 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
   const team = await q.getTeamBySlug(c.req.param('slug'));
   if (!team) return c.html(await render(<NotFound user={user} />), 404);
   const hours = config.sports.soonWindowHours;
-  const [events, following, live, liveTotal, stalled, soon, soonTotal] = await Promise.all([
-    q.upcomingForTeam(team.id, { viewerId: user?.id ?? null }),
-    q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
-    // Either side of the fixture: "are they playing" does not care who is at home.
-    q.liveNow({ viewerId: user?.id ?? null, teamId: team.id }),
-    q.liveNowCount({ teamId: team.id }),
-    q.stalledLiveCount(),
-    q.startingSoon({ hours, viewerId: user?.id ?? null, teamId: team.id }),
-    q.startingSoonCount({ hours, teamId: team.id }),
-  ]);
+  const [events, following, live, liveTotal, stalled, soon, soonTotal, results, resultsTotal] =
+    await Promise.all([
+      q.upcomingForTeam(team.id, { viewerId: user?.id ?? null }),
+      q.isFollowing({ userId: user?.id, subjectType: 'team', subjectId: team.id }),
+      // Either side of the fixture: "are they playing" does not care who is at home.
+      q.liveNow({ viewerId: user?.id ?? null, teamId: team.id }),
+      q.liveNowCount({ teamId: team.id }),
+      q.stalledLiveCount(),
+      q.startingSoon({ hours, viewerId: user?.id ?? null, teamId: team.id }),
+      q.startingSoonCount({ hours, teamId: team.id }),
+      // Same "either side" rule as the live query above it.
+      q.recentResults({
+        viewerId: user?.id ?? null,
+        teamId: team.id,
+        windowDays: TEAM_RESULTS_WINDOW_DAYS,
+        limit: 10,
+      }),
+      q.recentResultsCount({ teamId: team.id, windowDays: TEAM_RESULTS_WINDOW_DAYS }),
+    ]);
 
   /*
    * The reader's own list, matched against this name.
@@ -629,6 +676,9 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
         soon={soon}
         soonTotal={soonTotal}
         soonHours={hours}
+        results={results}
+        resultsTotal={resultsTotal}
+        resultsDays={TEAM_RESULTS_WINDOW_DAYS}
       />,
     ),
   );
@@ -3455,6 +3505,48 @@ app.post('/api/membership/payout', async (c) => {
  * route charges -- one source, so the page can never advertise one price and the
  * checkout take another.
  */
+/**
+ * Games that have finished.
+ *
+ * Cached like the other schedule pages and for the same reason -- it is identical
+ * for every visitor. The TTL can safely be the long one rather than the live pages'
+ * sixty seconds: nothing on a finished game changes except the box score arriving,
+ * and a fifteen-minute-old results list is not wrong in the way a fifteen-minute-old
+ * live score is.
+ *
+ * The `?sport=` filter is keyed into the cache. Leaving it out would serve the first
+ * visitor's sport to everyone -- the same shape of bug as caching a personalised
+ * page, arrived at from a query parameter instead of a session.
+ */
+app.get('/results', async (c) => {
+  const user = c.get('user');
+  const sport = c.req.query('sport') || null;
+  return cached(c, `page:results:${sport ?? 'all'}`, config.cache.resultsTtlSeconds, async () => {
+    const [events, total] = await Promise.all([
+      // Safe inside cached(): it renders fresh and never stores for a signed-in
+      // reader, so the follow star cannot be baked into a shared copy. Passed for
+      // the same reason every other list passes it -- a star that appears on the
+      // schedule and not on the results is the inconsistency, not a saving.
+      q.recentResults({
+        viewerId: user?.id ?? null,
+        sport,
+        windowDays: RESULTS_WINDOW_DAYS,
+        limit: 60,
+      }),
+      q.recentResultsCount({ sport, windowDays: RESULTS_WINDOW_DAYS }),
+    ]);
+    return render(
+      <ResultsPage
+        user={user}
+        events={events}
+        total={total}
+        sport={sport}
+        windowDays={RESULTS_WINDOW_DAYS}
+      />,
+    );
+  });
+});
+
 app.get('/live', async (c) => {
   const user = c.get('user');
   const [pass, playlist, history] = user
@@ -3933,6 +4025,9 @@ app.get('/sitemaps/static.xml', (c) => {
   const paths = [
     '/',
     href.category(),
+    // Changes as often as the home page does and for the same reason -- games
+    // finish all day -- so it is not weekly like the rest of this list.
+    '/results',
     '/about',
     '/feeds',
     '/premium',
@@ -3940,12 +4035,13 @@ app.get('/sitemaps/static.xml', (c) => {
     '/privacy',
     '/terms',
   ];
+  const daily = new Set(['/', '/results']);
   c.header('content-type', 'application/xml');
   return c.body(
     `${xmlHeader}<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${paths
       .map(
         (p) =>
-          `<url><loc>${config.siteUrl}${p}</loc><changefreq>${p === '/' ? 'hourly' : 'weekly'}</changefreq><priority>${p === '/' ? '1.0' : '0.6'}</priority></url>`,
+          `<url><loc>${config.siteUrl}${p}</loc><changefreq>${daily.has(p) ? 'hourly' : 'weekly'}</changefreq><priority>${p === '/' ? '1.0' : '0.6'}</priority></url>`,
       )
       .join('')}</urlset>`,
   );

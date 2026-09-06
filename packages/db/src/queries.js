@@ -1484,6 +1484,15 @@ export async function upsertEvents(events) {
       period = excluded.period,
       display_clock = excluded.display_clock,
       score_detail = excluded.score_detail,
+      -- Coalesced, and this one is not a nicety: the provider ships a line only
+      -- while a fixture is still to be played, and drops the field at kickoff. Every
+      -- sync after kickoff therefore carries a null here, and an assignment would
+      -- erase the line on the very pass that makes it interesting -- leaving the
+      -- recap, the one page that most wants to say what the market expected, as the
+      -- only page that never could. Measured 2026-09-06: 21 of 21 finished college
+      -- football games and 15 of 15 finished MLB games return no odds at all.
+      -- See oddsFromCompetition in packages/sports/src/espn.js.
+      odds = coalesce(excluded.odds, events.odds),
       home_record = coalesce(excluded.home_record, events.home_record),
       away_record = coalesce(excluded.away_record, events.away_record),
       updated_at = now()
@@ -2263,6 +2272,96 @@ export async function liveNow({
   `;
 }
 
+/**
+ * Games that have finished, newest first.
+ *
+ * The counterpart to liveNow, and the thing the site had no route to at all: a
+ * fixture that ended was reachable only by already holding its URL. Every browse
+ * surface -- the landing page, a league, a team, a sport -- looked forward only, so
+ * the play logs and now the box scores being collected for finished games were
+ * effectively unlinked.
+ *
+ * `state = 'post'` needs none of liveNow's staleness guard, and the difference is
+ * worth being explicit about. That guard exists because `state = 'in'` decays: a
+ * fixture the provider stops returning keeps saying it is in progress forever, so
+ * "live" has to mean "still being written to". `post` is terminal -- nothing
+ * downgrades out of it -- so an old row here is not a stale row, it is history, and
+ * a cutoff would be an arbitrary claim about how long a result stays interesting.
+ *
+ * The horizon is on kickoff instead, and it is a floor rather than a filter: without
+ * one, a league that has been dormant since 2019 sorts its last-ever fixture into
+ * "recent results". `windowDays` is what makes this a results page rather than an
+ * archive.
+ */
+export async function recentResults({
+  limit = 30,
+  windowDays = 7,
+  viewerId = null,
+  sport = null,
+  leagueId = null,
+  teamId = null,
+} = {}) {
+  return sql`
+    -- Columns spelled out rather than e.*, which every other list query here uses.
+    --
+    -- The reason is specific to this one: the recap column is a box score, several
+    -- kilobytes of jsonb, non-null for exactly the rows this query selects -- every
+    -- one of them is finished. e.* would therefore read sixty box scores to render
+    -- sixty list rows, none of which shows one; only the event page does. Every
+    -- other list is dominated by rows where the column is null and costs nothing.
+    select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name,
+           e.venue, e.venue_city, e.venue_region, e.neutral_site, e.time_known,
+           e.precision, e.home_score, e.away_score, e.score_detail, e.odds,
+           e.home_team_id, e.away_team_id, e.league_id, e.broadcast,
+           l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
+           l.abbr_ambiguous as league_abbr_ambiguous, l.slug as league_slug, l.sport,
+           exists (
+             select 1 from follows vf
+             where vf.user_id = ${viewerId}
+               and (
+                 (vf.subject_type = 'team' and vf.subject_id in (e.home_team_id, e.away_team_id))
+                 or (vf.subject_type = 'league' and vf.subject_id = e.league_id)
+               )
+           ) as following,
+           ht.display_name as home_name, ht.logo_url as home_logo, ht.slug as home_slug,
+           at.display_name as away_name, at.logo_url as away_logo, at.slug as away_slug
+    from events e
+    join leagues l on l.id = e.league_id and l.superseded_by is null
+    left join teams ht on ht.id = e.home_team_id
+    left join teams at on at.id = e.away_team_id
+    where e.state = 'post'
+      and e.starts_at > now() - (${windowDays} * interval '1 day')
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
+    -- Newest first, and by kickoff rather than by when we last wrote the row:
+    -- updated_at moves for every fixture on an active league's scoreboard, so
+    -- ordering by it would shuffle last night's results by which league happens to
+    -- have something on right now.
+    order by e.starts_at desc
+    limit ${limit}
+  `;
+}
+
+/** How many results are in the window, whether or not they all fit in the list. */
+export async function recentResultsCount({
+  windowDays = 7,
+  sport = null,
+  leagueId = null,
+  teamId = null,
+} = {}) {
+  const [row] = await sql`
+    select count(*)::int as n
+    from events e join leagues l on l.id = e.league_id and l.superseded_by is null
+    where e.state = 'post'
+      and e.starts_at > now() - (${windowDays} * interval '1 day')
+      and (${sport}::text is null or l.sport = ${sport})
+      and (${leagueId}::bigint is null or e.league_id = ${leagueId})
+      and (${teamId}::bigint is null or ${teamId}::bigint in (e.home_team_id, e.away_team_id))
+  `;
+  return row?.n ?? 0;
+}
+
 /** How many games are in progress, whether or not they all fit in the list. */
 export async function liveNowCount({ sport = null, leagueId = null, teamId = null } = {}) {
   const [row] = await sql`
@@ -2553,6 +2652,12 @@ export async function publicEvents({ leagueSlug = null, sport = null, from = nul
     select e.id, e.starts_at, e.state, e.status_detail, e.name, e.short_name, e.venue,
            e.venue_city, e.venue_region, e.neutral_site,
            e.home_score, e.away_score,
+           -- The line, but deliberately not the box score. This response carries up
+           -- to 200 fixtures and a recap is several kilobytes each, so including it
+           -- would turn a small JSON feed into a multi-megabyte one for the sake of
+           -- a field almost no caller of a SCHEDULE endpoint is asking for. It is on
+           -- the event page, which is one fixture at a time.
+           e.odds,
            l.slug as league, l.name as league_name, l.abbreviation as league_abbr, l.region as league_region,
            l.abbr_ambiguous as league_abbr_ambiguous, l.sport,
            ht.display_name as home, at.display_name as away
@@ -2780,6 +2885,13 @@ export async function updateEventScores(rows) {
       broadcast_country = case when v.broadcast is not null then 'United States' else e.broadcast_country end,
       broadcast_markets =
         case when v.broadcast is not null then v.markets::jsonb else e.broadcast_markets end,
+      -- Coalesced for the same reason as in upsertEvents, and this is the pass that
+      -- matters most for it. The tick runs every minute over exactly the leagues
+      -- with something on, so it is the last thing to see a fixture while the book
+      -- is still pricing it -- and the FIRST thing to see it after kickoff, carrying
+      -- the null that an assignment here would use to wipe the line seconds after it
+      -- became worth keeping.
+      odds = coalesce(v.odds::jsonb, e.odds),
       updated_at = now()
     from (
       select * from unnest(
@@ -2794,9 +2906,10 @@ export async function updateEventScores(rows) {
         ${pgArray(rows.map((r) => (r.score_detail ? JSON.stringify(r.score_detail) : null)))}::text[],
         ${pgArray(rows.map((r) => r.attendance ?? null))}::int[],
         ${pgArray(rows.map((r) => r.broadcast ?? null))}::text[],
-        ${pgArray(rows.map((r) => (r.broadcast ? JSON.stringify(r.markets ?? []) : null)))}::text[]
+        ${pgArray(rows.map((r) => (r.broadcast ? JSON.stringify(r.markets ?? []) : null)))}::text[],
+        ${pgArray(rows.map((r) => (r.odds ? JSON.stringify(r.odds) : null)))}::text[]
       ) as t(provider, provider_key, state, status_detail, home_score, away_score,
-             period, display_clock, score_detail, attendance, broadcast, markets)
+             period, display_clock, score_detail, attendance, broadcast, markets, odds)
     ) v
     where e.provider = v.provider and e.provider_key = v.provider_key
     returning e.id
@@ -2966,6 +3079,72 @@ export async function eventsNeedingPlays({
 /** Close out a finished game's log, so its one catch-up read is not repeated. */
 export async function markPlaysFinal(eventId) {
   await sql`update events set plays_final = true, plays_synced_at = now() where id = ${eventId}`;
+}
+
+/**
+ * Finished games owed a box score.
+ *
+ * Deliberately a separate queue from eventsNeedingPlays rather than a widening of
+ * it, for the reason 0012 gives: `plays_supported` and `boxscore_supported` exclude
+ * different leagues, and six sports -- volleyball, water polo, field hockey, rugby,
+ * rugby league and lacrosse -- have a box score and no play log at all. Folded into
+ * one predicate, those six would either keep being read for a play log they can
+ * never have, or keep being denied the only thing they do have.
+ *
+ * The read itself is shared, though, and that is the point: syncPlays fetches one
+ * summary and takes both out of it. This queue decides which fixtures are worth a
+ * read that the play queue would not already be making, which on a normal day is
+ * just those six sports.
+ *
+ * `recap_synced_at` closes a row out, not `recap is not null` -- a fixture whose
+ * summary genuinely carries no box score would otherwise sit at the front of this
+ * queue forever, which is exactly the churn 0011 was written to stop.
+ *
+ * Newest-first for the same reason the finished play queue is: the game that just
+ * ended is the one somebody has open.
+ */
+export async function eventsNeedingRecap({ limit = 4, catchupHours = 12 } = {}) {
+  return sql`
+    select e.id, e.state, e.provider_key, l.provider_key as league_key, l.provider,
+           (count(*) over ())::int as total_due
+    from events e
+    join leagues l on l.id = e.league_id
+    where e.state = 'post'
+      and l.boxscore_supported
+      and e.recap_synced_at is null
+      and e.starts_at > now() - (${catchupHours} * interval '1 hour')
+    order by e.starts_at desc
+    limit ${limit}
+  `;
+}
+
+/**
+ * Store a finished game's box score, and close it out either way.
+ *
+ * One statement for both, because they must not come apart: a write that saved the
+ * recap without stamping would re-read the fixture forever, and a stamp without the
+ * recap would lose it forever.
+ */
+export async function saveRecap(eventId, recap) {
+  await sql`
+    update events
+       set recap = ${recap ? JSON.stringify(recap) : null}::jsonb,
+           recap_synced_at = now(),
+           -- The closing line, for a game that finished before any of this existed.
+           --
+           -- Odds are captured from the scoreboard before kickoff, so going forward
+           -- every fixture has them by the time it is worth reading about. Nothing
+           -- reaches back for the ones already played -- the field is gone from the
+           -- scoreboard by then -- but pickcenter still carries it inside the same
+           -- summary this recap came out of, so the backfill pass can fill it in
+           -- while it is there. See recapFromSummary.
+           --
+           -- coalesce keeps the EXISTING value where there is one: that reading was
+           -- taken by the live tick within a minute of kickoff, which is closer to a
+           -- true closing line than a book quoting a settled market afterwards.
+           odds = coalesce(events.odds, ${recap?.odds ? JSON.stringify(recap.odds) : null}::jsonb)
+     where id = ${eventId}
+  `;
 }
 
 export async function markPlaysSynced(eventId) {

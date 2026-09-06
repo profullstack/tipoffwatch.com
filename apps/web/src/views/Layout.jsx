@@ -219,6 +219,11 @@ export const Layout = (props) => {
 
           <nav>
             <a href={href.category()}>{Word.categories}</a>
+            {/* Next to the catalogue rather than behind a sign-in, because a
+              finished game is the one thing on this site somebody arrives looking
+              for without an account: they missed it and want the score. Everything
+              else in this nav is about what has not happened yet. */}
+            <a href="/results">{brand.copy.resultsTitle}</a>
             {props.user ? <a href="/following">{brand.copy.mine}</a> : null}
             {/* The count rides on the user, set once in middleware, so a view stays
               a view and no render call has to remember to pass it. */}

@@ -352,31 +352,455 @@ export function playsFromSummary(data) {
   return [...seen.values()];
 }
 
+/** A number ESPN may ship as a string, a float, or not at all. */
+const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+
+/**
+ * A moneyline price, from either of the two places ESPN puts it.
+ *
+ * The scoreboard and the summary disagree, and reading only one is why the first
+ * pass captured a spread and a total for every NFL game and a moneyline for none:
+ *
+ *   - scoreboard: `odds[].moneyline.home.close.odds`, a STRING ("-185"), with an
+ *     `open` beside the `close`
+ *   - pickcenter: `odds[].homeTeamOdds.moneyLine`, a NUMBER
+ *
+ * Close before open, because the closing price is the one the market settled on and
+ * the one a recap should quote. Soccer's draw sits under `drawOdds` in pickcenter
+ * and under the same `moneyline` map as the two sides on the scoreboard.
+ *
+ * Prices beyond ±10,000 are dropped. Once a game is over the book's own feed keeps
+ * quoting the settled result rather than going quiet -- a finished college football
+ * game reads `-100000` for the winner and `+5000` for the loser -- and printing
+ * "USC -100000" on a recap is worse than printing no moneyline at all. A real
+ * pre-game price never reaches that, so the bound costs nothing live.
+ */
+const MONEYLINE_LIMIT = 10_000;
+function moneyline(book, which) {
+  const fromPickcenter =
+    which === 'draw' ? book.drawOdds?.moneyLine : book[`${which}TeamOdds`]?.moneyLine;
+  const slot = book.moneyline?.[which];
+  const value = num(fromPickcenter ?? slot?.close?.odds ?? slot?.open?.odds);
+  if (value === null || Math.abs(value) > MONEYLINE_LIMIT) return null;
+  return value;
+}
+
+/**
+ * The betting line on a fixture, from the scoreboard entry we already have.
+ *
+ * This costs nothing: `competitions[].odds[]` rides along on the same scoreboard
+ * response the sweep reads for every league anyway, so capturing it adds no
+ * request, no bandwidth and no quota.
+ *
+ * What it does add is a deadline. **The field only exists while the game is
+ * `pre`.** Measured against the live API 2026-09-06: every one of the NFL's 16, the
+ * WNBA's 5 and college football's 4 pre-kickoff games carried a line, and every
+ * finished game in all four leagues sampled carried `odds: null` -- or, on soccer,
+ * the tidier-looking `[null]`, a one-entry list whose entry is nothing, which is
+ * why the emptiness check below tests the entries and not the array. A book stops
+ * pricing a game when it starts and ESPN drops the field with it.
+ *
+ * So there is no reading this later for the page that most wants it. The line has
+ * to be written down before kickoff and kept, which is what
+ * `coalesce(excluded.odds, events.odds)` in upsertEvents is for.
+ *
+ * Several books are returned, already ordered by ESPN's own `priority`. The first
+ * is taken rather than averaged: a consensus of two books at different numbers is a
+ * number no one offered, and the page names which book it is quoting.
+ */
+export function oddsFromCompetition(comp, { state = 'pre', now = new Date() } = {}) {
+  const raw = (comp?.odds ?? []).filter(Boolean);
+  if (raw.length === 0) return null;
+  const book = raw[0];
+
+  const home = book.homeTeamOdds ?? {};
+  const away = book.awayTeamOdds ?? {};
+
+  // Which side is favoured, asked of the book rather than inferred from the sign of
+  // the spread. The sign convention is not stable across sports -- baseball quotes a
+  // run line the other way round from a football spread -- and both sides carry an
+  // explicit flag, so there is nothing to infer. A genuine pick'em sets neither.
+  const favorite = home.favorite === true ? 'home' : away.favorite === true ? 'away' : null;
+
+  // `details` is the book's own phrasing ("SEA -3.5", "CHC -126") and is what gets
+  // shown. It is one string per sport's convention and reassembling it from the
+  // parts would mean re-deciding, per sport, something already decided.
+  const details = typeof book.details === 'string' && book.details.trim() ? book.details : null;
+
+  const line = {
+    provider: book.provider?.name ?? book.provider?.displayName ?? null,
+    details,
+    spread: num(book.spread),
+    overUnder: num(book.overUnder),
+    favorite,
+    homeMoneyline: moneyline(book, 'home'),
+    awayMoneyline: moneyline(book, 'away'),
+    // Soccer prices the draw and nothing else does. Absent rather than zero.
+    drawMoneyline: moneyline(book, 'draw'),
+    capturedAt: now.toISOString(),
+    // What the game's state was when this was captured, so the page can say
+    // "closing line" only when it has earned it rather than for any stored line.
+    capturedState: state,
+  };
+
+  // A book entry that is present but says nothing -- no price, no spread, no total
+  // -- is worth less than no entry, because storing it would satisfy the coalesce in
+  // upsertEvents and lock out the real line arriving on a later pass.
+  const hasContent =
+    line.details ||
+    line.spread !== null ||
+    line.overUnder !== null ||
+    line.homeMoneyline !== null ||
+    line.awayMoneyline !== null;
+  return hasContent ? line : null;
+}
+
+/**
+ * Everything about a finished game that is not a play.
+ *
+ * This is read out of the same ~500KB summary the play poller already fetches, so
+ * like the odds above it costs no additional request. The comment on fetchPlays has
+ * described this response as carrying "a boxscore, rosters, odds and news we do not
+ * use" since it was written; this is the part that stops being true.
+ *
+ * Every key is optional and the renderer draws only what it finds. That is not
+ * defensive habit -- the shapes genuinely differ per sport, measured 2026-09-06
+ * against one finished fixture each:
+ *
+ *   - `boxscore.teams[].statistics` comes in TWO containers. Football, soccer and
+ *     Australian football ship a **flat** list of `{label, displayValue}`. Baseball
+ *     and rugby league ship it **grouped**, `{displayName, stats: [...]}` with the
+ *     real numbers one level down. Reading only the flat one -- the obvious
+ *     shape -- yields an empty comparison table for baseball, which is the same
+ *     trap play-by-play hit with `plays` vs `drives` vs `commentary`.
+ *   - Volleyball and field hockey ship **no team statistics at all**, but do ship
+ *     per-period linescores and player rows. A recap gated on team stats would show
+ *     them nothing.
+ *   - `leaders` is present for football, soccer and AFL and absent for baseball,
+ *     volleyball, rugby league and field hockey.
+ *
+ * The period label comes from `format.regulation.displayName`, which is the
+ * provider naming its own unit -- Quarter, Inning, Half, Set. Worth using rather
+ * than hard-coding a per-sport table: play-by-play had to synthesise a label for
+ * football because the plays carry none, and this field would have answered it.
+ */
+export function recapFromSummary(data) {
+  if (!data || typeof data !== 'object') return null;
+
+  const comp = data.header?.competitions?.[0];
+  const competitors = comp?.competitors ?? [];
+  const of = (which) => competitors.find((c) => c.homeAway === which);
+
+  const recap = {};
+
+  /* ---- linescores: the score by quarter, inning, half or set ---- */
+  const periodLabel = data.format?.regulation?.displayName ?? null;
+  const cells = (c) =>
+    (c?.linescores ?? []).map((l) => {
+      const v = l.displayValue ?? l.value;
+      return v === undefined || v === null ? '' : String(v);
+    });
+  const regulation = num(data.format?.regulation?.periods);
+  const [awayLine, homeLine] = trimPadding(cells(of('away')), cells(of('home')), regulation);
+  if (awayLine.length > 0 || homeLine.length > 0) {
+    recap.linescores = {
+      // Numbered from the provider's own count rather than from `format.periods`:
+      // a game that went to extra time or extra innings has more columns than
+      // regulation defines, and the header has to grow with the row beneath it.
+      labels: Array.from({ length: Math.max(awayLine.length, homeLine.length) }, (_, i) =>
+        String(i + 1),
+      ),
+      periodLabel,
+      away: awayLine,
+      home: homeLine,
+    };
+  }
+
+  /* ---- team statistics, out of whichever of the two containers is in use ---- */
+  const teamStats = teamStatRows(data.boxscore?.teams ?? []);
+  if (teamStats.length > 0) recap.teamStats = teamStats;
+
+  /* ---- who did what, already phrased ---- */
+  const leaders = [];
+  for (const entry of data.leaders ?? []) {
+    const teamId = entry.team?.id ?? null;
+    const side =
+      teamId && of('home')?.team?.id === teamId
+        ? 'home'
+        : teamId && of('away')?.team?.id === teamId
+          ? 'away'
+          : null;
+    for (const category of entry.leaders ?? []) {
+      const top = (category.leaders ?? [])[0];
+      const athlete = top?.athlete;
+      if (!athlete || !top?.displayValue) continue;
+      leaders.push({
+        side,
+        team: entry.team?.abbreviation ?? entry.team?.displayName ?? null,
+        category: category.shortDisplayName ?? category.displayName ?? null,
+        name: athlete.displayName ?? athlete.shortName ?? null,
+        // ESPN has already written "25/29, 286 YDS, 2 TD" per sport's convention.
+        // Assembling that from raw stats would be re-deciding, badly, something
+        // the provider decided correctly for sixteen different sports.
+        line: top.displayValue,
+      });
+    }
+  }
+  if (leaders.length > 0) recap.leaders = leaders.slice(0, 12);
+
+  /* ---- the frame around the game ---- */
+  const info = data.gameInfo ?? {};
+  const officials = (info.officials ?? []).map((o) => o.displayName ?? o.fullName).filter(Boolean);
+  if (officials.length > 0) recap.officials = officials;
+  if (typeof info.gameDuration === 'string' && info.gameDuration)
+    recap.duration = info.gameDuration;
+  // Zero is how this field says "not reported", not how it says an empty ground.
+  // Four of the seven sports sampled return 0 here, and "Attendance 0" under a
+  // sold-out AFL final is a worse answer than no attendance line at all.
+  if (Number.isFinite(info.attendance) && info.attendance > 0) recap.attendance = info.attendance;
+
+  /* ---- the wire recap, where an agency covers the league ---- */
+  const article = data.article;
+  if (article?.headline) {
+    recap.article = {
+      headline: article.headline,
+      // The agency's own opening sentence. It arrives with a leading em dash
+      // where the dateline was stripped ("— Michael Conforto homered and..."),
+      // which reads as a typo on a page that has no dateline to explain it.
+      summary:
+        typeof article.description === 'string'
+          ? article.description.replace(/^[\s—–-]+/, '')
+          : null,
+      source: article.source ?? null,
+      publishedAt: article.published ?? article.originallyPosted ?? null,
+    };
+  }
+
+  /* ---- the line, if it survived ---- */
+  //
+  // `summary.odds` is [] on a finished game, same as the scoreboard. `pickcenter`
+  // is the one place the number outlives the whistle, and it carries the same
+  // fields under the same names -- so it reads with the scoreboard's own parser and
+  // gets marked `post`, which is what lets the page call it a closing line.
+  const closing = oddsFromCompetition({ odds: data.pickcenter ?? [] }, { state: 'post' });
+  if (closing) recap.odds = closing;
+
+  return Object.keys(recap).length > 0 ? recap : null;
+}
+
+/**
+ * Drop the empty periods some leagues pad a linescore out to.
+ *
+ * Rugby league is played in two halves and returns four columns, the last two
+ * scoreless -- ESPN pads to a fixed width rather than to the shape of the game. Left
+ * alone, the recap shows a two-half sport with four numbered periods and invites the
+ * reader to wonder what happened in the third.
+ *
+ * Only ever trailing columns, only ever scoreless ones, and only ever past
+ * regulation. Each of those three is load-bearing. A genuine scoreless final quarter
+ * inside regulation is a fact about the game and stays; extra time is scored and
+ * stays; and a shootout that ends 0-0 on the card cannot be distinguished from
+ * padding, which is why regulation is the floor rather than the whole rule. With no
+ * regulation count from the provider nothing is trimmed at all.
+ */
+function trimPadding(away, home, regulationPeriods) {
+  if (!regulationPeriods) return [away, home];
+  let end = Math.max(away.length, home.length);
+  const blank = (row, i) => {
+    const v = row[i];
+    return v === undefined || v === '' || v === '0';
+  };
+  while (end > regulationPeriods && blank(away, end - 1) && blank(home, end - 1)) end--;
+  return [away.slice(0, end), home.slice(0, end)];
+}
+
+/**
+ * The team comparison table, from either container ESPN uses.
+ *
+ * Flat is `[{label, displayValue}]`; grouped is `[{displayName, stats: [...]}]` with
+ * the values a level down. Both are read, because which one a league uses is not
+ * something the caller knows and is not worth a per-sport table -- the presence of
+ * `stats` says it directly.
+ *
+ * Paired by stat rather than listed per team: the whole value of this table is
+ * reading 401 against 312 on one line, and two separate lists make the reader do
+ * the join. A stat only one side reported is dropped for the same reason.
+ */
+function teamStatRows(teams) {
+  if (teams.length < 2) return [];
+  const side = (which) => teams.find((t) => t.homeAway === which) ?? null;
+  const home = side('home');
+  const away = side('away');
+  if (!home || !away) return [];
+
+  const flatten = (team) => {
+    const out = new Map();
+    for (const entry of team.statistics ?? []) {
+      if (Array.isArray(entry.stats)) {
+        // Grouped: the group's name prefixes its stats, because "Hits" under
+        // Batting and "Hits" under Pitching are different numbers and collide on
+        // the bare label.
+        const group = entry.displayName ?? entry.name ?? '';
+        for (const s of entry.stats) {
+          const label = s.displayName ?? s.shortDisplayName ?? s.abbreviation ?? s.name;
+          if (!label) continue;
+          out.set(`${group}|${label}`, {
+            group,
+            label,
+            value: s.displayValue ?? (s.value === undefined ? null : String(s.value)),
+          });
+        }
+      } else {
+        const label = entry.label ?? entry.displayName ?? entry.name;
+        if (!label) continue;
+        out.set(`|${label}`, {
+          group: null,
+          label,
+          value: entry.displayValue ?? (entry.value === undefined ? null : String(entry.value)),
+        });
+      }
+    }
+    return out;
+  };
+
+  const homeStats = flatten(home);
+  const awayStats = flatten(away);
+  const rows = [];
+  for (const [key, h] of homeStats) {
+    const a = awayStats.get(key);
+    if (!a) continue;
+    if (h.value == null && a.value == null) continue;
+    if (SKIP_STAT.has(statKey(h.label))) continue;
+    // A stat neither side recorded is not a comparison, it is a stat the sport does
+    // not use. Rugby league returns the whole of rugby union's card -- lineouts,
+    // mauls, rucks -- at 0-0, and baseball returns "Grand Slam Home Runs" for every
+    // game ever played. Dropping these is most of the difference between a table
+    // worth reading and forty rows of nothing.
+    if (isZero(h.value) && isZero(a.value)) continue;
+    rows.push({ group: h.group, label: h.label, home: h.value, away: a.value });
+  }
+  return capPerGroup(rows, 40);
+}
+
+/** Compared without punctuation or case, so one denylist covers every sport's phrasing. */
+const statKey = (label) =>
+  String(label)
+    .toLowerCase()
+    .replace(/[^a-z]/g, '');
+
+/**
+ * Rows that are about the record rather than about the game.
+ *
+ * A box score answers "what happened", and these do not: they are season context, a
+ * projection, or the provider's own bookkeeping about whether a player qualifies for
+ * a leaderboard. Left in, they crowd out the actual numbers -- on the MLB fixture
+ * sampled they took six of the first thirty rows and "Projected Home Runs 162.0" sat
+ * two lines above the batting average.
+ */
+const SKIP_STAT = new Set(
+  [
+    'gamesplayed',
+    'teamgamesplayed',
+    'gamesstarted',
+    'qualified',
+    'qualifiedcatcher',
+    'isqualified',
+    'isqualifiedinsteals',
+    'isqualifiedsteals',
+    'playerrating',
+    'projectedhomeruns',
+    'rank',
+  ].map(statKey),
+);
+
+/** Whether a stat reads as nothing: absent, blank, or any spelling of zero. */
+const isZero = (v) => {
+  if (v === null || v === undefined || v === '') return true;
+  const n = Number(String(v).replace(/[%,]/g, ''));
+  return Number.isFinite(n) && n === 0;
+};
+
+/**
+ * Cap the table, taking from every group rather than filling it from the first.
+ *
+ * Grouped sports return several hundred rows and a recap is not a statistics export,
+ * so there has to be a cap -- but a flat `slice` puts the whole of it inside
+ * whichever group ESPN happened to order first. On the MLB fixture that meant forty
+ * rows of Batting and not one line of Pitching or Fielding, which is a strange thing
+ * for a baseball box score to omit. Round-robin instead: every group gets a row
+ * before any group gets a second, so the shape of the table follows the shape of the
+ * sport. Ungrouped sports have one bucket and are unaffected.
+ */
+function capPerGroup(rows, limit) {
+  if (rows.length <= limit) return rows;
+  const groups = new Map();
+  for (const row of rows) {
+    const g = row.group ?? '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(row);
+  }
+  const out = [];
+  const buckets = [...groups.values()];
+  for (let i = 0; out.length < limit; i++) {
+    let placed = false;
+    for (const bucket of buckets) {
+      if (i >= bucket.length) continue;
+      out.push(bucket[i]);
+      placed = true;
+      if (out.length === limit) break;
+    }
+    if (!placed) break;
+  }
+  return out;
+}
+
 /**
  * Play-by-play for one fixture.
  *
- * The summary response is ~500KB and carries a boxscore, rosters, odds and news we
- * do not use, so callers must space these out -- see eventsNeedingPlays, which caps
- * and staggers them. There is no smaller endpoint.
+ * The summary response is ~500KB and carries rosters and news we do not use, so
+ * callers must space these out -- see eventsNeedingPlays, which caps and staggers
+ * them. There is no smaller endpoint.
  *
  * The provider phrases each play per sport and supplies its own stable id, so both
  * are passed through: rebuilding "Duran homered to right center (388 feet)" from
  * structured fields is not something we could do better.
  */
 export async function fetchPlays(providerKey, eventProviderKey) {
+  const summary = await fetchSummary(providerKey, eventProviderKey);
+  return summary ? playsFromSummary(summary) : [];
+}
+
+/**
+ * The plays AND the recap, from a single read.
+ *
+ * The whole point of this function's existence is that it is one request. Splitting
+ * plays and box score into two adapter calls would have doubled the app's largest
+ * bandwidth line -- ~500KB per fixture through a metered residential proxy, at 8
+ * summaries per two minutes -- to fetch two halves of one response we already had.
+ *
+ * The recap is parsed only when asked for, since it is wasted work on a game still
+ * in progress: the box score is not final, and the poller will be back.
+ */
+export async function fetchPlaysAndRecap(providerKey, eventProviderKey, { recap = false } = {}) {
+  const summary = await fetchSummary(providerKey, eventProviderKey);
+  if (!summary) return { plays: [], recap: null };
+  return {
+    plays: playsFromSummary(summary),
+    recap: recap ? recapFromSummary(summary) : null,
+  };
+}
+
+async function fetchSummary(providerKey, eventProviderKey) {
   // The event's provider_key is `<sport>/<league>/<id>`; the summary wants the id.
   const eventId = eventProviderKey.split('/').pop();
-  if (!eventId) return [];
+  if (!eventId) return null;
 
-  let data;
   try {
-    data = await getJson(`${SITE}/${providerKey}/summary?event=${encodeURIComponent(eventId)}`);
+    return await getJson(`${SITE}/${providerKey}/summary?event=${encodeURIComponent(eventId)}`);
   } catch {
     // A fixture with no summary yet is normal before first pitch, not an error.
-    return [];
+    return null;
   }
-
-  return playsFromSummary(data);
 }
 
 /** ESPN's status states are already pre/in/post; anything unknown is treated as pre. */
@@ -501,10 +925,17 @@ function normaliseEvent(e, providerKey) {
   ];
   const broadcast = broadcastNames.join(', ') || null;
 
+  const state = normaliseState(comp);
+
   return {
     providerKey: `${providerKey}/${e.id}`,
     startsAt: new Date(e.date),
-    state: normaliseState(comp),
+    state,
+    // Free -- it rides on this same response -- and it has to be taken here or not
+    // at all, because the field is gone by the time the game is worth reading about.
+    // See oddsFromCompetition; null on most passes, which is why the upsert
+    // coalesces rather than assigns.
+    odds: oddsFromCompetition(comp, { state }),
     statusDetail: comp.status?.type?.shortDetail ?? null,
     name: e.name ?? e.shortName ?? 'Fixture',
     shortName: e.shortName ?? null,
