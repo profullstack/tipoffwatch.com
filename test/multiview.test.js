@@ -281,11 +281,29 @@ describe('the “Where to watch” rows', () => {
   });
 
   test('withhold the credential-bearing links on a managed list', () => {
-    expect(body).toContain('{managed ? null : (');
     expect(body).toContain('playerLinks(ch.url).vlc');
     expect(body).toContain('/playlist.m3u`}');
     // The flag has to actually reach the section.
     expect(src).toContain('managed={Boolean(ownChannels?.managed)}');
+  });
+
+  /*
+   * The row decides, not the section.
+   *
+   * This used to assert the literal `{managed ? null : (`, which was right while a
+   * reader could hold one list: the whole section was either our managed line or
+   * theirs. Matches are now ranked across every provider they have, so a managed
+   * channel can sit directly above one of their own -- and a section-level answer
+   * would either publish our reseller credential on the managed rows or withhold
+   * their own address on theirs. Asserted as the property rather than the spelling,
+   * so a future rewrite of the condition cannot pass by keeping the old string.
+   */
+  test('the credential check is made per row, not per section', () => {
+    const guard = body.slice(0, body.indexOf('playerLinks(ch.url).vlc'));
+    const condition = guard.slice(guard.lastIndexOf('{', guard.lastIndexOf('? null : (')));
+    expect(condition).toContain('ch.providerManaged');
+    // And the section-level flag is still honoured, for the pages that pass one.
+    expect(condition).toContain('managed');
   });
 
   test('still play through the proxy, which needs no credential', () => {

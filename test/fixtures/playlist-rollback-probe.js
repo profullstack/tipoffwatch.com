@@ -22,10 +22,26 @@ const { open, seal } = await import(`${ROOT}packages/auth/src/secretbox.js`);
 /** The one row this feature stores, held in memory. */
 let row = null;
 
+/*
+ * The row has an id now, because a reader can hold several lists and every write
+ * names the one it is about. `getPlaylistFor` is what importPlaylist asks when it
+ * is EDITING a list, which is the case this probe is about: correcting the address
+ * on a subscription that already exists.
+ */
+const ROW_ID = 1;
+
 mock.module('@tipoff/db/queries', () => ({
   getPlaylist: async () => row,
+  getPlaylistFor: async ({ playlistId }) => (playlistId === ROW_ID ? row : null),
   savePlaylist: async ({ userId, label, sourceUrl }) => {
-    row = { ...(row ?? {}), user_id: userId, label, source_url: sourceUrl, last_error: null };
+    row = {
+      ...(row ?? {}),
+      id: ROW_ID,
+      user_id: userId,
+      label,
+      source_url: sourceUrl,
+      last_error: null,
+    };
     return row;
   },
   markPlaylistError: async ({ error }) => {
@@ -33,6 +49,10 @@ mock.module('@tipoff/db/queries', () => ({
   },
   markPlaylistFresh: async () => {},
   replacePlaylistChannels: async () => {},
+  // A failed ADD removes the row it created. An edit never reaches this.
+  deletePlaylist: async () => {
+    row = null;
+  },
 }));
 
 const { importPlaylist } = await import(`${ROOT}packages/playlists/src/index.js`);
@@ -51,7 +71,7 @@ const serveOnly = (url) => {
 
 const attempt = async (url, label = 'My line') => {
   try {
-    await importPlaylist({ userId: 'u1', url, label });
+    await importPlaylist({ userId: 'u1', playlistId: ROW_ID, url, label });
     return null;
   } catch (err) {
     return err.message;

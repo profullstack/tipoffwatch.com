@@ -180,8 +180,21 @@ describe('the module', () => {
     expect(body).toContain('lineSecret: seal(created.password)');
     expect(body).toContain('sourceUrl: seal(created.m3u)');
     expect(body).toContain("if (!pass) return { ok: false, reason: 'no active pass' }");
-    // A reader's own list is parked, never dropped.
-    expect(body).toContain('stashedSourceUrl: stash.sourceUrl');
+    /*
+     * A reader's own list is not touched at all.
+     *
+     * This used to assert `stashedSourceUrl: stash.sourceUrl`, which was the old
+     * mechanism: with one list per account, granting a pass had to park their
+     * address, take their row, and hand it back on lapse. 0035 allows several
+     * rows, so our line is simply added beside theirs -- which is strictly better
+     * than parking it, because paying us no longer costs them access to their own
+     * subscription for the length of the pass.
+     */
+    expect(body).toContain('managedPlaylistFor');
+    expect(body).not.toContain('stashedSourceUrl');
+    // Marked by the id the import returned, never by falling back to the reader's
+    // first list -- which is very likely one of their own.
+    expect(body).toContain('playlistId: result?.playlistId ?? null');
   });
 
   test('the managed list is named for the brand, never the provider', () => {
@@ -327,10 +340,21 @@ describe('the routes', () => {
     );
   });
 
-  test('removing a managed list gives back the one it replaced', () => {
+  /*
+   * There is nothing left to give back.
+   *
+   * The restore this used to assert existed only because a pass took the reader's
+   * row. Now it adds one beside theirs, so removing a list removes exactly that
+   * list -- and the route refuses a delete that names none, rather than falling
+   * back to "every list this reader has", which is right for closing an account
+   * and catastrophic behind a button labelled Remove.
+   */
+  test('removing a list removes that list and nothing else', () => {
     const body = routeBody("app.post('/api/playlist/delete'");
-    expect(body).toContain('existing.stashed_source_url');
-    expect(body).toContain('await importPlaylist({ userId: user.id, url: stashed');
+    expect(body).not.toContain('stashed_source_url');
+    expect(body).toContain('if (!playlistId)');
+    expect(body).toContain('getPlaylistFor({ userId: user.id, playlistId })');
+    expect(body).toContain('deletePlaylist(user.id, playlistId)');
   });
 
   test('the event page offers a pass only to a reader with no list', () => {
