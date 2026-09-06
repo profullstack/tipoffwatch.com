@@ -23,6 +23,7 @@ export {
   MAX_CHANNELS,
   marketsWithOwnChannels,
   matchTerms,
+  nameMatchRank,
   oneChannelM3u,
   parseM3u,
   parseM3uStream,

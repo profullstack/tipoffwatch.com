@@ -4,9 +4,9 @@ import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
   broadcastTerms,
-  channelMatchesName,
   marketsWithOwnChannels,
   matchTerms,
+  nameMatchRank,
   normaliseTeam,
   parseM3uStream,
   rankChannelsForFixture,
@@ -634,10 +634,19 @@ export async function sharedChannelsForEvent({ viewerId, event }) {
    */
   const network = broadcasters.flatMap((name) =>
     rows
-      .filter((r) => !claimed.has(r.id) && channelMatchesName(r.title, name))
-      // The plainest title first, the same tiebreak the rest of this file uses: a
-      // provider gives the primary the shortest name.
-      .sort((a, b) => a.title.length - b.title.length)
+      .map((r) => ({ r, rank: claimed.has(r.id) ? 0 : nameMatchRank(r.title, name) }))
+      .filter((x) => x.rank > 0)
+      /*
+       * The surest reading first, then the plainest title.
+       *
+       * The cap is per network and small, so the order decides what a reader
+       * actually sees. Asking only whether a row matched put a channel that leans
+       * on its provider's shelf label -- "USA| MLB NETWORK" for a game on USA --
+       * level with the one that says the name itself, and the shortest title then
+       * settled it. Same ordering the reader's own section uses; see nameMatchRank.
+       */
+      .sort((a, b) => b.rank - a.rank || a.r.title.length - b.r.title.length)
+      .map((x) => x.r)
       .slice(0, SHARED_PER_NETWORK)
       .map((r) => ({
         id: r.id,
