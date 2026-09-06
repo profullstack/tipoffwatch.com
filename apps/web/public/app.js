@@ -1583,6 +1583,25 @@ function initMultiview(root = document) {
   const maxTiles = Math.max(1, Number(page.dataset.maxTiles) || MULTIVIEW_MAX);
   const playable = canTransmux();
 
+  /*
+   * A television is a browser with no pointer.
+   *
+   * Everything this page grew for a desk -- drag a handle, click a picture,
+   * hover a control -- is unreachable on a Fire TV, where the only inputs are
+   * four arrows and OK. Rather than sniff the user agent, which is a guess that
+   * ages badly, ask whether a fine pointer exists. A device that has one keeps
+   * exactly the page it had; a device that does not gets focus and arrow keys.
+   *
+   * `pointer: none` is the honest signal for a remote. `pointer: coarse` covers
+   * both a touchscreen and some TV browsers, and a touchscreen is perfectly able
+   * to drag -- so coarse alone does NOT turn this on. A phone keeps its drag.
+   */
+  const remoteOnly =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: none)').matches &&
+    !window.matchMedia('(pointer: fine)').matches;
+  if (remoteOnly) page.dataset.remote = '1';
+
   /** tile element -> { stop, video }. A reservation has both null while the bundle loads. */
   const running = new Map();
 
@@ -1823,6 +1842,42 @@ function initMultiview(root = document) {
     });
     const grab = tile.querySelector('[data-mv-grab]');
     if (grab) wireDrag(tile, grab);
+
+    /*
+     * The tile itself is a control, for the remote.
+     *
+     * Focusable so a D-pad can reach it at all, and answering Enter the way a
+     * click on the picture answers: sound if it is playing, Play if it is not.
+     * The arrows move focus between tiles rather than scrolling the page --
+     * without that, pressing right on a television does nothing visible and the
+     * grid looks broken.
+     *
+     * Wired on every device, not only a remote: a keyboard user at a desk gets
+     * the same thing, and a feature that only exists behind a media query is a
+     * feature nobody can test.
+     */
+    tile.tabIndex = 0;
+    tile.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (running.has(tile)) toggleSound(tile);
+        else startTile(tile);
+        return;
+      }
+      const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -2, ArrowDown: 2 }[event.key];
+      if (step === undefined) return;
+      // Two columns is what the grid actually renders above 640px, so up and
+      // down are a jump of two. At one column the clamp below makes both arrows
+      // walk the list, which is the right behaviour for a single stack.
+      const all = tiles();
+      const from = all.indexOf(tile);
+      const cols = grid.clientWidth > 640 ? 2 : 1;
+      const delta = Math.abs(step) === 2 ? (step < 0 ? -cols : cols) : step;
+      const to = from + delta;
+      if (to < 0 || to >= all.length) return;
+      event.preventDefault();
+      all[to].focus();
+    });
     tile.querySelector('[data-mv-remove]')?.addEventListener('click', () => {
       stopTile(tile);
       tile.remove();
@@ -1947,7 +2002,18 @@ function initMultiview(root = document) {
   /* ---- popping the grid out into its own always-on-top window ---- */
 
   const popout = page.querySelector('[data-mv-popout]');
-  if (popout) {
+  /*
+   * Hidden where it cannot do anything useful.
+   *
+   * Floating the grid over other windows is a desktop idea. On a television
+   * there are no other windows, there is no Document Picture-in-Picture, and the
+   * fallback -- a popup window -- is at best a second copy of the page competing
+   * for the same line. A button that cannot work is worse than no button,
+   * because on a remote it still takes a press to skip past.
+   */
+  if (popout && (remoteOnly || !('documentPictureInPicture' in window))) {
+    popout.remove();
+  } else if (popout) {
     popout.addEventListener('click', async () => {
       if ('documentPictureInPicture' in window) {
         try {
@@ -2048,6 +2114,9 @@ function initMultiview(root = document) {
 
   for (const tile of tiles()) wire(tile);
   sync();
+  // A remote needs somewhere to be. Without this the first arrow press goes to
+  // whatever the browser decided was first, which on a TV is usually the nav.
+  if (remoteOnly) tiles()[0]?.focus();
   // The first `allowance` tiles start on their own, muted; the rest say why not.
   // A page opened to watch four things should not need four clicks first.
   tiles().forEach((tile, i) => {

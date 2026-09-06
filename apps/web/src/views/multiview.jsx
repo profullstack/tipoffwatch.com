@@ -115,7 +115,8 @@ export const Multiview = ({
             <p class="muted small">
               Up to {maxTiles} channels from your own line on one screen, side by side. Click a tile
               to hear it, drag the ⋮⋮ handle to rearrange, ✕ to take one out. Pop it out and the
-              grid stays on top of whatever else you are doing.{' '}
+              grid stays on top of whatever else you are doing. On a television, the arrow keys move
+              between tiles and OK switches the sound to the one you are on.{' '}
               {permits(allowance, panelConnections)} <a href="/settings#line">Change that</a>.
             </p>
             {/* Filled by app.js when another Multiview window on this browser
