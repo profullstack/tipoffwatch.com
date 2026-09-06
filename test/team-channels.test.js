@@ -31,7 +31,7 @@ describe('a team page asks the question', () => {
     const view = pages.slice(pages.indexOf('export const TeamPage'));
     const body = view.slice(0, view.indexOf('\n);\n'));
     expect(body).toContain('ownChannels?.hasList');
-    expect(body).toContain('<ChannelRow ch={ch} />');
+    expect(body).toContain('<ChannelRow ch={ch} managed=');
   });
 
   /*

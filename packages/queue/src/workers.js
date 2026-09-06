@@ -1,5 +1,6 @@
 import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
+import { reconcileLapsed } from '@tipoff/live';
 import { sendEmail, sendPush } from '@tipoff/notify';
 import { refreshDuePlaylists } from '@tipoff/playlists';
 import {
@@ -256,6 +257,10 @@ export function startWorkers({ concurrency = {} } = {}) {
     // people's subscriptions: several ~800KB pulls at once from one datacenter IP
     // is the traffic pattern that gets a line cut off.
     new Worker(QUEUES.playlists, () => refreshDuePlaylists(), { connection, concurrency: 1 }),
+
+    // Down only: lapsed managed lists are removed or handed back. Nothing here
+    // talks to the line provider.
+    new Worker(QUEUES.livePasses, () => reconcileLapsed({ log }), { connection, concurrency: 1 }),
 
     new Worker(QUEUES.fanout, runFanout, {
       connection,
