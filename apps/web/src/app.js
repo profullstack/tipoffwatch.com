@@ -4152,6 +4152,23 @@ app.post('/api/diag', async (c) => {
   return c.json({ ok: true });
 });
 
+/**
+ * Files served straight out of a package rather than out of public/.
+ *
+ * The multiview grid is @profullstack/multiview now, and vendoring a copy of it
+ * into public/ would recreate exactly the drift the package exists to prevent:
+ * the copy would be edited, the package would not, and the two brands would
+ * diverge again. Resolving through node_modules means the deployed bytes are
+ * whatever the lockfile pinned.
+ *
+ * `type="module"`, because app.js imports it dynamically rather than loading it
+ * with a script tag.
+ */
+const PACKAGE_FILES = [
+  ['/vendor-multiview.js', '@profullstack/multiview', 'text/javascript'],
+  ['/vendor-multiview.css', '@profullstack/multiview/multiview.css', 'text/css'],
+];
+
 const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],
   ['/app.js', 'app.js', 'text/javascript'],
@@ -4197,6 +4214,19 @@ const VERSIONED_ICONS = [
 
 // Hashed once at boot so pages can link /styles.css?v=<hash>. See lib/asset-version.js.
 await loadAssetVersions([...STATIC_FILES.map(([, file]) => file), ...VERSIONED_ICONS]);
+
+for (const [route, spec, type] of PACKAGE_FILES) {
+  // Resolved once at boot: a missing dependency should stop the container
+  // rather than 404 a file the multiview page cannot work without.
+  const path = Bun.fileURLToPath(import.meta.resolve(spec));
+  app.get(route, async (c) => {
+    c.header('content-type', type);
+    // Short, like the other unversioned assets: the URL carries no hash, so a
+    // deploy that bumps the package has to be able to reach a warm cache.
+    c.header('cache-control', 'public, max-age=60');
+    return c.body(await Bun.file(path).arrayBuffer());
+  });
+}
 
 for (const [route, file, type] of STATIC_FILES) {
   app.get(route, async (c) => {

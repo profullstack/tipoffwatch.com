@@ -93,6 +93,10 @@ export const Multiview = ({
     noindex
     description="Watch up to four channels from your own line on one screen."
   >
+    {/* The grid's styles ship with the package that drives it, so the two
+        cannot drift apart. Linked here rather than in the Layout because this
+        is the only page that needs them. */}
+    <link rel="stylesheet" href="/vendor-multiview.css" />
     <section
       class="multiview"
       data-multiview

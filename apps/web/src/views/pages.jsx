@@ -280,7 +280,7 @@ export function marketsOf(event) {
  * default tab depends on who is reading, and the page is cached in Redis and
  * served byte-identical to everyone, exactly like the kickoff time above it.
  */
-const BroadcastMarkets = ({ event, marketChannels }) => {
+const BroadcastMarkets = ({ event, marketChannels, managed = false }) => {
   const markets = marketsOf(event);
   if (markets.length === 0) return null;
 
@@ -379,12 +379,39 @@ const BroadcastMarkets = ({ event, marketChannels }) => {
                           >
                             Play here
                           </button>
-                          <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
-                            VLC
+                          {/* These rows are the reader's OWN entries, matched to
+                              a broadcaster listing -- so anything playable here
+                              is playable in the grid, and leaving Multiview off
+                              made the same channel behave differently depending
+                              on which section of the page you found it in. */}
+                          <a
+                            class="ghost small-btn"
+                            href={`/multiview?c=${ch.id}`}
+                            target="_blank"
+                            rel="noopener"
+                            data-multiview-add={ch.id}
+                            title="Watch this beside other channels"
+                          >
+                            Multiview
                           </a>
-                          <a class="ghost small-btn" href={`/my/channels/${ch.id}/playlist.m3u`}>
-                            .m3u
-                          </a>
+                          {/* A managed list is our line, bought with a pass. Both
+                              of these hand over the stream address, which there
+                              is our reseller credential -- the same rule the
+                              rows above follow, which this hand-rolled copy of
+                              them did not. */}
+                          {managed ? null : (
+                            <>
+                              <a class="cta small-btn" href={playerLinks(ch.url).vlc}>
+                                VLC
+                              </a>
+                              <a
+                                class="ghost small-btn"
+                                href={`/my/channels/${ch.id}/playlist.m3u`}
+                              >
+                                .m3u
+                              </a>
+                            </>
+                          )}
                         </span>
                       </li>
                     ))
@@ -1566,7 +1593,11 @@ export const EventPage = ({
         ) : null}
       </ul>
 
-      <BroadcastMarkets event={event} marketChannels={marketChannels} />
+      <BroadcastMarkets
+        event={event}
+        marketChannels={marketChannels}
+        managed={Boolean(ownChannels?.managed)}
+      />
 
       <h2>Follow</h2>
       <p class="muted small">
