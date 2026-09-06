@@ -564,7 +564,18 @@ export const config = {
       get apiKey() {
         return opt('IPTV_ARGON_API_KEY');
       },
-      baseUrl: opt('IPTV_ARGON_API_BASE_URL', 'https://api.argontv.nl'),
+      /*
+       * The reseller panel's own host, which is not the one this defaulted to.
+       *
+       * `api.argontv.nl` has no DNS record at all -- not a 404, not a refused
+       * connection, it does not resolve -- so with the variable unset every call
+       * failed at name resolution rather than at authentication. That is a
+       * distinction worth having: an auth error tells you the key is wrong, and a
+       * DNS error tells you nothing, because it looks identical to the provider
+       * being down. Verified 2026-09-06: distributors.argontv.nl resolves and
+       * answers, api.argontv.nl does not exist.
+       */
+      baseUrl: opt('IPTV_ARGON_API_BASE_URL', 'https://distributors.argontv.nl'),
       /** The channel bouquet a new line gets. From the reseller dashboard. */
       get templateId() {
         const v = opt('IPTV_ARGON_TEMPLATE_ID');
