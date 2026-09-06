@@ -22,6 +22,7 @@
     "@tipoff/radio": "workspace:*",
     "@tipoff/sports": "workspace:*",
     "hono": "^4.10.3",
-    "mpegts.js": "1.8.2"
+    "mpegts.js": "1.8.2",
+    "@profullstack/leaderboard": "^0.3.0"
   }
 }

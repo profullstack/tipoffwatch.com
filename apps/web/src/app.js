@@ -1,5 +1,4 @@
 import { createGateway, isTrainingAgent } from '@profullstack/x402-gateway';
-import { x402Gateway } from '@profullstack/x402-gateway/hono';
 import * as auth from '@tipoff/auth';
 import * as invites from '@tipoff/auth/invites';
 import { brand, config, href } from '@tipoff/config';
@@ -33,6 +32,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
+import { agentName, leaderboard } from './lib/leaderboard.js';
 import { MAX_TILES, parseChannelIds } from './lib/multiview.js';
 import { buildFeed } from './lib/rss.js';
 import { SECURITY_HEADERS } from './lib/security-headers.js';
@@ -185,7 +185,11 @@ const crawlGateway = createGateway({
   passMinutes: config.crawl.passMinutes,
   // The maps stay readable: a crawler that reads them may decide the API is
   // the cheaper way in, which is the point of publishing them.
-  openPaths: ['/llms.txt', '/skill.md'],
+  // Both spellings: the gateway prefix-matches only entries ending in a slash,
+  // so '/leaderboard' alone would open the index and still charge for every
+  // board on it. An agent that hits a 402 on the page ranking its own spend
+  // cannot read the case for buying a pass.
+  openPaths: ['/llms.txt', '/skill.md', '/leaderboard', '/leaderboard/'],
   /*
    * Lightpanda is a headless browser sold to scrapers, and on 2026-09-02 a
    * fleet of it fetched 8,500 pages here in a day from 104 countries. It is not
@@ -208,8 +212,54 @@ const crawlGateway = createGateway({
   chargeSpoofedBrowsers: true,
   exempt: (request) => (request.headers.get('cookie') ?? '').includes(`${config.session.cookie}=`),
   contact: config.contactEmail ? `mailto:${config.contactEmail}` : `${config.siteUrl}/contact`,
+  /*
+   * Write the sale down. Until now a pass existed only for as long as the
+   * response took to send, so neither "what did this earn" nor "who is the
+   * customer" could be answered afterwards.
+   *
+   * The promise is returned rather than dropped: the gateway awaits this hook
+   * before the receipt goes out, so returning it is what makes the sale land
+   * before the buyer is told it succeeded. The gateway swallows a rejection,
+   * so a database failure still sells the pass it was paid for.
+   */
+  onSale: (sale) =>
+    q
+      .recordCrawlSale({
+        payer: sale.payer,
+        ref: sale.ref,
+        days: sale.days,
+        priceCents: sale.priceCents,
+        totalCents: sale.totalCents,
+        currency: sale.currency,
+        userAgent: sale.userAgent,
+        expiresAt: sale.expiresAt,
+      })
+      .catch((err) => console.error('[x402] could not record the sale', err)),
 });
-app.use('*', x402Gateway(crawlGateway));
+/*
+ * Count what the wall turns away, before it answers.
+ *
+ * A 402 is the pipeline: it is an agent that wants this data and has not paid
+ * yet, and that is the only measure of demand this site has. Counted per agent
+ * per day, so the cost is one upsert on a request that was going to be refused
+ * anyway, and never awaited.
+ */
+app.use('*', async (c, next) => {
+  const answer = await crawlGateway.handle(c.req.raw);
+  if (!answer) return next();
+  if (answer.status === 402)
+    q.recordCrawlDemand(agentName(c.req.header('user-agent'))).catch(() => {});
+  return answer;
+});
+
+/**
+ * The public board: who pays for this data, and who keeps asking without
+ * paying. Open to everyone, including the agents on it.
+ */
+app.use('*', async (c, next) => {
+  const answer = await leaderboard.handle(c.req.raw);
+  return answer ?? next();
+});
 
 /*
  * Security headers, on everything.
