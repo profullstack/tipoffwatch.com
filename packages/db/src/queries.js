@@ -2444,6 +2444,107 @@ export async function liveNow({
 }
 
 /**
+ * Write down the line, but only when it has actually moved.
+ *
+ * Called after each pass that may have written `events.odds` -- the fixture sweep
+ * and the score tick. The tick runs every minute over the leagues with something
+ * on, so the naive version of this table would take a row per fixture per minute
+ * and be almost entirely duplicates: a line moves a handful of times in the days
+ * before a game, not sixty times an hour.
+ *
+ * So the comparison is done in the database, in the same statement as the insert.
+ * Doing it in JavaScript would mean reading the latest snapshot for every event in
+ * the batch, comparing, then writing back -- three round trips and a race, because
+ * the sweep and the tick can both be mid-pass for the same fixture.
+ *
+ * `is distinct from` rather than `<>` throughout: almost every one of these fields
+ * is null for almost every fixture, and `null <> null` is null, which is not true,
+ * so a plain inequality would treat "both unknown" as "unchanged" in some places
+ * and never fire in others. The whole predicate would quietly collapse.
+ *
+ * A fixture with no snapshot yet always gets one -- the left join gives all-null
+ * and every comparison against a real value is distinct.
+ */
+export async function recordOddsSnapshots(eventIds = []) {
+  const ids = (eventIds ?? []).map((v) => Number(v)).filter(Number.isFinite);
+  if (ids.length === 0) return 0;
+
+  const rows = await sql`
+    with candidate as (
+      select e.id as event_id,
+             e.state as captured_state,
+             e.odds ->> 'provider' as provider,
+             e.odds ->> 'details' as details,
+             (e.odds ->> 'spread')::numeric(6, 2) as spread,
+             (e.odds ->> 'overUnder')::numeric(6, 2) as over_under,
+             e.odds ->> 'favorite' as favorite,
+             (e.odds ->> 'homeMoneyline')::int as home_moneyline,
+             (e.odds ->> 'awayMoneyline')::int as away_moneyline,
+             (e.odds ->> 'drawMoneyline')::int as draw_moneyline
+        from events e
+       where e.id = any(${pgArray(ids)}::bigint[])
+         and e.odds is not null
+    ),
+    latest as (
+      -- One row per fixture: its most recent reading. distinct on is the cheapest
+      -- way to ask that against the (event_id, observed_at desc) index.
+      select distinct on (s.event_id)
+             s.event_id, s.provider, s.details, s.spread, s.over_under,
+             s.favorite, s.home_moneyline, s.away_moneyline, s.draw_moneyline
+        from event_odds_snapshots s
+       where s.event_id = any(${pgArray(ids)}::bigint[])
+       order by s.event_id, s.observed_at desc, s.id desc
+    )
+    insert into event_odds_snapshots (
+      event_id, provider, details, spread, over_under, favorite,
+      home_moneyline, away_moneyline, draw_moneyline, captured_state
+    )
+    select c.event_id, c.provider, c.details, c.spread, c.over_under, c.favorite,
+           c.home_moneyline, c.away_moneyline, c.draw_moneyline, c.captured_state
+      from candidate c
+      left join latest l on l.event_id = c.event_id
+     where l.event_id is null
+        or c.details        is distinct from l.details
+        or c.spread         is distinct from l.spread
+        or c.over_under     is distinct from l.over_under
+        or c.home_moneyline is distinct from l.home_moneyline
+        or c.away_moneyline is distinct from l.away_moneyline
+        or c.draw_moneyline is distinct from l.draw_moneyline
+    returning id
+  `;
+  return rows.length;
+}
+
+/**
+ * One fixture's line, as it moved.
+ *
+ * Oldest first, because this is a story rather than a lookup: the interesting
+ * thing is the shape of the drift from open to close, and reading it backwards
+ * makes that work to follow.
+ */
+export async function oddsHistoryFor(eventId, { limit = 200 } = {}) {
+  return sql`
+    select observed_at, provider, details, spread, over_under, favorite,
+           home_moneyline, away_moneyline, draw_moneyline, captured_state
+      from event_odds_snapshots
+     where event_id = ${eventId}
+     order by observed_at asc
+     limit ${Math.min(Math.max(Number(limit) || 200, 1), 1000)}
+  `;
+}
+
+/** How much history exists, for the health line and for anyone sizing the archive. */
+export async function oddsArchiveSize() {
+  const [row] = await sql`
+    select count(*)::int as rows,
+           count(distinct event_id)::int as events,
+           min(observed_at) as since
+      from event_odds_snapshots
+  `;
+  return row ?? { rows: 0, events: 0, since: null };
+}
+
+/**
  * Games that have finished, newest first.
  *
  * The counterpart to liveNow, and the thing the site had no route to at all: a
