@@ -382,7 +382,25 @@ export async function syncLeague(
     away_score: f.awayScore,
   }));
 
-  await q.upsertEvents(eventRows);
+  const savedEvents = await q.upsertEvents(eventRows);
+
+  /*
+   * The line, written down as it stood, before the next pass overwrites it.
+   *
+   * events.odds holds one reading; this keeps the series. Only rows whose numbers
+   * actually changed are inserted, and that comparison happens inside the
+   * statement, so this is one round trip whether nothing moved or everything did.
+   *
+   * Deliberately not allowed to fail the sweep. The archive is a by-product of
+   * having fetched the fixtures, and a fixture list that syncs is worth more than
+   * a history that is complete -- so a problem here is logged and the sweep
+   * carries on, which is the same rule the broadcast pass follows.
+   */
+  try {
+    await q.recordOddsSnapshots(savedEvents.map((r) => r.id));
+  } catch (err) {
+    log(`[odds] snapshot write failed for ${league.slug}: ${err?.message ?? err}`);
+  }
 
   // ONLY when the roster was actually fetched. rosters_synced_at is what the boot
   // check reads to decide whether the full sweep is overdue, so stamping it from a
@@ -413,7 +431,7 @@ export async function syncLeagueScores(league) {
   });
   if (fixtures.length === 0) return { events: 0 };
 
-  await q.updateEventScores(
+  const touched = await q.updateEventScores(
     fixtures.map((f) => ({
       provider: league.provider,
       provider_key: f.providerKey,
@@ -438,6 +456,22 @@ export async function syncLeagueScores(league) {
       odds: f.odds ?? null,
     })),
   );
+
+  /*
+   * This is the pass that catches the movement.
+   *
+   * The sweep runs every few hours; this runs every minute over exactly the
+   * leagues with something on, which is the window in which a book actually moves
+   * a number -- and the last chance to see one before kickoff takes the field
+   * away entirely. Nearly every reading in the archive will have been taken here.
+   */
+  try {
+    await q.recordOddsSnapshots((touched ?? []).map((r) => r.id));
+  } catch {
+    // Silent on this path, unlike the sweep: it runs sixty times an hour, and a
+    // persistent failure would be sixty identical lines an hour drowning the log
+    // that the live scores themselves are read from.
+  }
   return { events: fixtures.length };
 }
 
