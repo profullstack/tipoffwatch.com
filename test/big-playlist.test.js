@@ -26,23 +26,47 @@ describe('the byte ceiling', () => {
     'utf8',
   );
 
-  test('is 100MB, and is a knob', () => {
-    expect(cfg).toContain("num('PLAYLIST_MAX_BYTES', 100 * 1024 * 1024)");
+  const playlistSrc = readFileSync(
+    new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
+    'utf8',
+  );
+
+  /*
+   * There is no ceiling by default, and the history is the argument for that.
+   *
+   * 8MB refused a real 38MB list; 100MB refused a real 583MB one, with the same
+   * sentence. Every raise was a guess at how large a provider catalogue can get
+   * and every guess was wrong within months, because the number was never about
+   * what we can handle -- only about what we had happened to see.
+   */
+  test('is off by default, and is still a knob', () => {
+    expect(cfg).toContain("num('PLAYLIST_MAX_BYTES', 0)");
   });
 
-  /* It is still a ceiling: the body is read into memory as one string. */
+  /* When an operator DOES set one, it is still checked before and during. */
   test('is still checked before and after the download', () => {
-    const src = readFileSync(
-      new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
-      'utf8',
-    );
-    expect(src).toContain("res.headers.get('content-length')");
-    // Counted off the wire now, not measured on a finished string: a provider
-    // that understates its content-length is abandoned mid-download rather than
-    // after we have already read all of it.
-    expect(src).toContain('bytes > config.playlists.maxBytes');
-    const cb = src.slice(src.indexOf('onChunk: (chunk)'));
-    expect(cb.slice(0, cb.indexOf('},'))).toContain('bytes > config.playlists.maxBytes');
+    expect(playlistSrc).toContain("res.headers.get('content-length')");
+    // Counted off the wire, not measured on a finished string: a provider that
+    // understates its content-length is abandoned mid-download rather than after
+    // we have already read all of it.
+    const cb = playlistSrc.slice(playlistSrc.indexOf('onChunk: (chunk)'));
+    expect(cb.slice(0, cb.indexOf('},'))).toContain('bytes > cap');
+  });
+
+  /*
+   * Both checks are conditional on a cap being set.
+   *
+   * `0` is what an unset PLAYLIST_MAX_BYTES parses to. Comparing against it
+   * unguarded would refuse every list ever offered, with the message this whole
+   * change exists to stop producing.
+   */
+  test('an unset cap accepts any size rather than refusing every size', () => {
+    const code = playlistSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    for (const guard of code.matchAll(/(?:len|bytes) > cap/g)) {
+      const before = code.slice(Math.max(0, guard.index - 40), guard.index);
+      expect(before, `unguarded ceiling check: ${guard[0]}`).toContain('cap > 0');
+    }
+    expect([...code.matchAll(/cap > 0/g)]).toHaveLength(2);
   });
 });
 
@@ -64,14 +88,26 @@ describe('the entry ceiling', () => {
     expect(parseM3u(many, { max: 10 })).toHaveLength(10);
   });
 
+  test('is also off by default, so a catalogue is stored whole', () => {
+    const cfg = readFileSync(
+      new URL('../packages/config/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    // 300,000 was the same silent-truncation bug one order of magnitude along: a
+    // 583MB catalogue is ~2.6 million entries, and handing back 300,000 of them
+    // is worse than refusing, because the reader cannot tell.
+    expect(cfg).toContain("num('PLAYLIST_MAX_CHANNELS', 0)");
+  });
+
   test('and hitting it is reported rather than swallowed', () => {
     const src = readFileSync(
       new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
       'utf8',
     );
-    // The parser reports it now, rather than the caller inferring it from a
-    // length: it is the half that knows it stopped accepting entries.
-    expect(src).toContain('truncated: list.truncated');
+    // The parser reports it, rather than the caller inferring it from a length:
+    // it is the half that knows it stopped accepting entries.
+    expect(src).toContain('truncated = list.truncated');
+    expect(src).toContain('truncated,');
   });
 });
 
@@ -193,7 +229,32 @@ describe('the body is never buffered whole', () => {
     // name, and a guard that its own explanation trips is worse than none.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).not.toContain('res.text()');
-    expect(code).toContain('parseM3uStream(res.body');
+    // Straight from the wire to a file. It cannot go to the parser directly any
+    // more: whether it is wanted at all is only knowable once it is all hashed.
+    expect(code).toContain('spillToDisk(res.body');
     expect(code).toContain('hash.update(chunk)');
+  });
+
+  /*
+   * Nor are the ENTRIES, which is the half the byte ceiling was really guarding.
+   *
+   * 583MB of provider catalogue is roughly 2.6 million entries; the array alone
+   * is more heap than the container has. Raising the ceiling without this would
+   * have turned a clear refusal into an out-of-memory kill.
+   */
+  test('the entries are never held whole either', () => {
+    const src = readFileSync(
+      new URL('../packages/playlists/src/index.js', import.meta.url).pathname,
+      'utf8',
+    );
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    // Handed over per chunk and forgotten, rather than mapped off a result array.
+    expect(code).toContain('onEntries:');
+    expect(code).not.toMatch(/list\.entries/);
+    // And the consumer is awaited, which is what paces the parse to the inserts.
+    expect(code).toContain('append(entries.map(toChannelRow))');
+    // The spilled file goes on every path out, including the throws.
+    expect(src).toContain('} finally {');
+    expect(src).toContain('await spilled.discard()');
   });
 });

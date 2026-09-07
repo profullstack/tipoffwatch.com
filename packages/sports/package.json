@@ -9,6 +9,6 @@
   "dependencies": {
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
-    "@profullstack/player": "0.6.0"
+    "@profullstack/player": "0.7.0"
   }
 }
