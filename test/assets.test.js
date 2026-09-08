@@ -96,7 +96,11 @@ describe('static asset references', () => {
 
   test('the wordmark is gone but the name survives for screen readers', async () => {
     const layout = await readFile(SOURCES[0], 'utf8');
-    expect(layout).toContain('alt="TipoffWatch"');
-    expect(layout).not.toContain('<span>TipoffWatch</span>');
+    // The invariant is that the logo carries the site's name as alt text and is
+    // not also repeated as a visible wordmark. Asserted against the brand rather
+    // than the literal "TipoffWatch", which was one brand's name and made this
+    // fail the moment the alt text started naming the site being served.
+    expect(layout).toContain('alt={brand.name}');
+    expect(layout).not.toContain('<span>{brand.name}</span>');
   });
 });

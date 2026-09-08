@@ -122,6 +122,7 @@ const BRANDS = {
         'Free, no ads, and it works as a calendar feed if you would rather not be notified at all.',
       browse: 'Browse by sport',
       browseBlurb: 'Pick a sport, then a league, then follow the teams you care about.',
+      inviteReason: 'keep track of when their teams play',
       mine: 'My games',
       pushBlurb: 'Get a notification an hour before kickoff, and one minute out.',
       calendarBlurb:
@@ -176,6 +177,14 @@ const BRANDS = {
      * vocabulary above works.
      */
     schema: { event: 'SportsEvent', participant: 'SportsTeam', collection: 'SportsOrganization' },
+    sources: {
+      lead: 'Schedule data from',
+      list: [
+        { name: "ESPN's public API", url: 'https://www.espn.com' },
+        { name: 'the Live Tennis API', url: 'https://livetennisapi.com' },
+      ],
+      note: 'Not affiliated with either.',
+    },
     providers: ['espn'],
     elsewhere: {},
   },
@@ -198,6 +207,7 @@ const BRANDS = {
         'be notified at all.',
       browse: 'Browse by genre',
       browseBlurb: 'Pick a category, then a genre, then follow the names you care about.',
+      inviteReason: 'keep track of what is coming out',
       mine: 'My calendar',
       pushBlurb:
         'Get told before something you follow is out. An hour ahead for anything with a start ' +
@@ -238,6 +248,17 @@ const BRANDS = {
     // A release is an Event with a start; the thing being released is a
     // CreativeWork, and a genre is a collection of them rather than a league.
     schema: { event: 'Event', participant: 'CreativeWork', collection: 'Thing' },
+    sources: {
+      lead: 'Release dates from',
+      list: [
+        { name: 'TVmaze', url: 'https://www.tvmaze.com' },
+        { name: 'TMDB', url: 'https://www.themoviedb.org' },
+        { name: 'AniList', url: 'https://anilist.co' },
+        { name: 'MusicBrainz', url: 'https://musicbrainz.org' },
+        { name: 'the Launch Library', url: 'https://thespacedevs.com' },
+      ],
+      note: 'Not affiliated with any of them.',
+    },
     providers: ['tvmaze', 'anilist', 'tmdb', 'musicbrainz', 'spacedevs'],
     /*
      * Sport is a link, not a section.
@@ -295,6 +316,7 @@ const BRANDS = {
         'account needed to read.',
       browse: 'Browse by section',
       browseBlurb: 'Pick a section, then a newsroom, and follow the ones you actually read.',
+      inviteReason: 'follow the desks and newsrooms they actually read',
       mine: 'My sections',
       pushBlurb: 'Get a notification when a newsroom you follow publishes.',
       calendarBlurb: 'Everything you follow as a calendar feed, filed on the day it was published.',
@@ -343,6 +365,14 @@ const BRANDS = {
       event: 'NewsArticle',
       participant: 'NewsMediaOrganization',
       collection: 'Thing',
+    },
+    sources: {
+      lead: 'Stories from',
+      list: [
+        { name: 'the newsrooms’ own feeds', url: 'https://nichedb.dev/c/news' },
+        { name: 'GDELT', url: 'https://www.gdeltproject.org' },
+      ],
+      note: 'Collected by nichedb.dev. Not affiliated with any publisher.',
     },
     providers: ['nichedb'],
     elsewhere: {

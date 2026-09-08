@@ -302,3 +302,46 @@ describe('categoryLabel', () => {
     expect(categoryLabel('')).toBe('');
   });
 });
+
+/*
+ * The leaks that reached a reader's inbox and home screen, not just a page.
+ */
+describe('nothing outside the brand file names one site at another', () => {
+  const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url).pathname, 'utf8');
+
+  test('the sign-in email is from the site the reader is signing in to', () => {
+    const notify = read('packages/notify/src/index.js');
+    // Delivered for real on 2026-09-08 with the subject "Your TipoffWatch
+    // sign-in link" to someone signing in to watchnews.now.
+    expect(notify).not.toContain('TipoffWatch');
+    expect(notify).toContain('${brand.name} sign-in link');
+  });
+
+  test('the home-screen name and logo are the brand, not the flagship', () => {
+    const layout = read('apps/web/src/views/Layout.jsx');
+    expect(layout).not.toContain('content="Tipoff"');
+    expect(layout).not.toContain('alt="TipoffWatch"');
+  });
+
+  test('the footer credits the upstreams this brand actually reads', () => {
+    const layout = read('apps/web/src/views/Layout.jsx');
+    // A credit naming the wrong upstream is worse than none: a reader takes it
+    // as a fact about where what they are looking at came from.
+    expect(layout).not.toContain('https://www.espn.com');
+    expect(layout).toContain('brand.sources');
+  });
+
+  test('every brand declares its own sources and invite reason', async () => {
+    for (const id of ['tipoffwatch', 'genrewatch', 'watchnews']) {
+      const { brand } = await load(id);
+      expect(brand.sources.list.length).toBeGreaterThan(0);
+      for (const src of brand.sources.list) {
+        expect(src.name.length).toBeGreaterThan(1);
+        expect(src.url).toMatch(/^https:\/\//);
+      }
+      expect(typeof brand.copy.inviteReason).toBe('string');
+    }
+    const news = await load('watchnews');
+    expect(news.brand.sources.list.some((s) => /gdelt/i.test(s.name))).toBe(true);
+  });
+});
