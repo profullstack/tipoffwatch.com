@@ -9,8 +9,10 @@ import * as pay from '@tipoff/payments';
 import * as member from '@tipoff/payments/membership';
 import {
   claimStreamSlot,
+  fetchPublic,
   firstLiveChannel,
   importPlaylist,
+  isPlaylist,
   lineAllowance,
   lineAllowanceFor,
   marketChannelsForEvent,
@@ -21,13 +23,22 @@ import {
   playlistSource,
   probeStream,
   refreshPlaylist,
+  rewritePlaylist,
   sharedChannelsForEvent,
+  signUrl,
   streamSlotsOpen,
+  unsignUrl,
   verdictToStore,
 } from '@tipoff/playlists';
 import { connection } from '@tipoff/queue';
 import * as radio from '@tipoff/radio';
-import { normaliseTitle, oneChannelM3u, searchEverything } from '@tipoff/sports';
+import {
+  fetchChannels,
+  normaliseTitle,
+  oneChannelM3u,
+  pickChannels,
+  searchEverything,
+} from '@tipoff/sports';
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
@@ -65,6 +76,7 @@ import {
 import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
 import { RadioPage, RadioSidesFragment } from './views/radio.jsx';
+import { WatchChannel, WatchIndex } from './views/watch.jsx';
 
 export const app = new Hono();
 
@@ -524,6 +536,7 @@ app.get(`/${brand.paths.category}/:sport`, async (c) => {
       <SportPage
         user={user}
         sport={sport}
+        watch={publicChannelsOn() ? await channelsFor({ section: sport, limit: 8 }) : []}
         leagues={leagues}
         live={live}
         liveTotal={liveTotal}
@@ -656,6 +669,7 @@ app.get(`/${brand.paths.participant}/:slug`, async (c) => {
       <TeamPage
         user={user}
         team={team}
+        watch={publicChannelsOn() ? await channelsFor({ outlet: team.display_name, limit: 8 }) : []}
         events={events}
         following={following}
         ownChannels={ownChannels}
@@ -1889,6 +1903,156 @@ app.get('/my/channels', async (c) => {
   return c.html(
     await render(<Channels user={user} playlist={playlist} groups={groups} kinds={kinds} />),
   );
+});
+
+/* ------------------------------------------------------- public channels -- */
+
+/**
+ * Live news channels, proxied so they play in the page.
+ *
+ * These are not a reader's own provider line. They are public streams from the
+ * iptv-org directory by way of nichedb, which changes what the proxy has to do
+ * in two ways that are both easy to get wrong.
+ *
+ * **They are HLS, and the existing player is not.** `openStream` refuses a
+ * playlist outright ("that channel is an HLS playlist") because mpegts.js reads
+ * transport stream and a playlist makes it fail looking like a decoder bug.
+ * That was right while every channel came off a provider line serving TS;
+ * effectively every channel in the news directory is `.m3u8`. So this is a
+ * different proxy, not a flag on that one: fetch the playlist, rewrite every url
+ * inside it to come back here, and let hls.js in the browser drive it.
+ *
+ * **The url comes from somebody else.** Everywhere else in this app the address
+ * being fetched is one the reader supplied, so proxying it grants them nothing
+ * new. Here an attacker who lands a url in a public directory would otherwise
+ * have this server fetch it from inside the deployment, where Postgres and Redis
+ * live. Hence `fetchPublic`, which resolves the name and refuses a private
+ * address at every redirect hop, and hence signed segment urls: the rewritten
+ * playlist has to carry the upstream address, and an unsigned one would be an
+ * open proxy with a front door.
+ */
+const CHANNEL_TTL_MS = 60 * 60 * 1000;
+let channelCache = { at: 0, list: [] };
+
+/** Refuse to be the reason a channel list is fetched on every request. */
+async function newsChannels() {
+  const fresh = Date.now() - channelCache.at < CHANNEL_TTL_MS;
+  if (fresh && channelCache.list.length) return channelCache.list;
+  try {
+    const list = await fetchChannels();
+    if (list.length) channelCache = { at: Date.now(), list };
+  } catch {
+    // Keep serving the last good list. nichedb being briefly unreachable is not
+    // a reason to take every "where to watch" box off the site.
+  }
+  return channelCache.list;
+}
+
+/** Channels for a page, cached list and all. Exported shape: see pickChannels. */
+async function channelsFor(opts) {
+  return pickChannels(await newsChannels(), opts);
+}
+
+const channelById = async (id) => (await newsChannels()).find((c) => c.id === String(id)) ?? null;
+
+const PLAYER_HEADERS = { 'user-agent': 'VLC/3.0.20 LibVLC/3.0.20' };
+
+/** Whether this deployment serves public channels at all. */
+const publicChannelsOn = () => brand.providers.includes('nichedb') && config.playlists.enabled;
+
+app.get('/watch/:id/index.m3u8', async (c) => {
+  if (!publicChannelsOn()) return c.json({ error: 'not here' }, 404);
+  const channel = await channelById(c.req.param('id'));
+  if (!channel) return c.json({ error: 'no such channel' }, 404);
+
+  let out;
+  try {
+    out = await fetchPublic(channel.streamUrl, {
+      headers: PLAYER_HEADERS,
+      signal: c.req.raw.signal,
+    });
+  } catch (err) {
+    return c.json({ error: err.message }, 502);
+  }
+  const { res, url } = out;
+  if (!res.ok) {
+    res.body?.cancel().catch(() => {});
+    return c.json({ error: `provider answered ${res.status}` }, res.status >= 500 ? 503 : 502);
+  }
+
+  const type = res.headers.get('content-type') ?? '';
+  if (!isPlaylist(type, url.toString())) {
+    // Not a playlist after all. Hand the bytes over rather than refusing: a
+    // channel serving TS through an .m3u8 address still plays.
+    c.header('content-type', type || 'video/mp2t');
+    c.header('cache-control', 'no-store');
+    return c.body(res.body);
+  }
+
+  const text = await res.text();
+  const secret = config.playlists.secret;
+  const body = rewritePlaylist(text, url.toString(), (u) => `/watch/seg/${signUrl(u, secret)}`);
+  c.header('content-type', 'application/vnd.apple.mpegurl');
+  // A live playlist is a moving target; caching it strands the player on a
+  // window of segments that have already expired upstream.
+  c.header('cache-control', 'no-store');
+  return c.body(body);
+});
+
+app.get('/watch/seg/:token', async (c) => {
+  if (!publicChannelsOn()) return c.json({ error: 'not here' }, 404);
+  const target = unsignUrl(c.req.param('token'), config.playlists.secret);
+  // Not "bad request": a token we did not sign is someone asking this server to
+  // fetch an address of their choosing, and it gets nothing back.
+  if (!target) return c.json({ error: 'not a url we signed' }, 403);
+
+  let out;
+  try {
+    out = await fetchPublic(target, { headers: PLAYER_HEADERS, signal: c.req.raw.signal });
+  } catch (err) {
+    return c.json({ error: err.message }, 502);
+  }
+  const { res, url } = out;
+  if (!res.ok) {
+    res.body?.cancel().catch(() => {});
+    return c.json({ error: `provider answered ${res.status}` }, res.status >= 500 ? 503 : 502);
+  }
+
+  const type = res.headers.get('content-type') ?? '';
+  // A variant playlist is reached through this same route, so it needs the same
+  // rewriting the top-level one got. Without this, a multi-bitrate stream hands
+  // the browser the provider's own segment urls one level down.
+  if (isPlaylist(type, url.toString())) {
+    const secret = config.playlists.secret;
+    const body = rewritePlaylist(
+      await res.text(),
+      url.toString(),
+      (u) => `/watch/seg/${signUrl(u, secret)}`,
+    );
+    c.header('content-type', 'application/vnd.apple.mpegurl');
+    c.header('cache-control', 'no-store');
+    return c.body(body);
+  }
+
+  c.header('content-type', type || 'video/mp2t');
+  c.header('cache-control', 'no-store');
+  return c.body(res.body);
+});
+
+app.get('/watch/:id', async (c) => {
+  if (!publicChannelsOn()) return c.notFound();
+  const channel = await channelById(c.req.param('id'));
+  if (!channel) return c.notFound();
+  const also = (await newsChannels())
+    .filter((x) => x.id !== channel.id && (!channel.country || x.country === channel.country))
+    .slice(0, 8);
+  return c.html(render(<WatchChannel user={c.get('user')} channel={channel} also={also} />));
+});
+
+app.get('/watch', async (c) => {
+  if (!publicChannelsOn()) return c.notFound();
+  const channels = await channelsFor({ limit: 60 });
+  return c.html(render(<WatchIndex user={c.get('user')} channels={channels} />));
 });
 
 /* --------------------------------------------------------------- multiview -- */
@@ -4307,12 +4471,16 @@ app.post('/api/diag', async (c) => {
  */
 const PACKAGE_FILES = [
   ['/vendor-multiview.js', '@profullstack/multiview', 'text/javascript'],
+  // The public news channels are HLS, which mpegts.js does not read. Safari
+  // plays it natively; every other browser needs this.
+  ['/vendor-hls.js', 'hls.js/dist/hls.min.js', 'text/javascript'],
   ['/vendor-multiview.css', '@profullstack/multiview/multiview.css', 'text/css'],
 ];
 
 const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],
   ['/app.js', 'app.js', 'text/javascript'],
+  ['/watch.js', 'watch.js', 'text/javascript'],
   /*
    * The diagnostics page and its two files.
    *

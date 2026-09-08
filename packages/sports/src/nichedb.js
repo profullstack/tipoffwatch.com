@@ -26,7 +26,7 @@
  */
 
 import { getJson } from './http.js';
-import { keyFor, slugify } from './slug.js';
+import { keyFor, normaliseTitle, slugify } from './slug.js';
 
 const BASE = 'https://nichedb.dev/api/v1';
 const PROVIDER = 'nichedb';
@@ -268,6 +268,105 @@ export async function fetchAll({ maxPages = 5 } = {}) {
   }
 
   return { genres: [...beats.values()], subjects: [...outlets.values()], events };
+}
+
+/* ------------------------------------------------------------- watch this -- */
+
+/**
+ * Live news channels, for the "you cannot tune in to a story" problem.
+ *
+ * A fixture has a broadcast: the thing on screen IS the thing you followed. A
+ * story does not. Nobody streams a single article, so the honest answer to
+ * "where do I watch this" on a news page is not one channel but the channels
+ * covering that desk right now.
+ *
+ * These stay in nichedb rather than being copied into this database. The rows
+ * are public and shared by every reader, where this app's own channel tables are
+ * per-account by design -- "a list belongs to exactly one account and is never
+ * resold or pooled" -- so seeding 920 public channels into a personal playlist
+ * would fight that schema rather than use it.
+ */
+export async function fetchChannels({ maxPages = 6 } = {}) {
+  const out = [];
+  let before;
+  for (let i = 0; i < maxPages; i++) {
+    const items = await page('channel', before);
+    if (items.length === 0) break;
+    for (const it of items) {
+      const d = it?.data ?? {};
+      // A channel with no stream is not an answer to "where do I watch this".
+      if (!it?.title || !d.streamUrl) continue;
+      out.push({
+        id: String(it.id),
+        name: it.title,
+        country: d.country ?? null,
+        network: d.network ?? null,
+        website: d.website ?? null,
+        streamUrl: d.streamUrl,
+        quality: d.quality ?? null,
+        norm: normaliseTitle(it.title),
+      });
+    }
+    before = items[items.length - 1]?.id;
+    if (!before || items.length < PAGE) break;
+  }
+  return out;
+}
+
+/** Desks that are about a place rather than a subject. */
+const SECTION_COUNTRY = { us: 'US' };
+
+/**
+ * The channels worth offering on a page.
+ *
+ * Matching is on the normalised title, the same reduction this repo already uses
+ * to match a fixture against a channel in someone's playlist, so "BBC News HD"
+ * and "bbc news" meet.
+ *
+ * A page with nothing specific to match on still gets channels. That is
+ * deliberate: the alternative on a news page is an empty "where to watch" box,
+ * and "here is what is on" is a better answer than nothing when the thing you
+ * were reading was never on television in the first place.
+ */
+/**
+ * Words that identify nobody.
+ *
+ * Nearly every channel in a news directory has "news" in its name, so matching
+ * on it matches everything. Measured: asking for "BBC News" put *VIP News*
+ * first, because a naive two-way substring test lets any channel whose whole
+ * name is a common word match every query.
+ */
+const GENERIC = new Set(['news', 'tv', 'the', 'channel', 'live', 'hd', 'network']);
+
+const distinctive = (title) =>
+  normaliseTitle(title)
+    .split(/\s+/)
+    .filter((w) => w && !GENERIC.has(w));
+
+export function pickChannels(channels, { section, outlet, q, limit = 12 } = {}) {
+  const list = channels ?? [];
+  const country = SECTION_COUNTRY[section] ?? null;
+  const pool = country ? list.filter((c) => c.country === country) : list;
+
+  // Every distinctive word has to be present, so "BBC News" finds BBC News and
+  // BBC World News and not everything else with "news" in it.
+  const wanted = distinctive(q ?? outlet ?? '');
+  const named = wanted.length
+    ? pool.filter((c) => {
+        const norm = ` ${c.norm} `;
+        return wanted.every((w) => norm.includes(` ${w} `) || c.norm.includes(w));
+      })
+    : [];
+
+  const seen = new Set();
+  const ordered = [];
+  for (const c of [...named, ...pool]) {
+    if (seen.has(c.id)) continue;
+    seen.add(c.id);
+    ordered.push(c);
+    if (ordered.length >= limit) break;
+  }
+  return ordered;
 }
 
 export const adapter = { name: PROVIDER, category: 'news', fetchAll };

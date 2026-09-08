@@ -15,11 +15,13 @@ import { lineAllowance } from './line.js';
 import { lineInfo } from './panel.js';
 import { readSpill, spillToDisk } from './spill.js';
 
+export { isPlaylist, rewritePlaylist, signUrl, unsignUrl } from './hls.js';
 export { lineAllowance } from './line.js';
 export { maskPlaylistUrl } from './mask.js';
 export { lineInfo, panelApiUrl } from './panel.js';
 export { firstLiveChannel, probeStream, sniffBytes, verdictToStore } from './probe.js';
 export { claimStreamSlot, openStream, streamSlotsOpen } from './proxy.js';
+export { assertPublicUrl, fetchPublic, isPrivateIp } from './publicurl.js';
 export { playlistSource } from './source.js';
 
 /**
