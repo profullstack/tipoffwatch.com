@@ -2668,29 +2668,308 @@ export const Channels = ({ user, playlist, groups, kinds = [] }) => (
 );
 
 /**
- * The reader's lines other than the one the main card is about.
+ * One line, and everything that can be done to it.
  *
- * `playlist` is the first row in their order and getPlaylist returns exactly that,
- * so this is everything after it. Filtered by id rather than sliced, because the
- * two props are fetched by separate queries and an ordering that ever disagreed
- * would otherwise render the same list twice.
+ * This card used to exist once, for the first list on the account, and every
+ * other line got a name, a channel count and a Remove button. That was a leftover
+ * from one-list-per-account: the address, the edit form, Refresh and the
+ * connection cap all addressed "the reader's list" because there had only ever
+ * been one. The result was that a second subscription could be added and deleted
+ * and nothing else -- a typo in it meant deleting the row and typing a
+ * password-bearing URL out again.
+ *
+ * So the card is a component and the page draws one per line. Every control on it
+ * names the line it acts on, and every route behind it takes that id paired with
+ * the session's own user id.
+ *
+ * `data-line` is what the reveal script scopes itself to; without it a Show press
+ * on the second card fetched and filled the first.
  */
-const otherLinesOf = (playlists, playlist) =>
-  (playlists ?? []).filter((p) => p.id !== playlist?.id);
+const LineCard = ({ line, first = false, lineCeiling, livePass }) => (
+  <div class="card line-card" id={`line-${line.id}`} data-line={line.id}>
+    <div class="card-head">
+      <h3 class="card-title">
+        {line.label || 'Your list'}
+        {line.managed ? (
+          <span class="league-tag channel-tag" title="Included with your pass">
+            Live TV pass
+          </span>
+        ) : null}
+      </h3>
+      <p class="card-desc">
+        {(line.channel_count ?? 0).toLocaleString('en-US')} channels
+        {line.last_synced_at ? (
+          <>
+            {' · updated '}
+            <LocalTime at={line.last_synced_at} />
+          </>
+        ) : null}
+      </p>
+    </div>
+    {line.last_error ? <p class="feedback error">{line.last_error}</p> : null}
+
+    {/* Our line, bought with a pass. No address to show -- it is ours, not
+        theirs -- and the pass, not the list, is what to manage. */}
+    {line.managed ? (
+      <p class="muted small">
+        This is your <a href="/live">Live TV pass</a>
+        {livePass ? (
+          <>
+            , good until <LocalTime at={livePass.expires_at} />
+          </>
+        ) : (
+          ', which has ended'
+        )}
+        . It plays here and in Multiview, to your own session only. It sits alongside any lines of
+        your own rather than replacing them, and disappears on its own when the pass ends.
+      </p>
+    ) : null}
+
+    {/*
+      The address.
+
+      Masked in the served HTML: this page is rendered per request but a credential
+      in a page is a credential in a scrollback, a screenshot and a back-forward
+      cache. The whole thing is one press away, from a route that answers
+      `no-store` -- and it is the reader's own password, so showing it back to the
+      session that supplied it discloses nothing.
+
+      The <input> is readonly rather than plain text so that it can be selected,
+      copied and revealed in place without JavaScript rewriting the layout around
+      it. With JS off the Show button never appears and the masked value stands.
+
+      Several of these on one page is exactly the objection that kept the other
+      lines to a name and a count. It is answered by the masking rather than by
+      hiding them: an unrevealed card shows no more of the second credential than
+      it did of the first, and each Show is its own deliberate request.
+    */}
+    {line.managed ? null : line.unreadable ? (
+      <p class="feedback error">
+        This address can no longer be decrypted, so it cannot be refreshed or shown. Paste it again
+        below to fix it.
+      </p>
+    ) : line.masked ? (
+      <div class="field">
+        <label class="field-label" for={`playlist-url-${line.id}`}>
+          Address
+        </label>
+        <div class="copy-row">
+          <input
+            id={`playlist-url-${line.id}`}
+            class="input mono"
+            type="text"
+            readonly
+            value={line.masked}
+            data-playlist-url
+            spellcheck="false"
+            aria-label={`Address of ${line.label || 'your list'}`}
+            autocomplete="off"
+          />
+          <button type="button" class="ghost" hidden data-playlist-reveal>
+            Show
+          </button>
+          <button type="button" class="ghost" data-copy={`#playlist-url-${line.id}`}>
+            Copy
+          </button>
+        </div>
+        <p class="muted small">
+          Masked because it carries your provider username and password. Show reveals it, and Copy
+          takes whatever is displayed.
+        </p>
+      </div>
+    ) : null}
+
+    {/*
+      Editing, rather than removing and starting again.
+
+      The address field is optional, and blank means "leave it alone" -- that is
+      the whole point. Renaming a list used to require pasting a URL with a
+      password in it, which meant keeping a copy of that URL somewhere outside
+      here, which is the opposite of what sealing it was for.
+
+      The name is prefilled; the address is not, because a browser that offers to
+      remember a field it has seen is how a provider password ends up in a password
+      manager under the wrong entry. Fill it with the Show button instead, which
+      asks for it deliberately.
+
+      The hidden id is load-bearing: without it the route treats the post as a NEW
+      list, so a reader correcting a typo gets a second broken line rather than the
+      correction.
+
+      Not offered for our managed line. Its address is not theirs to change, and
+      the way to stop using it is to let the pass lapse or add a line of their own
+      below.
+    */}
+    {line.managed ? null : (
+      <form method="post" action="/api/playlist" data-playlist-form>
+        <input type="hidden" name="playlist_id" value={line.id} />
+        <label class="field">
+          <span>Playlist URL</span>
+          <input
+            type="url"
+            name="url"
+            placeholder="Leave blank to keep the current address"
+            autocomplete="off"
+            class="input mono"
+            data-playlist-input
+          />
+        </label>
+        <label class="field">
+          <span>Name (optional)</span>
+          <input
+            type="text"
+            name="label"
+            value={line.label ?? ''}
+            placeholder="My subscription"
+            autocomplete="off"
+            class="input"
+          />
+        </label>
+        <button class="cta" type="submit">
+          Save changes
+        </button>
+      </form>
+    )}
+
+    {/*
+      How many streams at once, for THIS line.
+
+      The proxy used to hold every account to one open stream, which is what a
+      typical line permits and is why a second Play stopped the first. A line sold
+      with two or four connections was held to one too. The provider's panel is
+      asked at import and refresh; this is where the reader lowers that (or
+      supplies it, for a list whose provider would not say). It can never raise the
+      panel's number: two streams on a line that permits one is what gets a
+      subscription suspended.
+
+      Per line rather than per account, because that is what it always was in the
+      database and never was in the form: one picker wrote its number onto every
+      row, so setting four on a line that permits four also set four on the line
+      that permits one -- and a provider suspends the line rather than warning
+      about it.
+    */}
+    <div class="line-connections">
+      <h4 class="card-subtitle">Streams at once</h4>
+      <p class="muted small">
+        {line.panel_connections === null || line.panel_connections === undefined
+          ? 'Your provider did not say how many connections this line permits, so it is treated as one unless you say otherwise.'
+          : `Your provider reports this line permits ${line.panel_connections} connection${
+              line.panel_connections === 1 ? '' : 's'
+            }${
+              line.panel_active !== null && line.panel_active !== undefined
+                ? ` (${line.panel_active} in use when last checked)`
+                : ''
+            }.`}{' '}
+        Right now <a href="/multiview">Multiview</a> and “Play here” can hold{' '}
+        <strong>{line.allowance}</strong> open at once
+        {line.panel_status && line.panel_status.toLowerCase() !== 'active'
+          ? ` — and your provider says the line is ${line.panel_status}`
+          : ''}
+        .
+      </p>
+      <form method="post" action="/api/playlist/connections">
+        <input type="hidden" name="playlist_id" value={line.id} />
+        <label class="field">
+          <span>Allow</span>
+          <select name="connections" class="input">
+            <option value="" selected={line.line_connections == null}>
+              Whatever my provider reports
+              {line.panel_connections ? ` (${line.panel_connections})` : ' (else 1)'}
+            </option>
+            {Array.from({ length: lineCeiling }, (_, i) => i + 1).map((n) => (
+              <option value={String(n)} selected={line.line_connections === n}>
+                {n === 1 ? '1 stream at a time' : `${n} streams at once`}
+                {line.panel_connections && n > line.panel_connections
+                  ? ' (more than your provider allows — it will be held to theirs)'
+                  : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p class="muted small">
+          Only set this above one if your subscription really allows it. A provider that sees more
+          connections than it sold you suspends the line, and nothing here can undo that.
+        </p>
+        <button class="ghost small-btn" type="submit">
+          Save
+        </button>
+      </form>
+    </div>
+
+    <div class="card-actions">
+      {/*
+        Move this line to the front.
+
+        This button arrived as "Manage", and it was the only way to reach a second
+        line's address, name and sharing switch -- because the full card rendered
+        for the first list alone. Every line has a card now, so that job is gone
+        and the button would be a second route to what is already on this card.
+
+        Kept, and renamed to what the position actually still decides: which
+        provider is offered first when two of them carry the same game. Not shown
+        on the line that is already first, where it would do nothing.
+      */}
+      {first ? null : (
+        <form method="post" action="/api/playlist/primary" class="inline">
+          <input type="hidden" name="playlist_id" value={line.id} />
+          <button class="ghost small-btn" type="submit">
+            Make primary
+          </button>
+        </form>
+      )}
+      {/* Both name the line they act on. The delete route refuses a post with no
+          id rather than falling back to "every list this reader has", which is
+          the right default for closing an account and a catastrophic one for a
+          button labelled Remove. */}
+      {line.managed ? null : (
+        <form method="post" action="/api/playlist/refresh" class="inline">
+          <input type="hidden" name="playlist_id" value={line.id} />
+          <button class="ghost small-btn" type="submit">
+            Refresh
+          </button>
+        </form>
+      )}
+      {/* A managed line is removed by letting the pass lapse, not from here:
+          deleting the row we provisioned would leave the pass paid for and
+          nothing to play it on. */}
+      {line.managed ? null : (
+        <form method="post" action="/api/playlist/delete" class="inline">
+          <input type="hidden" name="playlist_id" value={line.id} />
+          <button class="ghost small-btn danger" type="submit">
+            Remove
+          </button>
+        </form>
+      )}
+    </div>
+  </div>
+);
 
 export const Settings = ({
   user,
   prefs,
   passkeys,
-  playlist,
-  // Every line this reader has, in their order. `playlist` is the first of them
-  // and keeps the address, sharing and connection cards; the rest are listed
-  // below. Defaulted so a caller that has not been updated still renders.
-  playlists = [],
-  lineAllowance = 1,
+  /*
+   * The line the sharing card is about: the first one the reader owns.
+   *
+   * Passed rather than derived here because it is a decision about WHICH list,
+   * and the route already makes the matching one when it scopes the write. A view
+   * that picked its own row and a query that picked another is how a reader ends
+   * up opening a subscription they were not looking at.
+   *
+   * Null when every line is our managed one, which is not shareable at all.
+   */
+  shareLine = null,
+  /*
+   * Every line this reader has, in their order, each already carrying the masked
+   * address and the allowance the handler worked out for it.
+   *
+   * Built in the route rather than here so the unsealed URL never becomes a prop:
+   * a view that receives a credential can render it by accident, and a view that
+   * receives a mask cannot. Defaulted so a caller that has not been updated still
+   * renders a page rather than throwing.
+   */
+  lines = [],
   lineCeiling = 1,
-  playlistMasked = null,
-  playlistUnreadable = false,
   playlistNotice,
   playlistError,
   profileError,
@@ -2780,281 +3059,58 @@ export const Settings = ({
       {playlistError ? <p class="feedback error">{playlistError}</p> : null}
       {playlistNotice ? <p class="feedback ok">{playlistNotice}</p> : null}
 
-      {playlist ? (
-        <div class="card">
-          <div class="card-head">
-            <h3 class="card-title">{playlist.label ?? 'Your list'}</h3>
-            <p class="card-desc">
-              {playlist.channel_count.toLocaleString('en-US')} channels
-              {playlist.last_synced_at ? (
-                <>
-                  {' · updated '}
-                  <LocalTime at={playlist.last_synced_at} />
-                </>
-              ) : null}
-            </p>
-          </div>
-          {playlist.last_error ? <p class="feedback error">{playlist.last_error}</p> : null}
-
-          {/* Our line, bought with a pass. No address to show -- it is ours, not
-              theirs -- and the pass, not the list, is what to manage. */}
-          {playlist.managed ? (
-            <p class="muted small">
-              This is your <a href="/live">Live TV pass</a>
-              {livePass ? (
-                <>
-                  , good until <LocalTime at={livePass.expires_at} />
-                </>
-              ) : (
-                ', which has ended'
-              )}
-              . It plays here and in Multiview, to your own session only. It sits alongside any
-              lines of your own rather than replacing them, and disappears on its own when the pass
-              ends.
-            </p>
-          ) : null}
-
-          {/*
-            The address, which used to be shown nowhere at all.
-
-            Masked in the served HTML: this page is rendered per request but a
-            credential in a page is a credential in a scrollback, a screenshot and
-            a back-forward cache. The whole thing is one press away, from a route
-            that answers `no-store` -- and it is the reader's own password, so
-            showing it back to the session that supplied it discloses nothing.
-
-            The <input> is readonly rather than plain text so that it can be
-            selected, copied and revealed in place without JavaScript rewriting
-            the layout around it. With JS off the Show button never appears and
-            the masked value stands.
-          */}
-          {playlist.managed ? null : playlistUnreadable ? (
-            <p class="feedback error">
-              This address can no longer be decrypted, so it cannot be refreshed or shown. Paste it
-              again below to fix it.
-            </p>
-          ) : playlistMasked ? (
-            <div class="field">
-              <label class="field-label" for="playlist-url">
-                Address
-              </label>
-              <div class="copy-row">
-                <input
-                  id="playlist-url"
-                  class="input mono"
-                  type="text"
-                  readonly
-                  value={playlistMasked}
-                  data-playlist-url
-                  spellcheck="false"
-                  aria-label="Your playlist address"
-                  autocomplete="off"
-                />
-                <button type="button" class="ghost" hidden data-playlist-reveal>
-                  Show
-                </button>
-                <button type="button" class="ghost" data-copy="#playlist-url">
-                  Copy
-                </button>
-              </div>
-              <p class="muted small">
-                Masked because it carries your provider username and password. Show reveals it, and
-                Copy takes whatever is displayed.
-              </p>
-            </div>
-          ) : null}
-
-          <div class="card-actions">
-            <form method="post" action="/api/playlist/refresh" class="inline">
-              <button class="ghost small-btn" type="submit">
-                Refresh
-              </button>
-            </form>
-            <form method="post" action="/api/playlist/delete" class="inline">
-              {/* Names the list it removes. The route refuses a delete with no id
-                  rather than falling back to "every list this reader has", which
-                  is the right default for closing an account and a catastrophic
-                  one for a button labelled Remove. */}
-              <input type="hidden" name="playlist_id" value={playlist.id} />
-              <button class="ghost small-btn danger" type="submit">
-                Remove
-              </button>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
       {/*
-        Every other line this reader has.
+        One card per line, and every control on it names its line.
 
-        The card above is the first of them, and carries the address, the sharing
-        controls and the connection count. These are the rest: named, counted, and
-        removable, with the add form above adding to this list rather than
-        replacing anything.
-
-        Deliberately not a second copy of the full card. An address field per list
-        would put several credentials on one page, and the reason the first one is
-        masked and revealed on demand applies more, not less, as they multiply.
+        This was one card for the first list plus a bare <li> per extra one, which
+        is why a second subscription could be added and removed and nothing else.
+        See LineCard.
       */}
-      {otherLinesOf(playlists, playlist).length > 0 ? (
-        <div class="card" id="other-lines">
-          <div class="card-head">
-            <h3 class="card-title">Your other lines</h3>
-            <p class="card-desc">
-              Games are matched against every line you have at once, and a channel says which one it
-              is on. Each provider counts its own connections, so a second line is a second stream
-              you can open at the same time.
-            </p>
-          </div>
-          <ul class="own-channels other-lines">
-            {otherLinesOf(playlists, playlist).map((p) => (
-              <li>
-                <span class="own-channel-name">
-                  {p.label || 'Untitled list'}
-                  {p.managed ? (
-                    <span class="league-tag channel-tag" title="Included with your pass">
-                      Live TV pass
-                    </span>
-                  ) : null}
-                  <span class="meta">
-                    {(p.channel_count ?? 0).toLocaleString('en-US')} channels
-                    {p.last_error ? ` · ${p.last_error}` : ''}
-                  </span>
-                </span>
-                <span class="own-channel-actions">
-                  {/* The only way to reach this line's address, name, sharing
-                      switch and player links, because the full card above renders
-                      for the FIRST list only. Without it a second subscription
-                      could be removed and nothing else -- so the way to manage
-                      the line you actually use was to delete the one you do not,
-                      which is irreversible for an address you may not have kept. */}
-                  <form method="post" action="/api/playlist/primary" class="inline">
-                    <input type="hidden" name="playlist_id" value={p.id} />
-                    <button class="ghost small-btn" type="submit">
-                      Manage
-                    </button>
-                  </form>
-                  {/* A managed line is removed by letting the pass lapse, not from
-                      here: deleting the row we provisioned would leave the pass
-                      paid for and nothing to play it on. */}
-                  {p.managed ? null : (
-                    <form method="post" action="/api/playlist/delete" class="inline">
-                      <input type="hidden" name="playlist_id" value={p.id} />
-                      <button class="ghost small-btn danger" type="submit">
-                        Remove
-                      </button>
-                    </form>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      {lines.map((line, i) => (
+        <LineCard line={line} first={i === 0} lineCeiling={lineCeiling} livePass={livePass} />
+      ))}
 
       {/*
-        Adding a provider, as opposed to editing the one above.
+        Adding a provider, as opposed to editing one.
 
-        A separate form because the two are now different operations and the
-        difference is destructive in one direction: the form above carries a
+        A separate form because the two are different operations and the difference
+        is destructive in one direction: the form on each card carries a
         playlist_id and edits, this one carries none and creates. Folding them
         together is what made "paste a new address" silently replace a working
         subscription under the old one-list rule.
 
-        Only offered once a list exists -- with none, the form above already says
-        "Add a list" and a second add form beside it would be two ways to do the
-        same thing.
+        Always drawn, and it is now the ONLY add form. It used to be hidden until a
+        list existed, because the edit form doubled as the add form when there was
+        nothing to edit -- and that form has moved onto the cards, where there is
+        nothing to double as.
       */}
-      {playlist ? (
-        <form method="post" action="/api/playlist" class="card" id="add-line">
-          <h3 class="card-title">Add another line</h3>
-          <p class="card-desc">
-            A second subscription is matched against games alongside your first, and each one counts
-            its own connections. We hold up to five.
-          </p>
-          <label class="field">
-            <span>Playlist URL</span>
-            <input
-              type="url"
-              name="url"
-              required
-              placeholder="http://provider.example/get.php?username=...&amp;type=m3u_plus"
-              autocomplete="off"
-              spellcheck="false"
-              class="input mono"
-            />
-          </label>
-          <label class="field">
-            <span>Name it</span>
-            <input type="text" name="label" placeholder="My other provider" class="input" />
-          </label>
-          <button class="cta" type="submit">
-            Add line
-          </button>
-        </form>
-      ) : null}
-
-      {/*
-        How many streams at once.
-
-        The proxy used to hold every account to one open stream, which is what a
-        typical line permits and is why a second Play stopped the first. A line
-        sold with two or four connections was held to one too. The provider's
-        panel is asked at import and refresh; this is where the reader lowers
-        that (or supplies it, for a list whose provider would not say). It can
-        never raise the panel's number: two streams on a line that permits one
-        is what gets a subscription suspended.
-      */}
-      {playlist ? (
-        <div class="card" id="line">
-          <div class="card-head">
-            <h3 class="card-title">Streams at once</h3>
-            <p class="card-desc">
-              {playlist.panel_connections === null || playlist.panel_connections === undefined
-                ? 'Your provider did not say how many connections this line permits, so it is treated as one unless you say otherwise.'
-                : `Your provider reports this line permits ${playlist.panel_connections} connection${
-                    playlist.panel_connections === 1 ? '' : 's'
-                  }${
-                    playlist.panel_active !== null && playlist.panel_active !== undefined
-                      ? ` (${playlist.panel_active} in use when last checked)`
-                      : ''
-                  }.`}{' '}
-              Right now <a href="/multiview">Multiview</a> and “Play here” can hold{' '}
-              <strong>{lineAllowance}</strong> open at once
-              {playlist.panel_status && playlist.panel_status.toLowerCase() !== 'active'
-                ? ` — and your provider says the line is ${playlist.panel_status}`
-                : ''}
-              .
-            </p>
-          </div>
-          <form method="post" action="/api/playlist/connections">
-            <label class="field">
-              <span>Allow</span>
-              <select name="connections" class="input">
-                <option value="" selected={playlist.line_connections == null}>
-                  Whatever my provider reports
-                  {playlist.panel_connections ? ` (${playlist.panel_connections})` : ' (else 1)'}
-                </option>
-                {Array.from({ length: lineCeiling }, (_, i) => i + 1).map((n) => (
-                  <option value={String(n)} selected={playlist.line_connections === n}>
-                    {n === 1 ? '1 stream at a time' : `${n} streams at once`}
-                    {playlist.panel_connections && n > playlist.panel_connections
-                      ? ' (more than your provider allows — it will be held to theirs)'
-                      : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p class="muted small">
-              Only set this above one if your subscription really allows it. A provider that sees
-              more connections than it sold you suspends the line, and nothing here can undo that.
-            </p>
-            <button class="ghost small-btn" type="submit">
-              Save
-            </button>
-          </form>
-        </div>
-      ) : null}
+      <form method="post" action="/api/playlist" class="card" id="add-line">
+        <h3 class="card-title">{lines.length ? 'Add another line' : 'Add a list'}</h3>
+        <p class="card-desc">
+          {lines.length
+            ? 'A second subscription is matched against games alongside your first, and each one counts its own connections. We hold up to five.'
+            : 'Paste the M3U address your provider gave you and we will tell you which of your own channels is carrying a game.'}
+        </p>
+        <label class="field">
+          <span>Playlist URL</span>
+          <input
+            type="url"
+            name="url"
+            required
+            placeholder="http://provider.example/get.php?username=...&amp;type=m3u_plus"
+            autocomplete="off"
+            spellcheck="false"
+            class="input mono"
+          />
+        </label>
+        <label class="field">
+          <span>Name it</span>
+          <input type="text" name="label" placeholder="My other provider" class="input" />
+        </label>
+        <button class="cta" type="submit">
+          {lines.length ? 'Add line' : 'Add list'}
+        </button>
+      </form>
 
       {/*
         Opening the list to everybody signed in.
@@ -3073,19 +3129,29 @@ export const Settings = ({
         offerable at all. Shared channels play through the proxy only; VLC, Infuse
         and .m3u stay owner-only, because each of those is the credential itself.
       */}
-      {playlist?.managed ? null : playlist ? (
+      {shareLine ? (
         <div class="card" id="sharing">
           <div class="card-head">
-            <h3 class="card-title">Who can see your list</h3>
+            {/* Names the line. One card for one list read as "your list" when
+                there was only ever one; with several it has to say which, or a
+                reader opens a subscription they did not mean to. */}
+            <h3 class="card-title">Who can see {shareLine.label || 'your list'}</h3>
             <p class="card-desc">
               Whoever you choose can play from it on a page for something it carries. They never get
               the address — it carries your provider username and password, so shared channels play
               through us and the VLC, Infuse and .m3u buttons stay yours alone. Your line permits a
-              fixed number of connections at a time (see “Streams at once” above), so somebody else
-              watching is using one of yours. See <a href="/shared">whose lists are open</a>.
+              fixed number of connections at a time (see “Streams at once” on its card), so somebody
+              else watching is using one of yours. See <a href="/shared">whose lists are open</a>.
+              {lines.filter((l) => !l.managed).length > 1
+                ? ' Only this line is opened; your others stay private.'
+                : ''}
             </p>
           </div>
           <form method="post" action="/api/playlist/share">
+            {/* Which list is opened. Without it the UPDATE behind this form fell
+                back to the reader's first line -- and, before the query was
+                scoped, to every line they had including a managed pass. */}
+            <input type="hidden" name="playlist_id" value={shareLine.id} />
             <label class="field">
               <span>Audience</span>
               {/*
@@ -3095,13 +3161,13 @@ export const Settings = ({
                 in somebody's browser must not quietly change what it means.
               */}
               <select name="audience">
-                <option value="none" selected={playlist.share_audience === 'none'}>
+                <option value="none" selected={shareLine.share_audience === 'none'}>
                   Nobody — keep it private
                 </option>
-                <option value="friends" selected={playlist.share_audience === 'friends'}>
+                <option value="friends" selected={shareLine.share_audience === 'friends'}>
                   Only the people I name{member ? '' : ' (premium)'}
                 </option>
-                <option value="everyone" selected={playlist.share_audience === 'everyone'}>
+                <option value="everyone" selected={shareLine.share_audience === 'everyone'}>
                   Everyone signed in
                 </option>
               </select>
@@ -3119,7 +3185,7 @@ export const Settings = ({
                 type="text"
                 name="label"
                 maxlength="80"
-                value={playlist.shared_label ?? ''}
+                value={shareLine.shared_label ?? ''}
                 placeholder="Anthony's line"
                 autocomplete="off"
               />
@@ -3143,7 +3209,7 @@ export const Settings = ({
             has to be added here before it can see anything. Somebody who followed
             back out of politeness has not agreed to be handed a credential.
           */}
-          {playlist.share_audience === 'friends' ? (
+          {shareLine.share_audience === 'friends' ? (
             <div class="share-grants">
               <h4>Named people</h4>
               {shareCandidates.length === 0 ? (
@@ -3156,6 +3222,7 @@ export const Settings = ({
                     <li>
                       <span>{p.display_name ?? (p.handle ? `@${p.handle}` : 'Someone')}</span>
                       <form method="post" action="/api/playlist/share/grant" class="inline">
+                        <input type="hidden" name="playlist_id" value={shareLine.id} />
                         <input type="hidden" name="user_id" value={p.id} />
                         <input type="hidden" name="allowed" value={p.granted ? '0' : '1'} />
                         <button class={p.granted ? 'ghost small-btn' : 'small-btn'} type="submit">
@@ -3169,13 +3236,17 @@ export const Settings = ({
             </div>
           ) : null}
         </div>
-      ) : (
+      ) : lines.length ? null : (
         /*
          * Shown when there is NO list, which is the only reason this branch
          * exists. Sharing used to render only for an account that already had
          * one, so the feature was invisible to anybody who had not got that far.
          * Reported on the sibling brand as sharing being missing from settings,
          * twice, and it was the same here.
+         *
+         * `lines.length ? null` is the case where every line came with a pass:
+         * ours is not shareable and never will be, so promising the switch once
+         * they "have added a list" would be a lie told to somebody who has one.
          *
          * No form, because there is nothing to submit yet. Saying what the
          * feature is and what it needs first is the whole job.
@@ -3194,73 +3265,6 @@ export const Settings = ({
         </div>
       )}
 
-      {/*
-        Editing, rather than removing and starting again.
-
-        The address field is optional once a list exists, and blank means "leave it
-        alone" -- that is the whole point. Renaming a list used to require pasting
-        a URL with a password in it, which meant keeping a copy of that URL
-        somewhere outside here, which is the opposite of what sealing it was for.
-
-        The name is prefilled; the address is not, because a browser that offers to
-        remember a field it has seen is how a provider password ends up in a
-        password manager under the wrong entry. Fill it with the Show button
-        instead, which asks for it deliberately.
-      */}
-      <form method="post" action="/api/playlist" data-playlist-form>
-        {/*
-          Which list this edits.
-
-          Load-bearing, and its absence was a regression: without an id the route
-          treats the post as a NEW list, so a reader correcting a typo in their
-          address would get a second broken line rather than the correction -- and
-          would lose the rollback that puts the working address back when the new
-          one cannot be read, because there is no previous address to restore on a
-          row that did not exist a moment ago.
-
-          Omitted where the reader's only list is our managed one: there the
-          heading offers to use a line of THEIRS, which is an add and should leave
-          the managed row alone.
-        */}
-        {playlist && !playlist.managed ? (
-          <input type="hidden" name="playlist_id" value={playlist.id} />
-        ) : null}
-        <h3 class="card-title">
-          {playlist?.managed
-            ? 'Use a list of your own instead'
-            : playlist
-              ? 'Edit your list'
-              : 'Add a list'}
-        </h3>
-        <label class="field">
-          <span>Playlist URL</span>
-          <input
-            type="url"
-            name="url"
-            required={!playlist}
-            placeholder={
-              playlist
-                ? 'Leave blank to keep the current address'
-                : 'http://your-provider.example/playlist/…'
-            }
-            autocomplete="off"
-            data-playlist-input
-          />
-        </label>
-        <label class="field">
-          <span>Name (optional)</span>
-          <input
-            type="text"
-            name="label"
-            value={playlist?.label ?? ''}
-            placeholder="My subscription"
-            autocomplete="off"
-          />
-        </label>
-        <button class="cta" type="submit">
-          {playlist ? 'Save changes' : 'Add list'}
-        </button>
-      </form>
       <p class="muted small">
         The address is stored encrypted because it usually contains your username and password. Only
         you ever see it, and removing the list deletes it. Saving the same address again keeps your

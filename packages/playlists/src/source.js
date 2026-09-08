@@ -23,18 +23,31 @@ export { maskPlaylistUrl } from './mask.js';
 /**
  * The stored address, in the clear, for the account that stored it.
  *
- * Takes a user id and uses it, like every other query in this feature -- there is
- * no variant that takes a playlist id, because that is the shape that leaks it
- * later. Returns null rather than throwing when the seal cannot be opened: a
- * rotated PLAYLIST_SECRET makes an old row unreadable, and the reader's answer to
- * that is to paste the URL again, not to see a stack trace.
+ * Takes a playlist id as well as a user id, and this comment used to say it never
+ * would -- that an id in the request is the shape that leaks somebody else's
+ * subscription. The leak is an id-ONLY lookup; the pairing is the fix, which is
+ * why `getPlaylistFor` takes both and why there is still no `getPlaylistById`.
+ * Refusing the id outright had its own cost: a reader with two lines could only
+ * ever see the address of the first, so the second could not be corrected without
+ * deleting it and typing a credentialed URL again.
+ *
+ * With no id it answers for the first line in the reader's order, which is what
+ * every single-list caller already meant.
+ *
+ * Returns null rather than throwing when the seal cannot be opened: a rotated
+ * PLAYLIST_SECRET makes an old row unreadable, and the reader's answer to that is
+ * to paste the URL again, not to see a stack trace.
  */
-export async function playlistSource(userId) {
-  const row = await q.getPlaylist(userId);
+export async function playlistSource(userId, { playlistId = null } = {}) {
+  const row = playlistId
+    ? await q.getPlaylistFor({ userId, playlistId })
+    : await q.getPlaylist(userId);
   if (!row) return null;
   const url = open(row.source_url);
   return {
+    id: row.id,
     label: row.label ?? null,
+    managed: Boolean(row.managed),
     url: url ?? null,
     masked: url ? maskPlaylistUrl(url) : null,
   };

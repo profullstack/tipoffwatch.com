@@ -2833,11 +2833,20 @@ ul.group-grid .meta {
 .channel-tag.provider {
   border-style: dashed;
 }
-/* The reader's lines beyond the first, listed rather than given a card each --
-   an address field per list would put several credentials on one page. */
-.other-lines li {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.6rem;
+/* Every line gets a card of its own now, so the one-line list this styled is
+   gone. What replaced the old objection -- several credentials on one page -- is
+   the masking, which was always what made showing one safe.
+
+   The subtitle and the block around the connections form are what keep a card
+   with four controls on it readable: without a rule the picker reads as part of
+   the edit form above it, and Save next to Save is how somebody sets a stream cap
+   while meaning to save an address. */
+.line-card .card-subtitle {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0 0 0.3rem;
+}
+.line-card .line-connections {
+  border-top: 1px solid var(--line);
+  padding-top: 0.9rem;
 }

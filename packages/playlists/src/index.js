@@ -354,10 +354,16 @@ async function askPanel(userId, url) {
  * from the row; see line.js for how they combine. An account with no list at all
  * gets one, which is what the proxy enforced for everyone before this existed.
  *
+ * Takes the line it is about. Without one it answers for the reader's first,
+ * which is the same row for an account with a single list and a defined one for
+ * an account with several -- where the old id-less read returned whichever came
+ * back first and could report the wrong subscription's cap.
+ *
  * @param {string} userId
+ * @param {{playlistId?: number|null}} [opts]
  */
-export async function lineAllowanceFor(userId) {
-  const row = await q.lineOf(userId).catch(() => null);
+export async function lineAllowanceFor(userId, { playlistId = null } = {}) {
+  const row = await q.lineOf(userId, { playlistId }).catch(() => null);
   return lineAllowance(row, config.playlists.proxy.maxPerUser);
 }
 

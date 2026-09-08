@@ -299,6 +299,11 @@ describe('the proxy asks the line, not the config', () => {
     const body = route.slice(0, route.indexOf('\n});'));
     expect(body).toContain('n < 1 || n > ceiling');
     expect(body).toContain("if (raw !== '')");
-    expect(body).toContain('q.setLineConnections({ userId: user.id, connections })');
+    // Names the line. Without the id this UPDATE had no WHERE beyond the account,
+    // so saving four on the line that permits four also saved four on the line
+    // that permits one -- and a provider suspends a line for exceeding what it
+    // sold rather than warning about it.
+    expect(body).toContain('q.setLineConnections({ userId: user.id, playlistId, connections })');
+    expect(body).toContain('lineFromRequest(user.id, body.playlist_id)');
   });
 });

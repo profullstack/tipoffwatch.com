@@ -345,14 +345,19 @@ describe('the routes', () => {
     expect(routeBody("app.get('/events/:id/playlist.m3u'")).toContain(
       'if (await q.playlistIsManaged(user.id)) return c.redirect(',
     );
-    expect(routeBody("app.get('/api/playlist/source'")).toContain(
-      'if (await q.playlistIsManaged(user.id)) {',
-    );
-    expect(routeBody("app.post('/api/playlist/share'")).toContain(
-      'if (await q.playlistIsManaged(user.id)) {',
-    );
+    /*
+     * Asked of the LINE, not the account.
+     *
+     * `playlistIsManaged` answers "does this reader have any managed list", which
+     * was both too strict and too loose once an account could hold several: it
+     * refused a reader the address of a list of their own while a pass sat beside
+     * it, and the UPDATE underneath the share route opened every row they had --
+     * including ours. The row-level check is what these three need.
+     */
+    expect(routeBody("app.get('/api/playlist/source'")).toContain('if (row?.managed) {');
+    expect(routeBody("app.post('/api/playlist/share'")).toContain('if (target?.managed) {');
     expect(routeBody("app.post('/api/playlist/share/grant'")).toContain(
-      'if (allowed && (await q.playlistIsManaged(user.id))) {',
+      'if (allowed && target?.managed) {',
     );
   });
 

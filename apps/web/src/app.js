@@ -1173,6 +1173,29 @@ function playlistNoticeFor(result) {
  */
 const MAX_PLAYLISTS = 5;
 
+/**
+ * Which of the reader's lines a request is about.
+ *
+ * Every route in this section used to answer for "the account", from a time when
+ * an account had one list. With several, that meaning silently became "whichever
+ * row came back first" on reads and "all of them" on writes -- so Show revealed
+ * the first line's address whatever card was pressed, and Save wrote one line's
+ * connection cap onto every other.
+ *
+ * The id is paired with the session's own user id in the lookup rather than
+ * trusted on its own: `getPlaylistFor` is the only lookup that takes a list id
+ * and it takes both, which is what stops an id in a form from naming somebody
+ * else's subscription. No id still means the first line in the reader's order,
+ * because that is what every existing form and the JSON callers send.
+ */
+const lineFromRequest = async (userId, raw) => {
+  const playlistId = Number(raw) || null;
+  const row = playlistId
+    ? await q.getPlaylistFor({ userId, playlistId })
+    : await q.getPlaylist(userId);
+  return { playlistId, row };
+};
+
 app.post('/api/playlist', async (c) => {
   const user = requireUser(c);
   const body = await c.req.parseBody();
@@ -1241,12 +1264,21 @@ app.post('/api/playlist', async (c) => {
  */
 app.get('/api/playlist/source', async (c) => {
   const user = requireUser(c);
-  // Our line's address is not the reader's to see. The settings card for a
-  // managed list has no Show button; this is the route it would have called.
-  if (await q.playlistIsManaged(user.id)) {
+  const { playlistId, row } = await lineFromRequest(user.id, c.req.query('playlist_id'));
+  if (playlistId && !row) return c.json({ error: 'That list is not one of yours.' }, 404);
+  /*
+   * Our line's address is not the reader's to see. The settings card for a
+   * managed list has no Show button; this is the route it would have called.
+   *
+   * Asked of the LINE, not the account. `playlistIsManaged` answers "does this
+   * reader have any managed list", which refused a reader their own address for
+   * as long as a pass sat alongside it -- the exact case where two lists exist
+   * and this route matters.
+   */
+  if (row?.managed) {
     return c.json({ error: 'That list came with your pass and has no address to show.' }, 403);
   }
-  const source = await playlistSource(user.id);
+  const source = await playlistSource(user.id, { playlistId });
   if (!source) return c.json({ error: 'You have not added a list.' }, 404);
   c.header('cache-control', 'no-store');
   if (!source.url) {
@@ -1257,8 +1289,11 @@ app.get('/api/playlist/source', async (c) => {
 
 app.post('/api/playlist/refresh', async (c) => {
   const user = requireUser(c);
+  const body = await c.req.parseBody();
   try {
-    const result = await refreshPlaylist(user.id);
+    const { playlistId, row } = await lineFromRequest(user.id, body.playlist_id);
+    if (playlistId && !row) throw new Error('That list is not one of yours.');
+    const result = await refreshPlaylist(user.id, { playlistId });
     return respond(c, { json: result, redirectTo: playlistNoticeFor(result) });
   } catch (err) {
     return respond(c, {
@@ -1295,7 +1330,15 @@ app.post('/api/playlist/connections', async (c) => {
     }
     connections = n;
   }
-  const row = await q.setLineConnections({ userId: user.id, connections });
+  const { playlistId, row: target } = await lineFromRequest(user.id, body.playlist_id);
+  if (playlistId && !target) {
+    return respond(c, {
+      json: { error: 'That list is not one of yours.' },
+      status: 404,
+      redirectTo: '/settings?playlist_error=That%20list%20is%20not%20one%20of%20yours.',
+    });
+  }
+  const row = await q.setLineConnections({ userId: user.id, playlistId, connections });
   if (!row) {
     return respond(c, {
       json: { error: 'You have not added a list.' },
@@ -1305,7 +1348,7 @@ app.post('/api/playlist/connections', async (c) => {
   }
   return respond(c, {
     json: { connections, allowance: lineAllowance(row, ceiling) },
-    redirectTo: '/settings?playlist=connections#line',
+    redirectTo: `/settings?playlist=connections#line-${row.id}`,
   });
 });
 
@@ -1323,11 +1366,27 @@ app.post('/api/playlist/share', async (c) => {
   const user = requireUser(c);
   const body = await c.req.parseBody();
   const label = String(body.label ?? '').trim();
+  const { playlistId, row: target } = await lineFromRequest(user.id, body.playlist_id);
+  if (playlistId && !target) {
+    return respond(c, {
+      json: { error: 'That list is not one of yours.' },
+      status: 404,
+      redirectTo: '/settings?playlist_error=That%20list%20is%20not%20one%20of%20yours.',
+    });
+  }
 
-  // A pass is one person's. Opening a managed list to others is reselling our
-  // line to people who did not pay for it, so the card is not drawn and the
-  // route refuses whatever an old page sends.
-  if (await q.playlistIsManaged(user.id)) {
+  /*
+   * A pass is one person's. Opening a managed list to others is reselling our
+   * line to people who did not pay for it, so the card is not drawn and the
+   * route refuses whatever an old page sends.
+   *
+   * Asked of the LINE now. The account-wide question refused a reader with a pass
+   * the right to share a list of their own, while the UPDATE underneath it opened
+   * every row they had -- so the check was simultaneously too strict for the
+   * reader and too loose for our line. The query carries `and not managed` as
+   * well, so this cannot be routed around by a hand-made post.
+   */
+  if (target?.managed) {
     return respond(c, {
       json: { error: 'a list that came with a pass cannot be shared' },
       status: 403,
@@ -1365,7 +1424,12 @@ app.post('/api/playlist/share', async (c) => {
     });
   }
 
-  const row = await q.setPlaylistSharing({ userId: user.id, audience, label: label || null });
+  const row = await q.setPlaylistSharing({
+    userId: user.id,
+    playlistId,
+    audience,
+    label: label || null,
+  });
   if (!row) {
     return respond(c, {
       json: { error: 'no list to share' },
@@ -1389,10 +1453,18 @@ app.post('/api/playlist/share/grant', async (c) => {
   const body = await c.req.parseBody();
   const audienceUserId = String(body.user_id ?? '');
   const allowed = String(body.allowed ?? '') === '1';
+  const { playlistId, row: target } = await lineFromRequest(user.id, body.playlist_id);
+  if (playlistId && !target) {
+    return respond(c, {
+      json: { error: 'That list is not one of yours.' },
+      status: 404,
+      redirectTo: '/settings?playlist_error=That%20list%20is%20not%20one%20of%20yours.',
+    });
+  }
 
   // Same refusal as /api/playlist/share, and for the same reason. Revoking is
   // never gated anywhere, so only a grant is refused.
-  if (allowed && (await q.playlistIsManaged(user.id))) {
+  if (allowed && target?.managed) {
     return respond(c, {
       json: { error: 'a list that came with a pass cannot be shared' },
       status: 403,
@@ -1409,7 +1481,12 @@ app.post('/api/playlist/share/grant', async (c) => {
     });
   }
 
-  const ok = await q.setPlaylistShareGrant({ userId: user.id, audienceUserId, allowed });
+  const ok = await q.setPlaylistShareGrant({
+    userId: user.id,
+    playlistId,
+    audienceUserId,
+    allowed,
+  });
   return respond(c, { json: { ok }, redirectTo: '/settings#sharing' });
 });
 
@@ -2788,13 +2865,19 @@ app.post('/api/timezone', async (c) => {
 
 app.get('/settings', async (c) => {
   const user = requireUser(c);
-  const [prefs, passkeys, playlist, playlists, member, shareCandidates] = await Promise.all([
+  const [prefs, passkeys, playlists, member, shareCandidates] = await Promise.all([
     q.getPrefs(user.id),
     q.listPasskeys(user.id),
-    q.getPlaylist(user.id),
-    // All of them, for the "other lines" card. getPlaylist still answers for the
-    // main card, which is the first row and carries the address and the sharing
-    // controls; this is the same ordering, read whole.
+    /*
+     * Every line, and only this read.
+     *
+     * There used to be a getPlaylist beside it for "the main card" -- the first
+     * row, which alone carried the address, the connection cap and the sharing
+     * controls. The page draws a card per line now, so the singular read had
+     * nothing left to answer and its absence is what stops a second one creeping
+     * back: with one source of rows there is no ordering for two queries to
+     * disagree about.
+     */
     q.getPlaylists(user.id),
     isMember(user),
     // Fetched unconditionally rather than only for a member: the picker has to be
@@ -2814,7 +2897,11 @@ app.get('/settings', async (c) => {
     radioSession && !radioSession.unreadable ? await q.siriusXmShareCandidates(user.id) : [];
   // The pass behind a managed list, for its card. Its own read, only when the
   // list is ours; a list of their own has no pass to report on.
-  const livePass = playlist?.managed ? await q.activeLivePass(user.id) : null;
+  // Asked of every line, not just the first. The managed row sorts wherever the
+  // reader put it, so `playlist?.managed` reported no pass the moment somebody
+  // ordered a list of their own above ours -- and its card then said the pass had
+  // ended while it was still running.
+  const livePass = playlists.some((p) => p.managed) ? await q.activeLivePass(user.id) : null;
   const added = c.req.query('playlist');
   /*
    * Three outcomes, not one count.
@@ -2835,9 +2922,32 @@ app.get('/settings', async (c) => {
             ? `Imported ${Number(added).toLocaleString('en-US')} channels.`
             : null;
 
-  // Masked here rather than in the view, so the unsealed URL exists for one
-  // expression and never becomes a prop that something else could render whole.
-  const playlistUrl = playlist ? auth.open(playlist.source_url) : null;
+  /*
+   * One view model per line, masked here rather than in the view.
+   *
+   * The unsealed URL exists for one expression and never becomes a prop that
+   * something else could render whole. It is built for EVERY line now, not just
+   * the first: the settings page used to hand the address, the refresh button and
+   * the connection picker to row one and give the rest a name and a Remove
+   * button, which is why a second subscription could not be corrected without
+   * deleting it and typing a credentialed URL again.
+   *
+   * `source_url` is dropped on the way out. A sealed credential is still a
+   * credential, and nothing in the view has any use for it.
+   */
+  const lines = playlists.map((row) => {
+    const url = row.managed ? null : auth.open(row.source_url);
+    const { source_url: _sealed, ...safe } = row;
+    return {
+      ...safe,
+      masked: url ? maskPlaylistUrl(url) : null,
+      // A row whose seal will not open can still be renamed and removed; it just
+      // cannot be refreshed or shown, and the card says so instead of drawing an
+      // empty Address field.
+      unreadable: !row.managed && !url,
+      allowance: lineAllowance(row, config.playlists.proxy.maxPerUser),
+    };
+  });
   return c.html(
     await render(
       <Settings
@@ -2849,14 +2959,13 @@ app.get('/settings', async (c) => {
           }
         }
         passkeys={passkeys}
-        playlist={playlist}
-        playlists={playlists}
+        lines={lines}
+        // The line the sharing card acts on: the first the reader owns. Our
+        // managed line is never shareable, so a reader whose only list came with
+        // a pass gets no card rather than one that would be refused.
+        shareLine={lines.find((l) => !l.managed) ?? null}
         livePass={livePass}
-        lineAllowance={playlist ? lineAllowance(playlist, config.playlists.proxy.maxPerUser) : 1}
         lineCeiling={config.playlists.proxy.maxPerUser}
-        // Never for a managed list: the address is ours, not theirs to see.
-        playlistMasked={playlistUrl && !playlist?.managed ? maskPlaylistUrl(playlistUrl) : null}
-        playlistUnreadable={Boolean(playlist) && !playlistUrl}
         playlistNotice={playlistNotice}
         playlistError={c.req.query('playlist_error') ?? null}
         profileError={c.req.query('profile_error') ?? null}
