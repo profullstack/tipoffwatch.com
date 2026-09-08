@@ -120,6 +120,29 @@ describe('fetchPublic follows redirects itself', () => {
     }
   });
 
+  test('a channel that never answers is given up on, not waited out', async () => {
+    // Measured in production before this existed: a dead channel held the
+    // request open for the full 30 seconds the client would wait.
+    const original = globalThis.fetch;
+    globalThis.fetch = (_url, opts) =>
+      new Promise((_resolve, reject) => {
+        opts?.signal?.addEventListener('abort', () => {
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+      });
+    try {
+      const started = Date.now();
+      await expect(
+        fetchPublic('https://cdn.example.com/live.m3u8', { lookup, connectTimeoutMs: 50 }),
+      ).rejects.toThrow(/timed out/);
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   test('a redirect chain that never settles is refused', async () => {
     const original = globalThis.fetch;
     globalThis.fetch = async () =>

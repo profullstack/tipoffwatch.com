@@ -114,11 +114,41 @@ export async function assertPublicUrl(raw, { lookup = dnsLookup } = {}) {
  * hop's connect without ever showing it to `assertPublicUrl` -- which is the
  * whole point of this function.
  */
-export async function fetchPublic(raw, { signal, headers = {}, maxHops = 3, lookup } = {}) {
+/**
+ * How long to wait for a channel to answer at all.
+ *
+ * Bounds reaching the provider, not watching it: it is cleared the moment the
+ * headers arrive, because a timeout that survived into playback would cut a
+ * live channel off mid-stream. Measured in production before this existed, a
+ * dead channel held a request open for the full 30 seconds a client would
+ * wait — and these are other people's streams, so some of them are always dead.
+ */
+const CONNECT_TIMEOUT_MS = 8000;
+
+export async function fetchPublic(
+  raw,
+  { signal, headers = {}, maxHops = 3, lookup, connectTimeoutMs = CONNECT_TIMEOUT_MS } = {},
+) {
   let target = raw;
   for (let hop = 0; hop <= maxHops; hop++) {
     const url = await assertPublicUrl(target, { lookup });
-    const res = await fetch(url, { headers, redirect: 'manual', signal });
+
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal?.aborted) abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(abort, connectTimeoutMs);
+
+    let res;
+    try {
+      res = await fetch(url, { headers, redirect: 'manual', signal: controller.signal });
+    } catch (err) {
+      if (signal?.aborted) throw new Error('closed');
+      throw new Error(err?.name === 'AbortError' ? 'timed out' : 'could not connect');
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    }
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location');
       res.body?.cancel().catch(() => {});
