@@ -1541,11 +1541,26 @@ time.line {
   margin: 0 0 0.15rem;
   font-weight: 400;
 }
+/* The broadcasters in one market. A list in the markup, because that is what it
+   is and an engine reading the page should not have to split a sentence to find
+   out -- and a run of names on screen, because that is how it has always read and
+   a stack of one-word rows would be worse. The separator is drawn between items
+   rather than typed into the text, so it never survives a copy and paste. */
 .market-channels {
   margin: 0;
+  padding: 0;
+  list-style: none;
   font-family: var(--disp);
   font-size: 1.4rem;
   line-height: 1.2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.55rem;
+}
+.market-channels li + li::before {
+  content: "·";
+  color: var(--muted);
+  margin-right: 0.55rem;
 }
 
 /* Tabbed: the country headings become the strip, so only the selected market's
@@ -2736,7 +2751,7 @@ ul.group-grid .meta {
   font-weight: 700;
   border-left: 1px solid var(--line);
 }
-.teamstats th[scope='row'] {
+.teamstats th[scope="row"] {
   font-weight: 400;
   white-space: normal;
 }

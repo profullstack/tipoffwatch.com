@@ -1,6 +1,7 @@
 import { brand, href, Word } from '@tipoff/config';
 import { assetUrl } from '../lib/asset-version.js';
-import { breadcrumbNode, eventNode, faqNode } from '../lib/jsonld.js';
+import { breadcrumbNode, eventNode, faqNode, watchListNode } from '../lib/jsonld.js';
+import { marketsOf } from '../lib/markets.js';
 import {
   EventList,
   FollowButton,
@@ -283,20 +284,10 @@ const SetBySet = ({ event }) => {
   );
 };
 
-export function marketsOf(event) {
-  const raw = event?.broadcast_markets;
-  if (!raw) return [];
-  let parsed = raw;
-  if (typeof raw === 'string') {
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((m) => m?.country && Array.isArray(m.channels) && m.channels.length);
-}
+/* Re-exported from its new home in lib/markets.js, which app.js and the tests
+   already import from here. The parser moved so the structured-data builder can
+   use it without importing this view back. */
+export { marketsOf };
 
 /**
  * Which channels are showing this game, and where.
@@ -451,7 +442,19 @@ const BroadcastMarkets = ({ event, marketChannels, managed = false }) => {
                 })}
               </ul>
             ) : (
-              <p class="market-channels">{m.channels.join(' · ')}</p>
+              /* Every broadcaster in this market, one per item.
+
+                 This was a single sentence of names joined with a separator, which
+                 read fine and said nothing: a run of text cannot be enumerated, so
+                 the same listing that renders as rows for a reader with a matching
+                 list was, for everyone else, three channels or one and no way to
+                 tell which. It is a list in both branches now, and the same list
+                 in both -- the rows below add buttons, they do not add names. */
+              <ul class="market-channels">
+                {m.channels.map((name) => (
+                  <li>{name}</li>
+                ))}
+              </ul>
             )}
           </li>
         ))}
@@ -1820,7 +1823,11 @@ export const EventPage = ({
           ...(event.league_slug ? [[event.league_name, href.collection(event.league_slug)]] : []),
           [event.short_name ?? event.name, null],
         ]),
-      ]}
+        /* The "Where to watch" listing, when there is one. Null on a fixture with
+           no broadcast markets, and filtered out rather than published empty: an
+           ItemList of nothing is a claim that nobody carries this game. */
+        watchListNode(event),
+      ].filter(Boolean)}
     >
       <ol class="crumbs" aria-label="Breadcrumb">
         <li>

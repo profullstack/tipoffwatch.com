@@ -1,4 +1,5 @@
 import { brand, config } from '@tipoff/config';
+import { marketsOf } from './markets.js';
 
 /**
  * Structured data, as plain objects.
@@ -150,6 +151,71 @@ export const eventNode = (event) => {
 
 const iso = (at) => new Date(at).toISOString();
 const isoDay = (at) => new Date(at).toISOString().slice(0, 10);
+
+/**
+ * "Where to watch", said in the vocabulary an answer engine reads.
+ *
+ * The single most-asked question about a fixture is which channel it is on, and
+ * until now the only machine-readable thing on the page was the kickoff time. The
+ * listing was rendered as visible text and nothing else, so "what channel is the
+ * Yankees game on" could be answered from this page only by an engine willing to
+ * guess at prose.
+ *
+ * An `ItemList` rather than `broadcastOfEvent` on the fixture: what the provider
+ * gives us is a set of rights holders per country, not a scheduled broadcast with
+ * a start time on a named service, and publishing the second when we only know the
+ * first would be inventing a fact. Each entry is a `BroadcastService` with the
+ * country it serves, which is exactly the claim the page makes in words.
+ *
+ * EVERY market and EVERY channel in it, in the order they render. The list is
+ * flat rather than one list per country because an ItemList of ItemLists is read
+ * by almost nothing, and `areaServed` already carries which country a listing is
+ * true in -- an ESPN listing is a US listing, and a name with no country attached
+ * is the one way this could mislead.
+ *
+ * Published on a single-market fixture too, where the "Where to watch" section
+ * stands down in favour of the stat tile above it. The names are on the page
+ * either way -- the tile carries them -- so this still only says which visible
+ * fact is the broadcaster, which is the rule every other node here follows.
+ */
+export const watchListNode = (event) => {
+  const markets = marketsOf(event);
+  if (markets.length === 0) return null;
+
+  const items = [];
+  for (const market of markets) {
+    // A provider occasionally repeats a name within one country. Deduped per
+    // market rather than globally: the same broadcaster in two countries is two
+    // listings, and collapsing those would drop a country off the list.
+    for (const name of [...new Set(market.channels)]) {
+      items.push({
+        '@type': 'ListItem',
+        position: items.length + 1,
+        item: {
+          '@type': 'BroadcastService',
+          name,
+          areaServed: { '@type': 'Country', name: market.country },
+        },
+      });
+    }
+  }
+
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    '@id': url(`/events/${event.id}#watch`),
+    name: `Where to watch ${event.name}`,
+    // Tied to the fixture node above it by @id, so the list is understood as this
+    // game's broadcasters rather than a list of channels that happens to share a
+    // page with a game.
+    about: { '@id': url(`/events/${event.id}#event`) },
+    // The order is the provider's, which carries no ranking. Saying so stops an
+    // engine reading the first entry as the primary broadcaster.
+    itemListOrder: 'https://schema.org/ItemListUnordered',
+    numberOfItems: items.length,
+    itemListElement: items,
+  };
+};
 
 /**
  * A trail, matching the <ol class="crumbs"> already on the page.

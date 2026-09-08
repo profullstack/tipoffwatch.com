@@ -325,13 +325,18 @@ describe('the market picker renders', () => {
     expect(out).toContain('data-country="United Kingdom"');
     // Every market is on the page before any script runs: with JS off the reader
     // sees all of them rather than one country's channels presented as the answer.
-    expect(out).toContain('CBS · Paramount+');
+    // One item per broadcaster rather than a sentence of names joined together:
+    // the separator between them is drawn by CSS, so what is in the markup is a
+    // list an engine can enumerate and a reader copying it gets the names alone.
+    expect(out).toContain('<ul class="market-channels"><li>CBS</li><li>Paramount+</li></ul>');
     expect(out).toContain('TNT Sports');
   });
 
   test('a single market stays a stat tile and grows no picker', async () => {
     const out = await html(eventWith([{ country: 'Australia', channels: ['7 Queensland'] }]));
-    expect(out).not.toContain('Where to watch');
+    // The visible section, specifically. The listing is still published as
+    // structured data, where its name carries these same words.
+    expect(out).not.toContain('<h2>Where to watch</h2>');
     expect(out).toContain('Watch on TV · Australia');
   });
 
