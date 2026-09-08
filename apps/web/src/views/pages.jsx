@@ -2768,7 +2768,7 @@ export const Settings = ({
     {/* A reader's own channel list. Private to this account: never shown to anyone
         else, never pooled, and never offered for sale. */}
     <section>
-      <h2>Your channel list</h2>
+      <h2 id="your-list">Your channel list</h2>
       <p class="muted small">
         If you subscribe to a service that gives you an M3U playlist, add it here and we will tell
         you which of your own channels is carrying a game. It stays private to your account unless
@@ -2922,6 +2922,18 @@ export const Settings = ({
                   </span>
                 </span>
                 <span class="own-channel-actions">
+                  {/* The only way to reach this line's address, name, sharing
+                      switch and player links, because the full card above renders
+                      for the FIRST list only. Without it a second subscription
+                      could be removed and nothing else -- so the way to manage
+                      the line you actually use was to delete the one you do not,
+                      which is irreversible for an address you may not have kept. */}
+                  <form method="post" action="/api/playlist/primary" class="inline">
+                    <input type="hidden" name="playlist_id" value={p.id} />
+                    <button class="ghost small-btn" type="submit">
+                      Manage
+                    </button>
+                  </form>
                   {/* A managed line is removed by letting the pass lapse, not from
                       here: deleting the row we provisioned would leave the pass
                       paid for and nothing to play it on. */}
