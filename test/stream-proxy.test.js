@@ -308,8 +308,14 @@ describe('what the page offers, and to whom', () => {
      * addressed by row id -- which list a row was ranked into cannot change what
      * its links resolve to, and that is what let the other three exist at all.
      */
-    expect(view).toContain('ownChannels.matches.map((ch) => (');
+    // The matches are grouped by provider now, so they are rendered from each
+    // group's rows rather than from the flat list. What must stay true is that
+    // both paths render the same row component, which is what carries Play here.
+    expect(view).toMatch(/(ownChannels\.matches|g\.rows)\.map\(\(ch\) => \(/);
+    expect(view).toContain('byProvider(ownChannels.matches)');
     expect(view).toContain('ownChannels.competition.map((ch) => (');
+    // Two render sites, one component: the grouped matches and the competition.
+    expect(view.split('<ChannelRow ch={ch}').length - 1).toBeGreaterThanOrEqual(2);
     expect(view).toContain('<PlayButton channelId={mine} />');
     expect(view).toMatch(/\/my\/channels\/\$\{channelId\}\/stream\.ts/);
   });

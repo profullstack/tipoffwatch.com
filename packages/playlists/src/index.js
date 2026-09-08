@@ -509,6 +509,28 @@ const VERDICT_TTL_MS = 10 * 60 * 1000;
 
 const freshEnough = (at) => Boolean(at) && Date.now() - new Date(at).getTime() < VERDICT_TTL_MS;
 
+/** How many rows one subscription may contribute to a single answer. */
+const PER_LINE = 10;
+
+/**
+ * Keep the ranked order, but stop any one line from filling the whole answer.
+ *
+ * A reducer rather than a sort, because the input is already in the order the
+ * ranker chose and re-sorting by provider would throw that away: the best match
+ * has to stay the first row of its line.
+ */
+export function perLine(limit) {
+  const seen = new Map();
+  return (out, row) => {
+    const key = row.playlistId ?? 'unknown';
+    const n = seen.get(key) ?? 0;
+    if (n >= limit) return out;
+    seen.set(key, n + 1);
+    out.push(row);
+    return out;
+  };
+}
+
 export async function ownChannelsFor({ userId, fixture }) {
   const none = { hasList: false, channelCount: 0, matches: [], competition: [] };
   if (!config.playlists.enabled || !userId) return none;
@@ -576,7 +598,15 @@ export async function ownChannelsFor({ userId, fixture }) {
         };
       })
       .filter((m) => m.url)
-      .slice(0, 10);
+      // Per LINE, not ten across all of them.
+      //
+      // The matches from every provider are ranked into one list, so a flat cap
+      // let one subscription take every slot and the other vanish -- which reads
+      // exactly like the site only using one of them. Measured on an account
+      // with a 7,059-entry list and a 1,417,873-entry one: the big list can fill
+      // ten rows on its own. Ranking still decides the order within a line; this
+      // only guarantees each line gets to speak.
+      .reduce(perLine(PER_LINE), []);
 
   return {
     hasList: true,

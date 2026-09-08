@@ -652,27 +652,45 @@ export async function playlistCandidates(userId, { terms = [], limit = 3000 } = 
   const usable = (terms ?? []).filter((t) => t && t.length >= 2);
   if (!userId || usable.length === 0) return [];
 
+  /*
+   * A share of the cap for every line, not a race for it.
+   *
+   * `order by p.position ... limit 3000` is fair only while no single list can
+   * fill the cap on its own. One of these accounts has 1,417,873 entries in one
+   * subscription: promote that list to the front and it takes all three thousand
+   * candidate slots, and the reader's other provider is never even fetched --
+   * which looks exactly like the site ignoring it. The window gives each line its
+   * own allowance, so both providers reach the ranker and the ranker decides.
+   */
+  const perList = Math.max(1, Math.floor(limit / 2));
   return sql`
-    select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,
-           c.is_live, c.checked_at,
-           -- Which line this entry is on. The join was always here, so spanning
-           -- several providers costs nothing extra -- but a merged list has to be
-           -- able to say which subscription each row came from, and a stream start
-           -- has to charge the connection to the right line.
-           p.id as playlist_id, p.label as playlist_label, p.managed as playlist_managed
-    from user_playlist_channels c
-    join user_playlists p on p.id = c.playlist_id
-    where p.user_id = ${userId}
-      -- Same freshness rule as before: a "dead" verdict is respected only while it
-      -- is recent, and NULL is never filtered out because unchecked is not dead.
-      and (c.is_live is not false or c.checked_at < now() - interval '30 minutes')
-      and c.norm_title like any(${pgArray(usable.map((t) => `%${t}%`))}::text[])
+    select id, title, group_title, kind, stream_url, norm_title, is_live, checked_at,
+           playlist_id, playlist_label, playlist_managed
+    from (
+      select c.id, c.title, c.group_title, c.kind, c.stream_url, c.norm_title,
+             c.is_live, c.checked_at,
+             -- Which line this entry is on. The join was always here, so spanning
+             -- several providers costs nothing extra -- but a merged list has to be
+             -- able to say which subscription each row came from, and a stream start
+             -- has to charge the connection to the right line.
+             p.id as playlist_id, p.label as playlist_label, p.managed as playlist_managed,
+             p.position as playlist_position,
+             row_number() over (partition by p.id order by c.position, c.id) as rn
+      from user_playlist_channels c
+      join user_playlists p on p.id = c.playlist_id
+      where p.user_id = ${userId}
+        -- Same freshness rule as before: a "dead" verdict is respected only while it
+        -- is recent, and NULL is never filtered out because unchecked is not dead.
+        and (c.is_live is not false or c.checked_at < now() - interval '30 minutes')
+        and c.norm_title like any(${pgArray(usable.map((t) => `%${t}%`))}::text[])
+    ) ranked
+    where rn <= ${perList}
     -- The reader's ordering of their providers first, then the provider's own
     -- ordering within a list. Ordering by c.position alone was unambiguous while
     -- there could only be one list and is not now: positions restart at zero per
     -- list, so entry 3 of two different providers would interleave arbitrarily and
     -- the cap below would keep whichever the planner happened to emit.
-    order by p.position, p.id, c.position
+    order by playlist_position, playlist_id, rn
     limit ${limit}
   `;
 }
