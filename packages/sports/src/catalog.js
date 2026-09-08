@@ -18,6 +18,7 @@
 import * as q from '@tipoff/db/queries';
 import * as anilist from './anilist.js';
 import * as musicbrainz from './musicbrainz.js';
+import * as nichedb from './nichedb.js';
 import * as spacedevs from './spacedevs.js';
 import * as tmdb from './tmdb.js';
 import * as tvmaze from './tvmaze.js';
@@ -42,6 +43,9 @@ export const CATALOG_ADAPTERS = [
   { name: 'tmdb', category: 'film', module: tmdb, minIntervalMinutes: 720 },
   { name: 'spacedevs', category: 'space', module: spacedevs, minIntervalMinutes: 60 },
   { name: 'musicbrainz', category: 'music', module: musicbrainz, minIntervalMinutes: 720 },
+  // Ours, and it answers in milliseconds, so the interval is about how often news
+  // is worth re-reading rather than what an upstream will tolerate.
+  { name: 'nichedb', category: 'news', module: nichedb, minIntervalMinutes: 20 },
 ];
 
 /** A provider's "upcoming" is this schema's "pre". */
