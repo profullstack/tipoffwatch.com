@@ -271,9 +271,14 @@ describe('how the page says it', () => {
       new URL('../packages/config/src/brands.js', import.meta.url).pathname,
       'utf8',
     );
+    // Once per brand, so no site renders undefined. Counted from the file rather
+    // than hard-coded: this used to assert 2, which quietly meant "there are two
+    // brands" and failed the moment a third was added for a reason that had
+    // nothing to do with the invariant being tested.
+    const brandCount = (brands.match(/^ {4}id: '/gm) ?? []).length;
+    expect(brandCount).toBeGreaterThanOrEqual(2);
     for (const key of ['liveTitle', 'liveBlurb', 'liveEmpty']) {
-      // Once per brand, so neither site renders undefined.
-      expect(brands.split(`${key}:`).length - 1).toBe(2);
+      expect(brands.split(`${key}:`).length - 1).toBe(brandCount);
     }
   });
 

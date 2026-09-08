@@ -56,6 +56,20 @@ const SPORTS_WORDS = {
   browse: 'Browse by sport',
 };
 
+const NEWS_WORDS = {
+  category: 'news',
+  categories: 'news',
+  collection: 'beat',
+  collections: 'beats',
+  participant: 'outlet',
+  participants: 'outlets',
+  event: 'story',
+  events: 'stories',
+  // Not "Kickoff" and not "Out": a story is already published when you see it.
+  starts: 'Published',
+  browse: 'Browse by beat',
+};
+
 const GENRE_WORDS = {
   category: 'category',
   categories: 'categories',
@@ -221,6 +235,92 @@ const BRANDS = {
      * and because both run this same code the signpost is honest about it.
      */
     elsewhere: { sports: 'https://tipoffwatch.com' },
+  },
+
+  /*
+   * The one brand whose events are in the past.
+   *
+   * A fixture is something that will happen and a release is something that will
+   * drop; a story has already been published by the time anyone can read it. The
+   * schema takes that without complaint -- `starts_at` is just a timestamp -- but
+   * the COPY cannot pretend otherwise, so the pages that exist to count down say
+   * plainly that news does not announce itself in advance rather than sitting
+   * empty with a sports sentence over them. That honesty is the whole reason
+   * whole sentences live in this file instead of substituted nouns.
+   */
+  watchnews: {
+    id: 'watchnews',
+    name: 'WatchNews',
+    domain: 'watchnews.now',
+    tagline: 'Know who reported it.',
+    description:
+      'Follow a beat or a newsroom and read what they actually published, from free sources only. Free.',
+    words: NEWS_WORDS,
+    paths: { category: 'news', collection: 'beats', participant: 'outlets' },
+    categories: ['news'],
+
+    copy: {
+      heroTitle: 'Follow the desk, not the algorithm.',
+      heroBody:
+        'Pick a beat or a newsroom and see what it published, newest first. Wire copy read ' +
+        'straight from the publishers themselves plus worldwide coverage in 65 languages, so ' +
+        'you can watch one story land across a hundred outlets at once. Free, no ads, and no ' +
+        'account needed to read.',
+      browse: 'Browse by beat',
+      mine: 'My beats',
+      pushBlurb: 'Get a notification when a newsroom you follow publishes.',
+      calendarBlurb: 'Everything you follow as a calendar feed, filed on the day it was published.',
+      calendarPrivacy: 'Anyone with this link can see the beats and outlets you follow.',
+      followCollectionBlurb:
+        'Following the beat covers every outlet reporting it. Follow individual newsrooms ' +
+        'below to hear only from them.',
+      emptyParticipants: 'No outlets on this beat yet -- they appear as soon as one publishes.',
+      emptyFollows: "You're not following anything yet.",
+
+      /*
+       * News has no fixture list. Rather than dress these pages in a countdown
+       * they can never have, they say what is true and point at the page that
+       * does have something on it.
+       */
+      liveTitle: 'Breaking',
+      liveBlurb:
+        'News does not file a start time, so nothing is ever "in progress" here. What we can ' +
+        'tell you is what landed in the last hour.',
+      liveEmpty: 'Nothing has landed in the last hour. The latest is on the front page.',
+      soonTitle: 'Coming up',
+      soonBlurb:
+        'Deliberately empty. Every other site running this code counts down to a fixture or a ' +
+        'release; a story is only news once it is published, so there is nothing here to ' +
+        'count down to.',
+      soonEmpty: 'Nothing is scheduled -- news is not announced in advance. Try the front page.',
+      resultsTitle: 'Latest',
+      resultsBlurb: 'Everything published in the last week, newest first, across every beat.',
+      resultsEmpty:
+        'Nothing published in the last week, which almost certainly means a sync broke.',
+      notFound: 'Back to the latest',
+
+      premiumTitle: 'Premium',
+      premiumBlurb:
+        'Following beats, notifications and calendar feeds stay free and always will. ' +
+        'Premium is for the parts that cost us something to run.',
+      premiumShare: 'Share your line with the people you choose, instead of the whole site.',
+      premiumHistory:
+        'Keep every message you have ever sent or received, not just the recent ones.',
+      premiumInvites: 'Earn a share of what the people you bring in spend.',
+    },
+    // A story is a NewsArticle and a publisher is a NewsMediaOrganization. Both
+    // are what an answer engine expects to find on a news page, and calling a
+    // wire story a SportsEvent would be a lie told to every one of them.
+    schema: {
+      event: 'NewsArticle',
+      participant: 'NewsMediaOrganization',
+      collection: 'Thing',
+    },
+    providers: ['nichedb'],
+    elsewhere: {
+      sports: 'https://tipoffwatch.com',
+      'film and tv': 'https://genrewatch.com',
+    },
   },
 };
 
