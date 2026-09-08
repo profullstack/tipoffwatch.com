@@ -411,3 +411,31 @@ export const href = {
 export const Word = Object.fromEntries(
   Object.entries(brand.words).map(([k, v]) => [k, v.charAt(0).toUpperCase() + v.slice(1)]),
 );
+
+/**
+ * Every site we run, for the footer of every one of them.
+ *
+ * Derived from BRANDS rather than written out again, because a brand entry IS a
+ * site: a fourth one appears in all three footers the moment it exists, instead
+ * of being remembered about later and half-linked. The list is deliberately the
+ * SAME on every brand -- the view drops the site the reader is already on, so
+ * this stays a description of the network rather than of one deployment.
+ *
+ * genrewatch.com still runs from its own repo, which does not change what it is
+ * from a reader's side: one of ours, and worth a link from the others.
+ */
+export const network = Object.values(BRANDS).map(({ id, name, domain }) => ({
+  id,
+  name,
+  domain,
+  url: `https://${domain}`,
+}));
+
+/**
+ * The house data platform, credited in the same footer line.
+ *
+ * Separate from the per-brand provider credit above it, which names the upstream
+ * a given fixture actually came from and must stay accurate. This one names the
+ * shop the data is furnished through.
+ */
+export const dataSource = { name: 'nichedb.dev', url: 'https://nichedb.dev' };

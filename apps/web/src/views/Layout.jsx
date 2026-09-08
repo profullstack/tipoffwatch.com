@@ -1,4 +1,4 @@
-import { brand, config, href, Word } from '@tipoff/config';
+import { brand, config, dataSource, href, network, Word } from '@tipoff/config';
 import { html, raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 import { serialise, siteGraph } from '../lib/jsonld.js';
@@ -297,6 +297,24 @@ export const Layout = (props) => {
           <p class="muted">
             <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
             <a href="/terms">Terms</a>
+          </p>
+          {/* The rest of the network, on every page of every site in it.
+              The site the reader is already on is named but not linked: a link
+              to where you already are is noise, while leaving it out entirely
+              would make each footer a different list and lose the fact that
+              these three are one shop. */}
+          <p class="muted">
+            {network.map((site, i) => (
+              <>
+                {i ? ' · ' : null}
+                {site.domain === brand.domain ? (
+                  <span aria-current="true">{site.name}</span>
+                ) : (
+                  <a href={site.url}>{site.name}</a>
+                )}
+              </>
+            ))}
+            {' · '}Data furnished by <a href={dataSource.url}>{dataSource.name}</a>
           </p>
         </footer>
 

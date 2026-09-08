@@ -32,7 +32,7 @@ const bool = (name, fallback) => {
   return raw === '1' || raw.toLowerCase() === 'true';
 };
 
-export { brand, brands, href, Word } from './brands.js';
+export { brand, brands, dataSource, href, network, Word } from './brands.js';
 
 import { brand } from './brands.js';
 
