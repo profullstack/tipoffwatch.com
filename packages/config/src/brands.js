@@ -56,18 +56,28 @@ const SPORTS_WORDS = {
   browse: 'Browse by sport',
 };
 
+/*
+ * News has one axis where sport has two.
+ *
+ * A sport contains leagues which contain teams. A news section does not contain
+ * sub-sections anybody browses -- Politics is Politics -- so the category and
+ * collection tiers carry the same word here rather than inventing a middle one.
+ * That is a fact about news, not a shortcut: the first cut of this brand had a
+ * single "news" category above a "beat" tier, which produced the URL
+ * /news/news and a nav with one entry in it.
+ */
 const NEWS_WORDS = {
-  category: 'news',
-  categories: 'news',
-  collection: 'beat',
-  collections: 'beats',
+  category: 'section',
+  categories: 'sections',
+  collection: 'section',
+  collections: 'sections',
   participant: 'outlet',
   participants: 'outlets',
   event: 'story',
   events: 'stories',
   // Not "Kickoff" and not "Out": a story is already published when you see it.
   starts: 'Published',
-  browse: 'Browse by beat',
+  browse: 'Browse by section',
 };
 
 const GENRE_WORDS = {
@@ -254,27 +264,42 @@ const BRANDS = {
     domain: 'watchnews.now',
     tagline: 'Know who reported it.',
     description:
-      'Follow a beat or a newsroom and read what they actually published, from free sources only. Free.',
+      'Follow a section or a newsroom and read what they actually published, from free sources only. Free.',
     words: NEWS_WORDS,
-    paths: { category: 'news', collection: 'beats', participant: 'outlets' },
-    categories: ['news'],
+    paths: { category: 'news', collection: 'sections', participant: 'outlets' },
+    /*
+     * The desks, and the order a reader meets them. These are `sport` column
+     * values, written by the nichedb provider, so this list mirrors what that
+     * collection actually produces rather than describing an ambition.
+     */
+    categories: [
+      'world',
+      'us',
+      'politics',
+      'business',
+      'technology',
+      'science',
+      'health',
+      'sport',
+      'climate',
+    ],
 
     copy: {
       heroTitle: 'Follow the desk, not the algorithm.',
       heroBody:
-        'Pick a beat or a newsroom and see what it published, newest first. Wire copy read ' +
+        'Pick a section or a newsroom and see what it published, newest first. Wire copy read ' +
         'straight from the publishers themselves plus worldwide coverage in 65 languages, so ' +
         'you can watch one story land across a hundred outlets at once. Free, no ads, and no ' +
         'account needed to read.',
-      browse: 'Browse by beat',
-      mine: 'My beats',
+      browse: 'Browse by section',
+      mine: 'My sections',
       pushBlurb: 'Get a notification when a newsroom you follow publishes.',
       calendarBlurb: 'Everything you follow as a calendar feed, filed on the day it was published.',
-      calendarPrivacy: 'Anyone with this link can see the beats and outlets you follow.',
+      calendarPrivacy: 'Anyone with this link can see the sections and outlets you follow.',
       followCollectionBlurb:
-        'Following the beat covers every outlet reporting it. Follow individual newsrooms ' +
+        'Following the section covers every outlet reporting it. Follow individual newsrooms ' +
         'below to hear only from them.',
-      emptyParticipants: 'No outlets on this beat yet -- they appear as soon as one publishes.',
+      emptyParticipants: 'No outlets on this section yet -- they appear as soon as one publishes.',
       emptyFollows: "You're not following anything yet.",
 
       /*
@@ -294,14 +319,14 @@ const BRANDS = {
         'count down to.',
       soonEmpty: 'Nothing is scheduled -- news is not announced in advance. Try the front page.',
       resultsTitle: 'Latest',
-      resultsBlurb: 'Everything published in the last week, newest first, across every beat.',
+      resultsBlurb: 'Everything published in the last week, newest first, across every section.',
       resultsEmpty:
         'Nothing published in the last week, which almost certainly means a sync broke.',
       notFound: 'Back to the latest',
 
       premiumTitle: 'Premium',
       premiumBlurb:
-        'Following beats, notifications and calendar feeds stay free and always will. ' +
+        'Following sections, notifications and calendar feeds stay free and always will. ' +
         'Premium is for the parts that cost us something to run.',
       premiumShare: 'Share your line with the people you choose, instead of the whole site.',
       premiumHistory:

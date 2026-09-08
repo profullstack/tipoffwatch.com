@@ -30,7 +30,42 @@ import { keyFor, slugify } from './slug.js';
 
 const BASE = 'https://nichedb.dev/api/v1';
 const PROVIDER = 'nichedb';
-export const CATEGORY = 'news';
+
+/**
+ * The desks this brand serves, in the order a reader should meet them.
+ *
+ * These ARE the `sport` column values, so they are what `brand.categories`
+ * lists and what `/news/<section>` addresses. nichedb files every story under
+ * one of them, so this list is a mirror of what that collection produces rather
+ * than a taxonomy invented here.
+ */
+export const SECTIONS = [
+  'world',
+  'us',
+  'politics',
+  'business',
+  'technology',
+  'science',
+  'health',
+  'sport',
+  'climate',
+];
+
+/** Names a reader would write. Title-casing "us" gets you "Us". */
+export const SECTION_NAMES = {
+  world: 'World',
+  us: 'US',
+  politics: 'Politics',
+  business: 'Business',
+  technology: 'Technology',
+  science: 'Science',
+  health: 'Health',
+  sport: 'Sport',
+  climate: 'Climate',
+};
+
+/** Where each desk sits on the front page. Lower sorts first. */
+const SECTION_PRIORITY = { world: 10, us: 20, politics: 30, business: 40 };
 
 /** nichedb caps a page at 200 however much you ask for. */
 const PAGE = 200;
@@ -46,9 +81,6 @@ export const OUTLET_NAMES = {
   dj: 'The Wall Street Journal',
 };
 
-/** Beats worth putting in front of a reader first. */
-const BEAT_PRIORITY = { world: 10, economy: 20, election: 20, conflict: 20 };
-
 const titleCase = (s) =>
   String(s ?? '')
     .split(/[\s-]+/)
@@ -57,17 +89,28 @@ const titleCase = (s) =>
     .join(' ');
 
 /**
- * The beat a story belongs to.
+ * The desk a story belongs on.
  *
- * GDELT states it. A newsroom feed does not, but every default feed in the
- * nichedb source is a world desk, so `world` is the honest answer rather than an
- * "Uncategorised" bucket nobody would choose to browse.
+ * nichedb states it outright: a newsroom feed is configured per desk, and a
+ * GDELT beat is mapped to the section a reader would look under. So this reads
+ * a fact rather than classifying text.
+ *
+ * The `data.query` fallback is for rows written before sections existed —
+ * nothing re-fetches an old row, so without it every story already stored would
+ * lose its home the moment this shipped. An unrecognised section is dropped
+ * rather than bucketed, because a desk nobody would choose to browse is not a
+ * desk.
  */
-export function beatOf(item) {
-  const q = item?.data?.query;
-  if (typeof q === 'string' && q.trim()) return q.trim().toLowerCase();
+export function sectionOf(item) {
+  const raw = item?.data?.section ?? LEGACY_BEAT[item?.data?.query] ?? null;
+  const section = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
+  if (section && SECTIONS.includes(section)) return section;
+  // A pre-sections newsroom row: every default feed back then was a world desk.
   return item?.adapter === 'newsfeed' ? 'world' : null;
 }
+
+/** How GDELT beats were filed before nichedb sent a section of its own. */
+const LEGACY_BEAT = { election: 'politics', economy: 'business', conflict: 'world' };
 
 /**
  * The outlet that published a story, as {key, name}.
@@ -138,19 +181,21 @@ export function collect(items, { beats, outlets, events }) {
     // look like breaking news.
     if (!publishedAt || Number.isNaN(publishedAt.getTime())) continue;
 
-    const beat = beatOf(it);
+    const section = sectionOf(it);
     const outlet = outletOf(it);
-    if (!beat || !outlet) continue;
+    if (!section || !outlet) continue;
 
-    const beatKey = keyFor(PROVIDER, 'beat', beat);
+    const beatKey = keyFor(PROVIDER, 'beat', section);
     if (!beats.has(beatKey)) {
       beats.set(beatKey, {
         provider: PROVIDER,
         providerKey: beatKey,
-        category: CATEGORY,
-        slug: slugify(`${beat}-news`),
-        name: titleCase(beat),
-        priority: BEAT_PRIORITY[beat] ?? 100,
+        // The section IS the category, which is what puts it in the nav and at
+        // /news/<section> instead of the single "news" category this started as.
+        category: section,
+        slug: slugify(`${section}-news`),
+        name: SECTION_NAMES[section] ?? titleCase(section),
+        priority: SECTION_PRIORITY[section] ?? 100,
       });
     }
 
@@ -159,7 +204,7 @@ export function collect(items, { beats, outlets, events }) {
       outlets.set(outletKey, {
         provider: PROVIDER,
         providerKey: outletKey,
-        category: CATEGORY,
+        category: section,
         kind: 'outlet',
         slug: outletSlug(outlet, outletKey, outlets),
         name: outlet.name,
@@ -177,7 +222,7 @@ export function collect(items, { beats, outlets, events }) {
     events.push({
       provider: PROVIDER,
       providerKey: keyFor(PROVIDER, 'story', String(it.id)),
-      category: CATEGORY,
+      category: section,
       subjectKey: outletKey,
       kind: 'story',
       startsAt: publishedAt,
@@ -225,4 +270,4 @@ export async function fetchAll({ maxPages = 5 } = {}) {
   return { genres: [...beats.values()], subjects: [...outlets.values()], events };
 }
 
-export const adapter = { name: PROVIDER, category: CATEGORY, fetchAll };
+export const adapter = { name: PROVIDER, category: 'news', fetchAll };

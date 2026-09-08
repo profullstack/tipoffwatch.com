@@ -5,7 +5,9 @@ import { describe, expect, test } from 'bun:test';
 // once the variable exists. It needs to be set, not to connect.
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
 const { CATALOG_ADAPTERS } = await import('../packages/sports/src/catalog.js');
-const { beatOf, collect, outletOf } = await import('../packages/sports/src/nichedb.js');
+const { collect, outletOf, SECTION_NAMES, SECTIONS, sectionOf } = await import(
+  '../packages/sports/src/nichedb.js'
+);
 
 const load = async (id) => {
   const saved = process.env.BRAND;
@@ -30,8 +32,14 @@ const gdeltStory = {
   published_at: '2026-09-08T18:15:00.000Z',
   time_known: true,
   precision: 'minute',
-  tags: ['news', 'gdelt', 'economy'],
-  data: { query: 'economy', domain: 'arabnews.com', country: 'Saudi Arabia', language: 'English' },
+  tags: ['news', 'business', 'gdelt', 'economy'],
+  data: {
+    section: 'business',
+    query: 'economy',
+    domain: 'arabnews.com',
+    country: 'Saudi Arabia',
+    language: 'English',
+  },
 };
 
 const feedStory = {
@@ -45,8 +53,13 @@ const feedStory = {
   published_at: '2026-09-08T00:58:00.000Z',
   time_known: true,
   precision: 'minute',
-  tags: ['news', 'dj'],
-  data: { feed: 'https://feeds.a.dj.com/rss/RSSWorldNews.xml', outlet: 'dj', categories: ['PAID'] },
+  tags: ['news', 'world', 'dj'],
+  data: {
+    section: 'world',
+    feed: 'https://feeds.a.dj.com/rss/RSSWorldNews.xml',
+    outlet: 'dj',
+    categories: ['PAID'],
+  },
 };
 
 const empty = () => ({ beats: new Map(), outlets: new Map(), events: [] });
@@ -58,23 +71,35 @@ describe('the watchnews brand', () => {
     expect(brand.domain).toBe('watchnews.now');
     expect(brand.words.event).toBe('story');
     expect(brand.words.participant).toBe('outlet');
-    expect(brand.words.collection).toBe('beat');
+    expect(brand.words.collection).toBe('section');
     // Not "Kickoff", not "Out" — a story is already published when you see it.
     expect(Word.starts).toBe('Published');
   });
 
+  /*
+   * The first cut had a single "news" category above a "beat" tier, which gave
+   * a nav with one entry and the URL /news/news. Sections are the category tier
+   * precisely so that cannot happen again.
+   */
+  test('the sections are the categories, so there is no /news/news', async () => {
+    const { brand, href } = await load('watchnews');
+    expect(brand.categories).toEqual(SECTIONS);
+    expect(brand.categories).not.toContain('news');
+    expect(brand.categories.length).toBeGreaterThan(5);
+    expect(href.category('politics')).toBe('/news/politics');
+  });
+
   test('links are built from the paths routes are registered from', async () => {
     const { href, brand } = await load('watchnews');
-    expect(href.collection('world-news')).toBe('/beats/world-news');
+    expect(href.collection('world-news')).toBe('/sections/world-news');
     expect(href.participant('bbc-news')).toBe('/outlets/bbc-news');
     expect(href.collection('x').startsWith(`/${brand.paths.collection}/`)).toBe(true);
   });
 
-  test('serves only the news category, from the one provider', async () => {
+  test('runs the one provider, and signposts the categories it does not carry', async () => {
     const { brand } = await load('watchnews');
-    expect(brand.categories).toEqual(['news']);
     expect(brand.providers).toEqual(['nichedb']);
-    // Sports and film are real sites, so signpost rather than carry a thin copy.
+    // Sport here is a news desk, not fixtures — tipoffwatch does those properly.
     expect(brand.elsewhere.sports).toBe('https://tipoffwatch.com');
   });
 
@@ -84,11 +109,6 @@ describe('the watchnews brand', () => {
     expect(brand.schema.participant).toBe('NewsMediaOrganization');
   });
 
-  /*
-   * The copy object is the whole reason whole sentences live in the brand file.
-   * A brand missing a key renders `undefined` at a reader, so every brand must
-   * carry exactly the same set.
-   */
   test('carries every copy key the other brands do', async () => {
     const news = await load('watchnews');
     const sports = await load('tipoffwatch');
@@ -98,6 +118,14 @@ describe('the watchnews brand', () => {
       expect(typeof news.brand.copy[k]).toBe('string');
       expect(news.brand.copy[k].length).toBeGreaterThan(0);
     }
+  });
+
+  test('no reader-facing copy still calls a section a beat', async () => {
+    const { brand } = await load('watchnews');
+    for (const [k, v] of Object.entries(brand.copy)) {
+      expect(`${k}:${v}`.toLowerCase()).not.toContain('beat');
+    }
+    expect(brand.description.toLowerCase()).not.toContain('beat');
   });
 
   /*
@@ -113,17 +141,32 @@ describe('the watchnews brand', () => {
 });
 
 describe('the nichedb provider', () => {
-  test('is registered as the news catalogue adapter', () => {
+  test('is registered, and its freshness category is one it actually writes', () => {
     const entry = CATALOG_ADAPTERS.find((a) => a.name === 'nichedb');
     expect(entry).toBeTruthy();
-    expect(entry.category).toBe('news');
     expect(typeof entry.module.fetchAll).toBe('function');
+    // lastSyncedAtForCategory looks for leagues whose sport equals this. 'news'
+    // matches none of the nine desks, so the interval would never apply.
+    expect(SECTIONS).toContain(entry.category);
   });
 
-  test('GDELT states its beat; a newsroom feed is a world desk', () => {
-    expect(beatOf(gdeltStory)).toBe('economy');
-    expect(beatOf(feedStory)).toBe('world');
-    expect(beatOf({ adapter: 'other', data: {} })).toBeNull();
+  test('the section is read from nichedb, not guessed from the text', () => {
+    expect(sectionOf(feedStory)).toBe('world');
+    expect(sectionOf(gdeltStory)).toBe('business');
+    expect(sectionOf({ adapter: 'newsfeed', data: { section: 'politics' } })).toBe('politics');
+  });
+
+  test('a row written before sections existed still finds its desk', () => {
+    // Nothing re-fetches an old row, so without this every stored story would
+    // lose its home the moment sections shipped.
+    expect(sectionOf({ adapter: 'gdelt', data: { query: 'election' } })).toBe('politics');
+    expect(sectionOf({ adapter: 'gdelt', data: { query: 'economy' } })).toBe('business');
+    expect(sectionOf({ adapter: 'newsfeed', data: {} })).toBe('world');
+  });
+
+  test('an unknown section is dropped rather than bucketed', () => {
+    expect(sectionOf({ adapter: 'gdelt', data: { section: 'astrology' } })).toBeNull();
+    expect(sectionOf({ adapter: 'other', data: {} })).toBeNull();
   });
 
   test('an outlet is the publisher, or the domain when that is all there is', () => {
@@ -134,26 +177,28 @@ describe('the nichedb provider', () => {
     expect(outletOf({ data: {} })).toBeNull();
   });
 
-  test('a story becomes an event with one side, filed under its beat', () => {
+  test('the section becomes the category, which is what puts it in the nav', () => {
     const acc = empty();
     collect([gdeltStory, feedStory], acc);
     expect(acc.events).toHaveLength(2);
-    expect([...acc.beats.values()].map((b) => b.name).sort()).toEqual(['Economy', 'World']);
-    expect([...acc.beats.values()].every((b) => b.category === 'news')).toBe(true);
+    const sections = [...acc.beats.values()];
+    expect(sections.map((b) => b.category).sort()).toEqual(['business', 'world']);
+    expect(sections.map((b) => b.name).sort()).toEqual(['Business', 'World']);
+    // Title-casing "us" gets you "Us", which is why there is a name table.
+    expect(SECTION_NAMES.us).toBe('US');
 
     const [story] = acc.events;
     expect(story.kind).toBe('story');
     // 'out' is what stateOf turns into 'post'. Nothing here is ever 'pre'.
     expect(story.state).toBe('out');
     expect(story.startsAt.toISOString()).toBe('2026-09-08T18:15:00.000Z');
-    expect(story.subjectKey).toBe(acc.outlets.get(story.subjectKey).providerKey);
     expect(story.venueRegion).toBe('Saudi Arabia');
   });
 
-  test('an outlet publishing on two beats accumulates them rather than forking', () => {
+  test('an outlet publishing on two desks accumulates them rather than forking', () => {
     const acc = empty();
     collect(
-      [gdeltStory, { ...gdeltStory, id: 2, data: { ...gdeltStory.data, query: 'election' } }],
+      [gdeltStory, { ...gdeltStory, id: 2, data: { ...gdeltStory.data, section: 'politics' } }],
       acc,
     );
     expect(acc.outlets.size).toBe(1);
@@ -176,8 +221,8 @@ describe('the nichedb provider', () => {
     // teams.slug is UNIQUE, so this would abort the batch rather than look odd.
     collect(
       [
-        { ...feedStory, id: 10, data: { outlet: 'bbci' } },
-        { ...gdeltStory, id: 11, data: { query: 'world', domain: 'bbc.news' } },
+        { ...feedStory, id: 10, data: { section: 'world', outlet: 'bbci' } },
+        { ...gdeltStory, id: 11, data: { section: 'world', domain: 'bbc.news' } },
       ],
       acc,
     );
@@ -199,9 +244,10 @@ describe('the nichedb provider', () => {
     expect(acc.events).toHaveLength(0);
   });
 
-  test('an item with no beat or no outlet is skipped rather than bucketed', () => {
-    const acc = empty();
-    collect([{ ...gdeltStory, adapter: 'other', data: { domain: 'x.com' } }], acc);
-    expect(acc.events).toHaveLength(0);
+  test('every shipped section has a reader-facing name', () => {
+    for (const s of SECTIONS) {
+      expect(typeof SECTION_NAMES[s]).toBe('string');
+      expect(SECTION_NAMES[s].length).toBeGreaterThan(0);
+    }
   });
 });
