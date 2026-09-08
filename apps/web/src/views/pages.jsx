@@ -16,6 +16,23 @@ import { Layout } from './Layout.jsx';
 import { LiveUpsell } from './live.jsx';
 import { RadioSettings, RadioTeamSection } from './radio.jsx';
 
+/**
+ * A `sport` value as a reader should see it.
+ *
+ * These are slugs, and every site rendered them raw. That was invisible on the
+ * sports brand, where "football" reads fine lowercase inside a heading, and
+ * wrong the moment a category is an initialism: the news brand has a desk called
+ * `us`, which rendered as "us" in an <h1> and would title-case to "Us".
+ */
+export const categoryLabel = (sport) => {
+  const words = String(sport ?? '').replace(/-/g, ' ');
+  return words
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => (w.length <= 2 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+};
+
 /*
  * A sentence describing THIS page, for the meta description and the share cards.
  *
@@ -630,7 +647,7 @@ export const SportsIndex = ({
     }
   >
     <h1>{brand.copy.browse}</h1>
-    <p class="muted">Pick a sport, then a league, then follow the teams you care about.</p>
+    <p class="muted">{brand.copy.browseBlurb}</p>
 
     {/* Follow everything, with the size of "everything" stated before it is
         pressed rather than discovered afterwards. Following all 359 leagues means
@@ -647,8 +664,8 @@ export const SportsIndex = ({
           </h2>
           <p class="card-desc">
             {leagueCounts.following >= leagueCounts.total
-              ? `All ${leagueCounts.total.toLocaleString('en-US')} leagues. You will be reminded about every fixture in the catalogue.`
-              : `All ${leagueCounts.total.toLocaleString('en-US')} leagues in one go — about ${(upcoming ?? 0).toLocaleString('en-US')} games in the next fortnight, and a reminder for each one at every offset you have turned on.`}
+              ? `All ${leagueCounts.total.toLocaleString('en-US')} ${brand.words.collections}. You will be reminded about every ${brand.words.event} in the catalogue.`
+              : `All ${leagueCounts.total.toLocaleString('en-US')} ${brand.words.collections} in one go — about ${(upcoming ?? 0).toLocaleString('en-US')} ${brand.words.events} in the next fortnight, and a reminder for each one at every offset you have turned on.`}
             {leagueCounts.following > 0 && leagueCounts.following < leagueCounts.total
               ? ` You follow ${leagueCounts.following.toLocaleString('en-US')} so far.`
               : ''}
@@ -681,8 +698,10 @@ export const SportsIndex = ({
       {sports.map((s) => (
         <li>
           <a href={href.category(s.sport)}>
-            <strong>{s.sport.replace(/-/g, ' ')}</strong>
-            <span class="muted">{s.leagues} leagues</span>
+            <strong>{categoryLabel(s.sport)}</strong>
+            <span class="muted">
+              {s.leagues} {s.leagues === 1 ? brand.words.collection : brand.words.collections}
+            </span>
           </a>
         </li>
       ))}
@@ -931,7 +950,7 @@ export const SportPage = ({
   soonHours = 4,
   stalled = 0,
 }) => {
-  const name = sport.replace(/-/g, ' ');
+  const name = categoryLabel(sport);
   const liveEmpty = `Nothing in ${name} is on right now.`;
   const soonEmpty = `Nothing in ${name} starts in the next ${soonHours} hours.`;
   return (
@@ -948,10 +967,13 @@ export const SportPage = ({
         <li>
           <a href={href.category()}>{Word.collections}</a>
         </li>
-        <li aria-current="page">{sport.replace(/-/g, ' ')}</li>
+        <li aria-current="page">{name}</li>
       </ol>
-      <h1>{sport.replace(/-/g, ' ')}</h1>
-      <p class="muted">{leagues.length} leagues. Open one to follow its teams.</p>
+      <h1>{name}</h1>
+      <p class="muted">
+        {leagues.length} {leagues.length === 1 ? brand.words.collection : brand.words.collections}.
+        Open one to follow its {brand.words.participants}.
+      </p>
       <ul class="leagues">
         {leagues.map((l) => (
           <li>
@@ -1279,9 +1301,14 @@ const countPhrase = (follows, counts) => {
     ? counts.leagues
     : follows.filter((f) => f.subject_type === 'league').length;
   const parts = [];
-  if (teams) parts.push(`${teams.toLocaleString('en-US')} ${teams === 1 ? 'team' : 'teams'}`);
+  if (teams)
+    parts.push(
+      `${teams.toLocaleString('en-US')} ${teams === 1 ? brand.words.participant : brand.words.participants}`,
+    );
   if (leagues)
-    parts.push(`${leagues.toLocaleString('en-US')} ${leagues === 1 ? 'league' : 'leagues'}`);
+    parts.push(
+      `${leagues.toLocaleString('en-US')} ${leagues === 1 ? brand.words.collection : brand.words.collections}`,
+    );
   return parts.join(' and ') || 'nothing';
 };
 

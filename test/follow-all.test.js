@@ -120,8 +120,11 @@ describe('the page states the size before the click', () => {
     );
     expect(src).toContain('Follow everything!');
     // A button that quietly enrols someone in thousands of notifications is a
-    // trap; the fixture count has to be on the page beside it.
-    expect(src).toContain('games in the next fortnight');
+    // trap; the count has to be on the page beside it. Asserted without the word
+    // "games", which was true of one brand and made this fail on a news site for
+    // a reason that had nothing to do with the trap being tested.
+    expect(src).toContain('in the next fortnight');
+    expect(src).toContain('brand.words.events');
     expect(src).toContain('/api/unfollow-all');
   });
 });
