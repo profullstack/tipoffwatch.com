@@ -269,7 +269,7 @@ export const Layout = (props) => {
 
         <footer>
           <p>
-            TipoffWatch is free. Times are shown in your own time zone (
+            {brand.name} is free. Times are shown in your own time zone (
             <span data-tz-label>your device</span>).
           </p>
           {/* Two sources now, so the credit names both. Tennis moved off ESPN when it

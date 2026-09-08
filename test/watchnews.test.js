@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 
 // The catalogue module reaches @tipoff/db, which reads the environment at import.
 // Static imports hoist above an assignment, so these are pulled in dynamically
@@ -249,5 +250,55 @@ describe('the nichedb provider', () => {
       expect(typeof SECTION_NAMES[s]).toBe('string');
       expect(SECTION_NAMES[s].length).toBeGreaterThan(0);
     }
+  });
+});
+
+/*
+ * The whitelabel only holds if the views actually use it. These strings were
+ * hardcoded, so they read correctly on the sports brand and wrongly on the other
+ * two: the footer told every reader of watchnews.now that "TipoffWatch is free",
+ * and a news section said it had "1 leagues".
+ */
+describe('no view hardcodes the sports vocabulary', () => {
+  const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url).pathname, 'utf8');
+  const pages = read('apps/web/src/views/pages.jsx');
+  const layout = read('apps/web/src/views/Layout.jsx');
+
+  test('the footer names the brand it is serving', () => {
+    expect(layout).not.toContain('TipoffWatch is free');
+    expect(layout).toContain('{brand.name} is free');
+  });
+
+  test("the browse blurb is per brand, not one site's sentence", () => {
+    expect(pages).not.toContain('Pick a sport, then a league');
+    expect(pages).toContain('brand.copy.browseBlurb');
+  });
+
+  test("counts are pluralised in the brand's own words", () => {
+    // "1 leagues" on a news site, and "leagues" at all on two of three brands.
+    expect(pages).not.toMatch(/\{s\.leagues\} leagues/);
+    expect(pages).not.toMatch(/\{leagues\.length\} leagues\./);
+    expect(pages).not.toMatch(/'league' : 'leagues'/);
+    expect(pages).not.toMatch(/'team' : 'teams'/);
+  });
+
+  test('every brand carries the browse blurb', async () => {
+    for (const id of ['tipoffwatch', 'genrewatch', 'watchnews']) {
+      const { brand } = await load(id);
+      expect(typeof brand.copy.browseBlurb).toBe('string');
+      expect(brand.copy.browseBlurb.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe('categoryLabel', () => {
+  test('an initialism stays an initialism', async () => {
+    const { categoryLabel } = await import('../apps/web/src/views/pages.jsx');
+    // The whole reason this exists: "us" is a desk, and both "us" and "Us" are wrong.
+    expect(categoryLabel('us')).toBe('US');
+    expect(categoryLabel('world')).toBe('World');
+    expect(categoryLabel('technology')).toBe('Technology');
+    expect(categoryLabel('mixed-martial-arts')).toBe('Mixed Martial Arts');
+    expect(categoryLabel('')).toBe('');
   });
 });

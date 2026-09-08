@@ -121,6 +121,7 @@ const BRANDS = {
         'Follow any team in the world and get a web notification and an email before they play. ' +
         'Free, no ads, and it works as a calendar feed if you would rather not be notified at all.',
       browse: 'Browse by sport',
+      browseBlurb: 'Pick a sport, then a league, then follow the teams you care about.',
       mine: 'My games',
       pushBlurb: 'Get a notification an hour before kickoff, and one minute out.',
       calendarBlurb:
@@ -196,6 +197,7 @@ const BRANDS = {
         'before it is out. Free, no ads, and it works as a calendar feed if you would rather not ' +
         'be notified at all.',
       browse: 'Browse by genre',
+      browseBlurb: 'Pick a category, then a genre, then follow the names you care about.',
       mine: 'My calendar',
       pushBlurb:
         'Get told before something you follow is out. An hour ahead for anything with a start ' +
@@ -292,6 +294,7 @@ const BRANDS = {
         'you can watch one story land across a hundred outlets at once. Free, no ads, and no ' +
         'account needed to read.',
       browse: 'Browse by section',
+      browseBlurb: 'Pick a section, then a newsroom, and follow the ones you actually read.',
       mine: 'My sections',
       pushBlurb: 'Get a notification when a newsroom you follow publishes.',
       calendarBlurb: 'Everything you follow as a calendar feed, filed on the day it was published.',
