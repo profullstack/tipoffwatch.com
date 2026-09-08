@@ -2685,7 +2685,7 @@ export const Channels = ({ user, playlist, groups, kinds = [] }) => (
  * `data-line` is what the reveal script scopes itself to; without it a Show press
  * on the second card fetched and filled the first.
  */
-const LineCard = ({ line, lineCeiling, livePass }) => (
+const LineCard = ({ line, first = false, lineCeiling, livePass }) => (
   <div class="card line-card" id={`line-${line.id}`} data-line={line.id}>
     <div class="card-head">
       <h3 class="card-title">
@@ -2897,6 +2897,26 @@ const LineCard = ({ line, lineCeiling, livePass }) => (
     </div>
 
     <div class="card-actions">
+      {/*
+        Move this line to the front.
+
+        This button arrived as "Manage", and it was the only way to reach a second
+        line's address, name and sharing switch -- because the full card rendered
+        for the first list alone. Every line has a card now, so that job is gone
+        and the button would be a second route to what is already on this card.
+
+        Kept, and renamed to what the position actually still decides: which
+        provider is offered first when two of them carry the same game. Not shown
+        on the line that is already first, where it would do nothing.
+      */}
+      {first ? null : (
+        <form method="post" action="/api/playlist/primary" class="inline">
+          <input type="hidden" name="playlist_id" value={line.id} />
+          <button class="ghost small-btn" type="submit">
+            Make primary
+          </button>
+        </form>
+      )}
       {/* Both name the line they act on. The delete route refuses a post with no
           id rather than falling back to "every list this reader has", which is
           the right default for closing an account and a catastrophic one for a
@@ -3046,8 +3066,8 @@ export const Settings = ({
         is why a second subscription could be added and removed and nothing else.
         See LineCard.
       */}
-      {lines.map((line) => (
-        <LineCard line={line} lineCeiling={lineCeiling} livePass={livePass} />
+      {lines.map((line, i) => (
+        <LineCard line={line} first={i === 0} lineCeiling={lineCeiling} livePass={livePass} />
       ))}
 
       {/*

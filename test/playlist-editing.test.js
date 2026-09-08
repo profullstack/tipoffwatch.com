@@ -198,7 +198,7 @@ describe('the routes that make it editable', () => {
     // connection cap and Refresh all addressed "the reader's list" because there
     // had only ever been one, so a second subscription could be added and removed
     // and nothing else.
-    expect(view).toContain('lines.map((line) => (');
+    expect(view).toContain('lines.map((line, i) => (');
     expect(view).toContain('<LineCard line={line}');
     const card = view.slice(view.indexOf('const LineCard'), view.indexOf('export const Settings'));
     for (const action of [
@@ -209,8 +209,13 @@ describe('the routes that make it editable', () => {
     ]) {
       expect(card).toContain(action);
     }
-    // Every form on the card names its line.
-    expect(card.match(/name="playlist_id" value=\{line\.id\}/g) ?? []).toHaveLength(4);
+    // Every form on the card names its line, including Make primary -- which is
+    // what the old "Manage" button became once every line had a card and there
+    // was nothing left for it to be the only way to reach.
+    expect(card).toContain('/api/playlist/primary"');
+    const named = card.match(/name="playlist_id" value=\{line\.id\}/g) ?? [];
+    expect(named).toHaveLength((card.match(/<form /g) ?? []).length);
+    expect(named.length).toBeGreaterThanOrEqual(5);
   });
 
   test('the form edits rather than demanding the whole URL again', () => {
