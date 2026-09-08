@@ -4471,16 +4471,13 @@ app.post('/api/diag', async (c) => {
  */
 const PACKAGE_FILES = [
   ['/vendor-multiview.js', '@profullstack/multiview', 'text/javascript'],
-  // The public news channels are HLS, which mpegts.js does not read. Safari
-  // plays it natively; every other browser needs this.
-  ['/vendor-hls.js', 'hls.js/dist/hls.min.js', 'text/javascript'],
   ['/vendor-multiview.css', '@profullstack/multiview/multiview.css', 'text/css'],
 ];
 
 const STATIC_FILES = [
   ['/styles.css', 'styles.css', 'text/css'],
   ['/app.js', 'app.js', 'text/javascript'],
-  ['/watch.js', 'watch.js', 'text/javascript'],
+  ['/vendor-watch.js', 'vendor-watch.js', 'text/javascript'],
   /*
    * The diagnostics page and its two files.
    *

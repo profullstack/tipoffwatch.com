@@ -19,6 +19,11 @@ const BUNDLES = [
   // not download hls.js, and one pressing Play on a station must not download
   // the transport stream demuxer.
   ['radio-entry.js', 'vendor-player.js'],
+  // The same house player, for live news channels. A fourth bundle for the same
+  // reason there is a third: a reader pressing Play on a fixture must not
+  // download hls.js, and one opening a news channel must not download the
+  // transport stream demuxer.
+  ['watch-entry.js', 'vendor-watch.js'],
 ];
 
 /*
@@ -52,7 +57,15 @@ const hlsLight = {
     }));
   },
 };
-const RADIO_ONLY = { external: ['mpegts.js'], plugins: [hlsLight] };
+/**
+ * Both house-player bundles want the same treatment: HLS only, light build.
+ *
+ * A news channel has no DRM and no alternate audio track -- the international
+ * services run as separate channels rather than as tracks -- so the light build
+ * costs nothing here and saves the difference.
+ */
+const HLS_ONLY = { external: ['mpegts.js'], plugins: [hlsLight] };
+const PLAYER_BUNDLES = new Set(['radio-entry.js', 'watch-entry.js']);
 
 for (const [entry, name] of BUNDLES) {
   const out = await Bun.build({
@@ -61,7 +74,7 @@ for (const [entry, name] of BUNDLES) {
     naming: name,
     minify: true,
     target: 'browser',
-    ...(entry === 'radio-entry.js' ? RADIO_ONLY : {}),
+    ...(PLAYER_BUNDLES.has(entry) ? HLS_ONLY : {}),
   });
   if (!out.success) {
     for (const l of out.logs) console.error(l);

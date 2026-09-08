@@ -1,6 +1,6 @@
 {
   "name": "tipoffwatch.com",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "private": true,
   "type": "module",
   "description": "Sports calendar and reminder PWA. Follow any team in the world, get told before they play.",
@@ -27,7 +27,6 @@
     "@electric-sql/pglite": "^0.5.5"
   },
   "dependencies": {
-    "@profullstack/multiview": "^0.1.0",
-    "hls.js": "1.6.2"
+    "@profullstack/multiview": "^0.1.0"
   }
 }
