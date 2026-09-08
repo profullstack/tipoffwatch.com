@@ -1,4 +1,4 @@
-import { config } from '@tipoff/config';
+import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import webpush from 'web-push';
 
@@ -119,7 +119,7 @@ export async function sendLoginLink({ email, url }) {
     body: JSON.stringify({
       from: config.mail.from,
       to: email,
-      subject: 'Your TipoffWatch sign-in link',
+      subject: `Your ${brand.name} sign-in link`,
       text: `Tap to sign in:\n\n${url}\n\nThe link works once and expires in 20 minutes.\nIf you did not ask for it, ignore this email.`,
     }),
     signal: AbortSignal.timeout(15000),
@@ -151,13 +151,13 @@ export async function sendInviteEmail({ email, url, from }) {
     body: JSON.stringify({
       from: config.mail.from,
       to: email,
-      subject: `${from} thinks you should see TipoffWatch`,
+      subject: `${from} thinks you should see ${brand.name}`,
       text: [
-        `${from} uses TipoffWatch to keep track of when their teams play.`,
+        `${from} uses ${brand.name} to ${brand.copy.inviteReason}.`,
         '',
         `Have a look: ${url}`,
         '',
-        'Following a team is free and there is no app to install.',
+        `Following a ${brand.words.participant} is free and there is no app to install.`,
         'If this is not something you want, ignore this email \u2014 there will be no others.',
       ].join('\n'),
     }),

@@ -55,7 +55,7 @@ export const Layout = (props) => {
 
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Tipoff" />
+        <meta name="apple-mobile-web-app-title" content={brand.name} />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="msapplication-TileColor" content="#12161f" />
         <meta name="msapplication-config" content="/icons/browserconfig.xml" />
@@ -178,7 +178,7 @@ export const Layout = (props) => {
           <a class="brand" href="/">
             <img
               src="/icons/icon-192x192.png"
-              alt="TipoffWatch"
+              alt={brand.name}
               width="192"
               height="192"
               class="brand-logo"
@@ -272,19 +272,21 @@ export const Layout = (props) => {
             {brand.name} is free. Times are shown in your own time zone (
             <span data-tz-label>your device</span>).
           </p>
-          {/* Two sources now, so the credit names both. Tennis moved off ESPN when it
-            got its own provider, and a footer still crediting ESPN for it is wrong
-            about where the fixture in front of the reader actually came from. */}
+          {/* Where the rows actually came from, per brand. This used to name ESPN
+            and a tennis API on every site, which was wrong on the two that have
+            never called either -- and a credit that names the wrong upstream is
+            worse than no credit, because a reader takes it as a fact. */}
           <p class="muted">
-            Schedule data from{' '}
-            <a href="https://www.espn.com" rel="noopener nofollow">
-              ESPN
-            </a>
-            's public API, and tennis from the{' '}
-            <a href="https://livetennisapi.com" rel="noopener nofollow">
-              Live Tennis API
-            </a>
-            . Not affiliated with either.
+            {brand.sources.lead}{' '}
+            {brand.sources.list.map((s, i) => (
+              <>
+                {i > 0 ? (i === brand.sources.list.length - 1 ? ' and ' : ', ') : ''}
+                <a href={s.url} rel="noopener nofollow">
+                  {s.name}
+                </a>
+              </>
+            ))}
+            . {brand.sources.note}
           </p>
           <p class="muted">
             <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
