@@ -1592,6 +1592,44 @@ app.post('/api/playlist/delete', async (c) => {
 });
 
 /**
+ * Choose which list `/settings` actually manages.
+ *
+ * The settings page renders its full card -- address, name, refresh, sharing,
+ * player links -- for the FIRST list only, and every other line gets a row with
+ * a Remove button. That was fine while a reader had one list. With two it means
+ * the second can never be edited, shared or played from, and the only way to
+ * reach it was to delete the first: destructive, and irreversible for a line
+ * whose address is a credential you may not have kept.
+ *
+ * So this promotes a line instead. Same ownership check as Remove, and the
+ * update is scoped by id AND user_id -- an unscoped `where user_id` here would
+ * renumber every list the reader has, which is the fan-out this table has
+ * already been bitten by.
+ */
+app.post('/api/playlist/primary', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const playlistId = Number(body.playlist_id) || null;
+  if (!playlistId) {
+    return respond(c, {
+      json: { error: 'Say which list to manage.' },
+      status: 400,
+      redirectTo: '/settings?playlist_error=Say%20which%20list%20to%20manage.',
+    });
+  }
+  const target = await q.getPlaylistFor({ userId: user.id, playlistId });
+  if (!target) {
+    return respond(c, {
+      json: { error: 'That list is not one of yours.' },
+      status: 400,
+      redirectTo: '/settings?playlist_error=That%20list%20is%20not%20one%20of%20yours.',
+    });
+  }
+  await q.makePlaylistPrimary({ userId: user.id, playlistId });
+  return respond(c, { json: { primary: playlistId }, redirectTo: '/settings#your-list' });
+});
+
+/**
  * Hand one channel back to the person who supplied it.
  *
  * This is the entire playback story, and its smallness is the point: the reader's

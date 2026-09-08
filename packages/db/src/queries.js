@@ -771,6 +771,31 @@ export async function playlistCount(userId) {
  * that genuinely only need one -- but anything rendering the reader's providers,
  * or deciding which line to charge a stream to, wants all of them.
  */
+/**
+ * Move one of this reader's lists to the front.
+ *
+ * `/settings` renders its full management card -- the address, the name, the
+ * sharing switch, the player links -- for `getPlaylist`, which is
+ * `order by position, id limit 1`. Every other line gets a row with a Remove
+ * button and nothing else. Before this existed there was no way to change which
+ * line that was, so a reader whose real subscription was added second could
+ * only manage it by deleting the first one.
+ *
+ * Scoped by BOTH id and user_id. `where user_id = ${userId}` alone is the
+ * fan-out this table has already been bitten by once: with the one-row-per-user
+ * UNIQUE gone, an unscoped update writes every list the reader has.
+ */
+export async function makePlaylistPrimary({ userId, playlistId }) {
+  const [row] = await sql`
+    update user_playlists set position = coalesce(
+      (select min(position) - 1 from user_playlists where user_id = ${userId}), 0
+    )
+    where id = ${playlistId} and user_id = ${userId}
+    returning id, user_id, label, position
+  `;
+  return row ?? null;
+}
+
 export async function getPlaylists(userId) {
   return sql`
     select id, user_id, label, position, managed, channel_count,
