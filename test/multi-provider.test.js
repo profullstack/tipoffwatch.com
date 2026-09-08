@@ -84,7 +84,18 @@ describe('the queries that fan out', () => {
      * entry 3 of each would interleave however the planner felt, and the LIMIT
      * would keep whichever came out first.
      */
-    expect(fn).toContain('order by p.position, p.id, c.position');
+    // Asserted as the INVARIANT rather than one spelling of it. The clause is
+    // now `order by playlist_position, playlist_id, rn` because the statement
+    // windows per list first -- same ordering, aliased through a subquery, since
+    // a 1.4M-entry list could otherwise take the whole LIMIT before the reader's
+    // other provider was read at all.
+    expect(fn).toMatch(
+      /order by (p\.position, p\.id, c\.position|playlist_position, playlist_id, rn)/,
+    );
+    // Whichever spelling, the reader's provider order leads and the tie is broken
+    // inside the list -- never by the channel's position alone, which restarts at
+    // zero per list.
+    expect(fn).toMatch(/order by (p\.position|playlist_position)/);
   });
 
   /*
