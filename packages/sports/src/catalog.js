@@ -43,9 +43,17 @@ export const CATALOG_ADAPTERS = [
   { name: 'tmdb', category: 'film', module: tmdb, minIntervalMinutes: 720 },
   { name: 'spacedevs', category: 'space', module: spacedevs, minIntervalMinutes: 60 },
   { name: 'musicbrainz', category: 'music', module: musicbrainz, minIntervalMinutes: 720 },
-  // Ours, and it answers in milliseconds, so the interval is about how often news
-  // is worth re-reading rather than what an upstream will tolerate.
-  { name: 'nichedb', category: 'news', module: nichedb, minIntervalMinutes: 20 },
+  /*
+   * Ours, and it answers in milliseconds, so the interval is about how often
+   * news is worth re-reading rather than what an upstream will tolerate.
+   *
+   * `category` is 'world', not 'news', and that is load-bearing: this adapter
+   * writes NINE categories (one per desk), and the freshness check below reads
+   * `lastSyncedAtForCategory`, which asks for leagues whose `sport` equals this
+   * value. 'news' matches no league, so it would return null every time and the
+   * interval would silently never apply. 'world' is the one desk always present.
+   */
+  { name: 'nichedb', category: 'world', module: nichedb, minIntervalMinutes: 20 },
 ];
 
 /** A provider's "upcoming" is this schema's "pre". */
