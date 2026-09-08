@@ -15,6 +15,7 @@ import {
 import { Layout } from './Layout.jsx';
 import { LiveUpsell } from './live.jsx';
 import { RadioSettings, RadioTeamSection } from './radio.jsx';
+import { ChannelList } from './watch.jsx';
 
 /**
  * A `sport` value as a reader should see it.
@@ -949,6 +950,7 @@ export const SportPage = ({
   soonTotal = 0,
   soonHours = 4,
   stalled = 0,
+  watch = [],
 }) => {
   const name = categoryLabel(sport);
   const liveEmpty = `Nothing in ${name} is on right now.`;
@@ -974,6 +976,13 @@ export const SportPage = ({
         {leagues.length} {leagues.length === 1 ? brand.words.collection : brand.words.collections}.
         Open one to follow its {brand.words.participants}.
       </p>
+      {/* You cannot tune in to a story, so the honest answer to "where do I
+          watch this" on a desk is the channels covering that desk. */}
+      <ChannelList
+        channels={watch}
+        heading={`Watch ${name} now`}
+        blurb="Live channels, playing here. No account, nothing to install."
+      />
       <ul class="leagues">
         {leagues.map((l) => (
           <li>
@@ -1156,6 +1165,7 @@ export const TeamPage = ({
   results = [],
   resultsTotal = 0,
   resultsDays = 30,
+  watch = [],
   // The team's own SiriusXM feed, for a connected reader on a league that has
   // them. See views/radio.jsx.
   radio = null,
@@ -1217,6 +1227,11 @@ export const TeamPage = ({
       </p>
 
       <EventList events={events} emptyText="Nothing scheduled for this team yet." />
+
+      {/* An outlet's own channel where there is one, and the rest of the desk
+          where there is not. A newsroom page with no way to watch it is the gap
+          this fills. */}
+      <ChannelList channels={watch} heading={`Watch ${team.display_name}`} />
 
       {/*
       What is on the reader's own line for this team.

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 // once the variable exists. It needs to be set, not to connect.
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
 const { CATALOG_ADAPTERS } = await import('../packages/sports/src/catalog.js');
-const { collect, outletOf, SECTION_NAMES, SECTIONS, sectionOf } = await import(
+const { collect, outletOf, pickChannels, SECTION_NAMES, SECTIONS, sectionOf } = await import(
   '../packages/sports/src/nichedb.js'
 );
 
@@ -343,5 +343,46 @@ describe('nothing outside the brand file names one site at another', () => {
     }
     const news = await load('watchnews');
     expect(news.brand.sources.list.some((s) => /gdelt/i.test(s.name))).toBe(true);
+  });
+});
+
+describe('which channels a page offers', () => {
+  const ch = (id, name, country) => ({
+    id,
+    name,
+    country,
+    norm: name.toLowerCase(),
+    streamUrl: `https://cdn/${id}.m3u8`,
+  });
+  const all = [
+    ch('1', 'VIP News', 'US'),
+    ch('2', 'BBC News', 'GB'),
+    ch('3', 'BBC World News', 'GB'),
+    ch('4', 'Sky News', 'GB'),
+    ch('5', 'WSOC Now', 'US'),
+  ];
+
+  test('a newsroom finds its own channel, not everything with "news" in it', () => {
+    // Measured against the real directory, the two-way substring test this
+    // replaced answered "BBC News" with VIP News first.
+    const picked = pickChannels(all, { outlet: 'BBC News', limit: 3 }).map((c) => c.name);
+    expect(picked.slice(0, 2).sort()).toEqual(['BBC News', 'BBC World News']);
+    expect(picked[0]).not.toBe('VIP News');
+  });
+
+  test('a place-shaped desk is filtered to that country', () => {
+    const picked = pickChannels(all, { section: 'us', limit: 9 });
+    expect(picked.every((c) => c.country === 'US')).toBe(true);
+  });
+
+  test('a page with nothing to match on still gets channels', () => {
+    // An empty "where to watch" box is the thing this feature exists to avoid.
+    expect(pickChannels(all, { section: 'world', limit: 3 })).toHaveLength(3);
+  });
+
+  test('no channel is offered twice, and the limit holds', () => {
+    const picked = pickChannels(all, { outlet: 'BBC News', limit: 4 });
+    expect(new Set(picked.map((c) => c.id)).size).toBe(picked.length);
+    expect(picked.length).toBeLessThanOrEqual(4);
   });
 });

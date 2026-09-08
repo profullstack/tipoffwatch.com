@@ -31,6 +31,7 @@ export {
   parseM3uStream,
   rankChannelsForFixture,
 } from './m3u.js';
+export { fetchChannels, pickChannels } from './nichedb.js';
 export { normaliseTitle, slugify } from './slug.js';
 export { normaliseTeam } from './sportsdb.js';
 

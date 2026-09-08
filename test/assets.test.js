@@ -29,6 +29,8 @@ const ROUTE_SERVED = new Map([
 const PACKAGE_SERVED = new Map([
   ['/vendor-multiview.js', '@profullstack/multiview'],
   ['/vendor-multiview.css', '@profullstack/multiview/multiview.css'],
+  // Public news channels are HLS, which mpegts.js does not read.
+  ['/vendor-hls.js', 'hls.js/dist/hls.min.js'],
 ]);
 
 async function referencedPaths() {
