@@ -63,21 +63,13 @@ export const WatchChannel = ({ user, channel, also }) => (
     </ol>
     <h1>{channel.name}</h1>
 
-    {/* The player is progressive: the <video> is real markup, and the script
-        upgrades it. Safari plays HLS natively and needs no library at all, so
-        the fallback is a working player rather than a black rectangle. */}
+    {/* The house player draws its own control bar into this element, and picks
+        its own engine. It is the same @profullstack/player the radio bar and the
+        codec table come from, so there is one engine ladder on this site rather
+        than two that drift -- which is exactly what the hand-rolled hls.js
+        player this replaced had started. */}
     <div class="player">
-      <video
-        id="channel-player"
-        controls
-        autoplay
-        playsinline
-        muted
-        data-src={`/watch/${channel.id}/index.m3u8`}
-        poster=""
-      >
-        <track kind="captions" />
-      </video>
+      <div id="channel-stage" data-src={`/watch/${channel.id}/index.m3u8`} />
       <p class="muted" data-player-note>
         Starting…
       </p>
@@ -100,7 +92,7 @@ export const WatchChannel = ({ user, channel, also }) => (
     </p>
 
     <ChannelList channels={also} heading="Also on" />
-    <script src={assetUrl('/vendor-hls.js')} defer />
-    <script src={assetUrl('/watch.js')} defer />
+    <link rel="stylesheet" href={assetUrl('/vendor-player.css')} />
+    <script src={assetUrl('/vendor-watch.js')} defer />
   </Layout>
 );

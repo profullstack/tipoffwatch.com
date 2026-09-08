@@ -386,3 +386,49 @@ describe('which channels a page offers', () => {
     expect(picked.length).toBeLessThanOrEqual(4);
   });
 });
+
+/*
+ * The player is the house one, and this test exists because it was not.
+ *
+ * The first cut of the channel page hand-rolled hls.js and added a second copy
+ * of it to the tree, next to a package that already does exactly this job and
+ * is already a dependency. Worse, it tried native HLS first on the strength of
+ * canPlayType -- which lies on Chrome -- so it would have silently played
+ * nothing for most readers.
+ */
+describe('the channel player is @profullstack/player', () => {
+  const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url).pathname, 'utf8');
+
+  test('the entry uses the house player rather than a bare engine', () => {
+    const entry = read('apps/web/src/client/watch-entry.js');
+    expect(entry).toContain("from '@profullstack/player'");
+    expect(entry).toContain('createPlayer');
+    // The engine ladder belongs to the package. A page that reaches for hls.js
+    // or sniffs support itself has started a second ladder that will drift.
+    // Matched as CALLS, not as text: the file explains the canPlayType trap in
+    // a comment, and a test that cannot tell those apart forbids the comment.
+    expect(entry).not.toMatch(/new\s+Hls\(/);
+    expect(entry).not.toMatch(/\.canPlayType\(/);
+  });
+
+  test('the page mounts a stage and loads the bundle, not a private script', () => {
+    const view = read('apps/web/src/views/watch.jsx');
+    expect(view).toContain('channel-stage');
+    expect(view).toContain('/vendor-watch.js');
+    expect(view).toContain('/vendor-player.css');
+    expect(view).not.toContain('/vendor-hls.js');
+  });
+
+  test('no second copy of hls.js is pinned at the root', () => {
+    // The package brings its own, and the build swaps it for the light one.
+    const root = JSON.parse(read('package.json'));
+    expect(root.dependencies?.['hls.js']).toBeUndefined();
+    expect(read('apps/web/package.json')).toContain('@profullstack/player');
+  });
+
+  test('the watch bundle gets the same HLS-only treatment as radio', () => {
+    const build = read('apps/web/build-client.js');
+    expect(build).toContain("['watch-entry.js', 'vendor-watch.js']");
+    expect(build).toContain('PLAYER_BUNDLES');
+  });
+});
