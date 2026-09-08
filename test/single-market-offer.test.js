@@ -119,7 +119,9 @@ describe('one market, and nothing of the reader’s matched', () => {
   test('the page is exactly what it always was', async () => {
     const out = await html({ marketChannels: null });
     expect(out).toContain('Watch on TV · United States');
-    expect(out).not.toContain('Where to watch');
+    // The visible section. The listing is still published as structured data,
+    // where its name carries these same words.
+    expect(out).not.toContain('<h2>Where to watch</h2>');
   });
 });
 

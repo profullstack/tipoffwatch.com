@@ -263,7 +263,10 @@ describe('what the page and the routes do with it', () => {
    * not a different section that appears for some people.
    */
   test('a reader with no matches still sees the plain listing', () => {
-    expect(view).toContain('<p class="market-channels">{m.channels.join(\' · \')}</p>');
+    // A list in both branches now, and every channel in it either way. The rows
+    // for a reader with a matching list add buttons, not names.
+    expect(view).toContain('<ul class="market-channels">');
+    expect(view).toContain('{m.channels.map((name) => (');
     expect(view).toContain('marketChannels ? assetUrl(');
   });
 
