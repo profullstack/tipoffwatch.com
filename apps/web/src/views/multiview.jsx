@@ -54,6 +54,21 @@ const Tile = ({ tile }) => (
         <button type="button" class="ghost small-btn" data-mv-sound aria-pressed="false">
           Sound
         </button>
+        {/* The address of this tile's channel, for a player that is not this
+            page. Deliberately carries no URL of its own: app.js asks
+            /api/my/channels/<id>/address on the press, so the grid's markup
+            stays free of the credential -- which is the property the note at the
+            top of this file claims, and the reason a tile is only ever an id.
+            Empty in the template too, so a tile added here behaves the same as
+            one the server drew. */}
+        <button
+          type="button"
+          class="ghost small-btn"
+          data-mv-copy
+          title="Copy this channel's address to paste into a player"
+        >
+          Copy
+        </button>
         <button type="button" class="ghost small-btn" data-mv-toggle>
           Stop
         </button>

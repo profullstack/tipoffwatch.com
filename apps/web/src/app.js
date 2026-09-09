@@ -2293,6 +2293,35 @@ app.get('/my/channels/:channelId/check', async (c) => {
   return c.json(result);
 });
 
+/**
+ * The stream address for one row on the reader's own line.
+ *
+ * The Copy URL button beside a channel already carries this address in its own
+ * markup, because the VLC link beside it does. The multiview grid does not, and
+ * must not: "the sealed stream URL never reaches the view" is the property that
+ * page's own comment claims, and this route is how a tile gets a Copy button
+ * without giving it up. Asking is a deliberate press rather than something a
+ * page view leaves in a screenshot or a back-forward cache -- the same shape as
+ * /api/playlist/source, and for the same reason.
+ *
+ * `no-store, private` and JSON-only, because the body is a credential. Ownership
+ * belongs to the query rather than to this handler: ownChannelOr404 joins through
+ * the session's own user id, so an id from somebody else's list is a 404.
+ */
+app.get('/api/my/channels/:channelId/address', async (c) => {
+  const user = requireUser(c);
+  const ch = await ownChannelOr404(c, user);
+  c.header('cache-control', 'no-store, private');
+  if (!ch) return c.json({ error: 'no channel' }, 404);
+  // A managed list is OUR line, and its address is our reseller credential. The
+  // rule that takes VLC, Infuse and .m3u off a managed row takes this too: such a
+  // row has no Copy button, and this is the route it would have called.
+  if (ch.managed) {
+    return c.json({ error: 'That channel came with your pass and has no address to show.' }, 403);
+  }
+  return c.json({ url: ch.url });
+});
+
 app.get('/my/channels/:channelId/playlist.m3u', async (c) => {
   const user = requireUser(c);
   const ch = await ownChannelOr404(c, user);
