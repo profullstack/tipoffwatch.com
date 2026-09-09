@@ -910,7 +910,15 @@ export async function syncBrandCatalog({ log = console.log, force = false } = {}
   for (const entry of list) {
     try {
       if (!force) {
-        const last = await q.lastSyncedAtForCategory(entry.category);
+        /*
+         * By provider, not by category. `ingest` stamps the clock on every
+         * collection an adapter wrote, and asking by `sport` cannot tell whose
+         * pass did the stamping -- so as soon as two adapters file under one
+         * category, whichever runs first marks it fresh and the second skips on
+         * every tick from then on, saying only "fresh (2m old)". Every adapter
+         * that owns its categories outright gets the same answer as before.
+         */
+        const last = await q.lastSyncedAtForProvider(entry.name);
         if (last) {
           const ageMin = (Date.now() - last.getTime()) / 60_000;
           if (ageMin < entry.minIntervalMinutes) {

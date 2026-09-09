@@ -3228,6 +3228,27 @@ export async function lastSyncedAtForCategory(category) {
   return row?.at ?? null;
 }
 
+/**
+ * When this adapter last completed a pass, whoever else writes the same desks.
+ *
+ * The reason this exists next to the one above: that one asks by `sport`, which
+ * says nothing about who wrote the row, and `ingest` stamps the clock on every
+ * collection it touched. So the moment two adapters file under one section, the
+ * one that runs first stamps it and the second reads a fresh clock and skips --
+ * forever, logging only that it is fresh. Asking by provider is the question the
+ * caller actually means: has THIS adapter run recently enough.
+ *
+ * For an adapter that owns its sections outright the two are the same answer,
+ * which is why the difference stayed invisible until a second provider shared a
+ * category with one already there.
+ */
+export async function lastSyncedAtForProvider(provider) {
+  const [row] = await sql`
+    select max(rosters_synced_at) as at from leagues where provider = ${provider} and active
+  `;
+  return row?.at ?? null;
+}
+
 export async function markRostersSynced(leagueId) {
   await sql`update leagues set rosters_synced_at = now() where id = ${leagueId}`;
 }
