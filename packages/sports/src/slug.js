@@ -121,3 +121,31 @@ export function keyFor(...parts) {
     .filter(Boolean)
     .join(':');
 }
+
+/**
+ * The same, for a key one of whose parts is somebody else's URL.
+ *
+ * Every adapter in this repository keys an event on a short upstream id, so
+ * nothing here needs this yet. An adapter reading a feed aggregator does: an
+ * article's identity there IS its URL, which makes it the one key whose length a
+ * third party chooses. `provider_key` is `text`, but the UNIQUE (provider,
+ * provider_key) btree behind it is not -- a row of a few thousand bytes is
+ * rejected outright, and that aborts the whole upsert batch rather than dropping
+ * the one absurd URL.
+ *
+ * Truncating alone would fuse two long URLs sharing a prefix into one row, so
+ * what gets cut is replaced by a hash of the whole thing. FNV-1a is enough to
+ * separate two shared prefixes, and there is no reason to reach for a crypto
+ * hash to do it.
+ */
+export function boundedKeyFor(parts, max = 200) {
+  const slug = keyFor(...parts);
+  if (slug.length <= max) return slug;
+  const full = parts.join(':');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < full.length; i++) {
+    h ^= full.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${slug.slice(0, max)}-${h.toString(36)}`;
+}
