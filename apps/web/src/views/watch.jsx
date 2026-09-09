@@ -73,6 +73,22 @@ export const WatchChannel = ({ user, channel, also }) => (
       <p class="muted" data-player-note>
         Starting…
       </p>
+      {/* The same playlist the player above is reading, for a player that is not
+          this page. Nothing here is a credential: /watch/:id/index.m3u8 is a
+          public route that takes no session, so the address in the clipboard
+          works in VLC, mpv or a set-top box exactly as it works here. Written as
+          a path and made absolute by app.js, because only the browser knows
+          which of the sibling brands it is on. */}
+      <p class="player-copy">
+        <button
+          type="button"
+          class="ghost small-btn copy-url-btn"
+          data-copy-url={`/watch/${channel.id}/index.m3u8`}
+        >
+          Copy URL
+        </button>
+        <span class="muted small">Paste it into VLC, mpv, or anything that plays HLS.</span>
+      </p>
     </div>
 
     <p class="muted">
