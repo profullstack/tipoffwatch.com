@@ -4372,6 +4372,27 @@ export async function linkSupersededLeague({ id, provider, providerKey }) {
   `;
 }
 
+/**
+ * The events behind a page of `plays` items, by provider key.
+ *
+ * What the mirror needs to land a play log: the row id, and whether the fixture
+ * has already been closed out. `recap_synced_at` is what makes a re-read of a
+ * final item (the since-overlap re-reads the last two minutes on purpose) a
+ * no-op rather than a second write of the same box score.
+ */
+export async function eventsByProviderKeys(refs) {
+  if (refs.length === 0) return [];
+  return sql`
+    select e.id, e.provider, e.provider_key, e.state, e.plays_final, e.recap_synced_at
+      from events e
+      join unnest(
+        ${pgArray(refs.map((r) => r.provider))}::text[],
+        ${pgArray(refs.map((r) => r.provider_key))}::text[]
+      ) as v(provider, provider_key)
+        on v.provider = e.provider and v.provider_key = e.provider_key
+  `;
+}
+
 /** The line each fixture currently holds, for the ones we are about to write. */
 export async function oddsByEventKeys(refs) {
   if (refs.length === 0) return [];
