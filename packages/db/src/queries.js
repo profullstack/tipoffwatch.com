@@ -4311,9 +4311,32 @@ export async function managedPlaylistsLapsed({ graceHours = 24, limit = 100 } = 
  * lines already stored so a snapshot is only written when a number moved.
  */
 
+/**
+ * The cursor document as an object, whatever the driver handed back. Bun's
+ * postgres driver returns jsonb as text in production while PGlite parses it,
+ * and a string spread into `{ ...cursor }` is one key per character: the mirror
+ * then had no `since` and no spend on every tick and walked the whole
+ * collection a minute, forty-one requests at a time. A row that was written
+ * that way (keys "0", "1", ... and none of its own) is treated as never synced.
+ */
+export function cursorValue(raw) {
+  let value = raw;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if ('0' in value && !('since' in value) && !('spend' in value) && !('pending' in value))
+    return null;
+  return value;
+}
+
 export async function getSyncCursor(name) {
   const [row] = await sql`select cursor from sync_cursors where name = ${name}`;
-  return row?.cursor ?? null;
+  return cursorValue(row?.cursor);
 }
 
 export async function setSyncCursor(name, cursor) {
