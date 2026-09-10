@@ -700,6 +700,27 @@ async function applyBroadcast(items, ctx) {
   }
 }
 
+/**
+ * One row per thing on a page, the freshest. nichedb keeps a fixture once per
+ * source that saw it -- the schedule pass and the live pass both do -- so a
+ * since-walk that catches both rows in one window hands the upsert the same
+ * event twice in one statement, which Postgres refuses ("ON CONFLICT DO UPDATE
+ * command cannot affect row a second time"). Live scores stood still for an
+ * hour and a half on 2026-09-10 that way. The later updated_at wins; the live
+ * pass writes the score, the schedule pass the line-up, and the later of the
+ * two is the one that knows more.
+ */
+export function dedupeItems(items) {
+  const byKey = new Map();
+  for (const item of items ?? []) {
+    const key = item?.external_id ?? item?.id;
+    if (key == null) continue;
+    const had = byKey.get(key);
+    if (!had || String(item.updated_at ?? '') >= String(had.updated_at ?? '')) byKey.set(key, item);
+  }
+  return [...byKey.values()];
+}
+
 const APPLY = {
   league: applyLeagues,
   team: applyTeams,
@@ -740,7 +761,7 @@ async function walk(spec, ctx) {
     const url = pageUrl({ base: ctx.base, ...state });
     const items = (await ctx.http(url, { timeoutMs: 30_000 }))?.items ?? [];
     ctx.stats.requests++;
-    await APPLY[state.kind](items, ctx);
+    await APPLY[state.kind](dedupeItems(items), ctx);
     if (items.length > 0) state.afterId = Number(items[items.length - 1].id) || state.afterId;
     if (items.length < PAGE) break;
   }
