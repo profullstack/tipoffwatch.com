@@ -84,11 +84,31 @@ export const config = {
     .filter(Boolean),
 
   sports: {
-    /** Comma-separated adapter names, tried in order. ESPN is free and keyless. */
+    /**
+     * Comma-separated adapter names, tried in order. ESPN is free and keyless.
+     *
+     * `nichedb-sports` is the other shape of answer: instead of polling ESPN and
+     * Live Tennis from here, mirror nichedb.dev's `sports` collection, which
+     * already does. When it is listed the direct adapters are not called at all,
+     * whatever else is in the list -- see packages/sports/src/nichedbsports.js.
+     */
     providers: opt('SPORTS_PROVIDERS', 'espn')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    /**
+     * nichedb.dev, for the `nichedb-sports` provider.
+     *
+     * Keyless. The anonymous allowance is 600 requests an hour per address, and
+     * the budget here is what the mirror lets itself spend of that: the steady
+     * state is one request a minute, and the daily whole-catalogue walk is about a
+     * hundred pages, so 480 leaves a fifth of the allowance for anything else on
+     * the same address and still finishes the walk inside the hour it starts.
+     */
+    nichedb: {
+      baseUrl: opt('NICHEDB_BASE_URL', 'https://nichedb.dev/api/v1').replace(/\/$/, ''),
+      hourlyBudget: num('NICHEDB_HOURLY_BUDGET', 480),
+    },
     apiSportsKey: opt('API_SPORTS_KEY'),
     /**
      * TheSportsDB, used for one thing: TV listings ESPN does not carry.

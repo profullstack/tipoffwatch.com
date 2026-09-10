@@ -4299,3 +4299,89 @@ export async function managedPlaylistsLapsed({ graceHours = 24, limit = 100 } = 
     limit ${Math.min(Math.max(Number(limit) || 100, 1), 500)}
   `;
 }
+
+/* ------------------------------------------------------------------ mirror -- */
+
+/*
+ * The nichedb-sports provider mirrors nichedb's `sports` collection into the same
+ * three tables the ESPN and Live Tennis adapters write. These are the handful of
+ * statements it needs that the direct adapters never did: a place to keep its
+ * cursor, a league upsert that trusts the incoming display metadata (the mirror IS
+ * the authority, where the ESPN catalogue only ever knew a slug), and a read of the
+ * lines already stored so a snapshot is only written when a number moved.
+ */
+
+export async function getSyncCursor(name) {
+  const [row] = await sql`select cursor from sync_cursors where name = ${name}`;
+  return row?.cursor ?? null;
+}
+
+export async function setSyncCursor(name, cursor) {
+  await sql`
+    insert into sync_cursors (name, cursor, updated_at)
+    values (${name}, ${JSON.stringify(cursor ?? {})}::jsonb, now())
+    on conflict (name) do update set cursor = excluded.cursor, updated_at = now()
+  `;
+}
+
+/** Every league, active or not: the mirror resolves a fixture's league by slug. */
+export async function leagueIndex() {
+  return sql`select id, provider, provider_key, slug, sport, active from leagues`;
+}
+
+/**
+ * A league as the mirror describes it.
+ *
+ * Unlike upsertLeague, this DOES update the name, abbreviation, logo, region and
+ * the two capability flags: nichedb already resolved them against ESPN's detail
+ * endpoint, so the row arriving here is better than whatever the catalogue seeded.
+ * The slug is left alone on conflict -- it is unique and it is a URL people hold.
+ * region_checked_at is stamped so the ESPN region backfill never re-asks.
+ */
+export async function upsertMirroredLeague(league) {
+  const [row] = await sql`
+    insert into leagues ${sql(league)}
+    on conflict (provider, provider_key) do update set
+      sport = excluded.sport,
+      name = excluded.name,
+      abbreviation = coalesce(excluded.abbreviation, leagues.abbreviation),
+      logo_url = coalesce(excluded.logo_url, leagues.logo_url),
+      priority = excluded.priority,
+      region = coalesce(excluded.region, leagues.region),
+      region_checked_at = now(),
+      abbr_ambiguous = excluded.abbr_ambiguous,
+      plays_supported = excluded.plays_supported,
+      boxscore_supported = excluded.boxscore_supported,
+      rosters_synced_at = coalesce(excluded.rosters_synced_at, leagues.rosters_synced_at),
+      active = true
+    returning *
+  `;
+  return row;
+}
+
+/** Point a duplicate competition at the row that survives it, by provider key. */
+export async function linkSupersededLeague({ id, provider, providerKey }) {
+  await sql`
+    update leagues dup
+       set superseded_by = keep.id
+      from leagues keep
+     where dup.id = ${id}
+       and keep.provider = ${provider}
+       and keep.provider_key = ${providerKey}
+       and keep.id <> dup.id
+  `;
+}
+
+/** The line each fixture currently holds, for the ones we are about to write. */
+export async function oddsByEventKeys(refs) {
+  if (refs.length === 0) return [];
+  return sql`
+    select e.id, e.provider, e.provider_key, e.odds
+      from events e
+      join unnest(
+        ${pgArray(refs.map((r) => r.provider))}::text[],
+        ${pgArray(refs.map((r) => r.provider_key))}::text[]
+      ) as v(provider, provider_key)
+        on v.provider = e.provider and v.provider_key = e.provider_key
+  `;
+}

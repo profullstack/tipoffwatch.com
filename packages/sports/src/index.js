@@ -3,6 +3,7 @@ import * as q from '@tipoff/db/queries';
 import { CATALOG_ADAPTERS, ingest } from './catalog.js';
 import * as espn from './espn.js';
 import * as livetennis from './livetennis.js';
+import * as nichedbsports from './nichedbsports.js';
 import { regionFor } from './regions.js';
 import { normaliseTitle } from './slug.js';
 import * as sportsdb from './sportsdb.js';
@@ -89,7 +90,20 @@ export async function searchEverything(term, { userId = null, sport = null, limi
   };
 }
 
+/** The adapters that poll a provider themselves. */
 const ADAPTERS = { espn, livetennis };
+
+/**
+ * The other way to get the same rows: read them from nichedb, which runs these
+ * same adapters. A mirror is not one source among several -- it carries every
+ * provider's rows under that provider's own name -- so when one is listed in
+ * SPORTS_PROVIDERS it takes every pass and the direct adapters are not called at
+ * all. Listing both is not an error, because rollback is a variable change and a
+ * boot that refuses it would be a boot that needs two variable changes.
+ */
+const MIRRORS = { [nichedbsports.name]: nichedbsports };
+
+export const mirrorEnabled = () => config.sports.providers.some((n) => MIRRORS[n]);
 
 /**
  * Which provider owns which sport, among the ones actually enabled.
@@ -121,17 +135,25 @@ export function sportClaims() {
   return claims;
 }
 
+/** The direct adapters to run. Empty under a mirror: nothing upstream is polled from here. */
 export function adapters() {
+  if (mirrorEnabled()) return [];
+  const known = [...Object.keys(ADAPTERS), ...Object.keys(MIRRORS)].join(', ');
   return config.sports.providers.map((n) => {
     const a = ADAPTERS[n];
-    if (!a)
-      throw new Error(`Unknown sports provider "${n}". Known: ${Object.keys(ADAPTERS).join(', ')}`);
+    if (!a) throw new Error(`Unknown sports provider "${n}". Known: ${known}`);
     return a;
   });
 }
 
 /** Refresh the league catalogue. Cheap, and how new competitions appear without a deploy. */
 export async function syncCatalogue({ log = console.log } = {}) {
+  // The mirror's leagues arrive named, regioned and flagged, so none of the
+  // catalogue's second-pass repairs below (regions, ambiguity, claims) apply.
+  if (mirrorEnabled()) {
+    const out = await nichedbsports.syncCatalogue({ log });
+    return out.leagues ?? 0;
+  }
   const claims = sportClaims();
   let n = 0;
   for (const adapter of adapters()) {
@@ -200,9 +222,12 @@ export async function backfillLeagueRegions({ log = console.log, limit = 40 } = 
       checked++;
       const curated = regionFor(league.provider_key, null);
       // A curated answer is already known, so it costs no request at all.
+      // Asked of ESPN only when ESPN is being polled from here at all.
       const region =
         curated ??
-        (league.provider === 'espn' ? await espn.fetchLeagueRegion(league.provider_key) : null);
+        (league.provider === 'espn' && !mirrorEnabled()
+          ? await espn.fetchLeagueRegion(league.provider_key)
+          : null);
       // Written unconditionally, including when the answer is null: the write is
       // what stamps region_checked_at, and without that stamp the sweep re-asks
       // the same unresolvable leagues forever and never reaches the rest.
@@ -483,6 +508,12 @@ export async function syncLeagueScores(league) {
  * evening -- the whole point of scoping it rather than re-running the full sweep.
  */
 export async function syncLiveScores({ log = console.log } = {}) {
+  // Under the mirror the tick is one question -- what changed since the last one --
+  // and nichedb's own live pass is what makes the answer minute-fresh.
+  if (mirrorEnabled()) {
+    const out = await nichedbsports.syncSince({ log });
+    return { leagues: 0, events: out.fixtures ?? 0, failed: 0, mirror: out };
+  }
   const leagues = await q.leaguesWithLiveGames();
   if (leagues.length === 0) return { leagues: 0, events: 0 };
 
@@ -523,6 +554,20 @@ export async function syncLiveScores({ log = console.log } = {}) {
  * moving, and neither can shut the other out.
  */
 export async function syncPlays({ log = console.log, limit = 8 } = {}) {
+  /*
+   * The collection carries no play log and no box score: a summary is ~500KB per
+   * fixture and nichedb does not fetch them. Reading them from ESPN here would be
+   * the polling the mirror exists to stop, so the queue is left untouched rather
+   * than stamped -- switch a direct provider back on and it resumes where it was.
+   * Said once, not every two minutes.
+   */
+  if (mirrorEnabled()) {
+    if (!playsSkippedSaid) {
+      playsSkippedSaid = true;
+      log(`[plays] skipped: ${nichedbsports.name} carries no plays or recaps`);
+    }
+    return { events: 0, plays: 0, skipped: 'mirror' };
+  }
   // A reserved share for the catch-up reads, but only while there is live work to
   // reserve it against. The live queue is drawn against the whole cap and handed
   // back down to its share only if it is actually big enough to need capping, so
@@ -666,6 +711,9 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   return { events: due.length, plays: inserted, recaps, failed, liveDue, endedDue, recapDue };
 }
 
+/** Whether syncPlays has already explained, this process, why it is doing nothing. */
+let playsSkippedSaid = false;
+
 /** Upper bound on TheSportsDB requests in a single pass. */
 const BROADCAST_REQUEST_CAP = 240;
 
@@ -794,6 +842,20 @@ export async function syncNear({ log = console.log, hours = config.sports.nearWi
   const from = new Date(now.getTime() - 6 * 3600_000);
   const to = new Date(now.getTime() + hours * 3600_000);
 
+  // The mirror has no near window: a since-sync already carries every change,
+  // whenever the fixture is. What this pass still owns is the TheSportsDB fill of
+  // the listings ESPN does not have, scoped to the fixtures about to be played.
+  if (mirrorEnabled()) {
+    const mirror = await nichedbsports.syncSince({ log });
+    let broadcasts = { checked: 0, filled: 0, requests: 0 };
+    try {
+      broadcasts = await syncBroadcasts({ log, from: now, to });
+    } catch (err) {
+      log(`[near] broadcast pass failed: ${err.message}`);
+    }
+    return { leagues: 0, events: mirror.fixtures ?? 0, failed: 0, broadcasts, mirror };
+  }
+
   const leagues = await q.leaguesWithFixturesBetween({ from, to });
   if (leagues.length === 0) {
     log('[near] nothing scheduled in the window');
@@ -852,6 +914,22 @@ export async function syncAll({
   log = console.log,
   concurrency = config.sports.syncConcurrency,
 } = {}) {
+  if (mirrorEnabled()) {
+    const mirror = await nichedbsports.syncAll({ log });
+    let broadcasts = { checked: 0, filled: 0, requests: 0 };
+    try {
+      broadcasts = await syncBroadcasts({ log });
+    } catch (err) {
+      log(`[broadcasts] pass failed: ${err.message}`);
+    }
+    return {
+      leagues: mirror.leagues ?? 0,
+      events: mirror.fixtures ?? 0,
+      failed: 0,
+      broadcasts,
+      mirror,
+    };
+  }
   const leagues = await q.listLeagues({ limit: 1000 });
   let events = 0;
   let failed = 0;
