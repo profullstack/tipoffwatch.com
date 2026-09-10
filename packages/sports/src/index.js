@@ -555,18 +555,21 @@ export async function syncLiveScores({ log = console.log } = {}) {
  */
 export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   /*
-   * The collection carries no play log and no box score: a summary is ~500KB per
-   * fixture and nichedb does not fetch them. Reading them from ESPN here would be
-   * the polling the mirror exists to stop, so the queue is left untouched rather
-   * than stamped -- switch a direct provider back on and it resumes where it was.
-   * Said once, not every two minutes.
+   * nichedb reads the summaries -- the same eight a run, every two minutes -- and
+   * publishes each as a `plays` item. The mirror asks what changed since its last
+   * look and lands the rows through the same writers this poller uses, so the
+   * queues below are not consulted: the mirror's cursor is what decides what is
+   * due, and switching a direct provider back on resumes them where they were.
    */
   if (mirrorEnabled()) {
-    if (!playsSkippedSaid) {
-      playsSkippedSaid = true;
-      log(`[plays] skipped: ${nichedbsports.name} carries no plays or recaps`);
-    }
-    return { events: 0, plays: 0, skipped: 'mirror' };
+    const out = await nichedbsports.syncPlays({ log });
+    return {
+      events: out.playsItems ?? 0,
+      plays: out.plays ?? 0,
+      recaps: out.recaps ?? 0,
+      failed: 0,
+      mirror: out,
+    };
   }
   // A reserved share for the catch-up reads, but only while there is live work to
   // reserve it against. The live queue is drawn against the whole cap and handed
@@ -711,9 +714,6 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
   return { events: due.length, plays: inserted, recaps, failed, liveDue, endedDue, recapDue };
 }
 
-/** Whether syncPlays has already explained, this process, why it is doing nothing. */
-let playsSkippedSaid = false;
-
 /** Upper bound on TheSportsDB requests in a single pass. */
 const BROADCAST_REQUEST_CAP = 240;
 
@@ -731,10 +731,10 @@ const BROADCAST_REQUEST_CAP = 240;
  * reset on boot -- the failure that quietly froze the fixture sweep for months.
  *
  * Listings are fetched per (sport, day) and cached for the run, because one request
- * answers every fixture in that bucket. Each event is matched against its own UTC
- * day AND the day before: the two providers disagree about which calendar day a
- * late kickoff belongs to, and the team-name match is what actually establishes
- * identity, so the wider window costs nothing in precision.
+ * answers every fixture in that bucket. The matching itself is sportsdb.js
+ * broadcastUpdates, shared with the mirror: under nichedb-sports the same rows
+ * arrive as `broadcast` items, read by day, and the free-key nuance below goes
+ * away because nichedb did the fetching.
  */
 export async function syncBroadcasts({ log = console.log, from = null, to = null } = {}) {
   const now = new Date();
@@ -748,9 +748,29 @@ export async function syncBroadcasts({ log = console.log, from = null, to = null
   const events = await q.listEventsMissingBroadcast({ from: start, to: horizon, limit: 2000 });
   if (events.length === 0) return { checked: 0, filled: 0, requests: 0 };
 
-  const dayOf = (d, offset = 0) =>
-    new Date(new Date(d).getTime() + offset * 86400_000).toISOString().slice(0, 10);
+  const { updates, requests, note } = mirrorEnabled()
+    ? await mirrorListings(events, { log })
+    : await sportsdbListings(events);
 
+  const written = await q.fillMissingBroadcasts(updates);
+  log(
+    `[broadcasts] ${events.length} missing, ${written.length} filled, ${requests} requests${note}`,
+  );
+  return { checked: events.length, filled: written.length, requests };
+}
+
+/** The fill's listings from nichedb's `broadcast` items, inside the mirror's budget. */
+async function mirrorListings(events, { log }) {
+  const out = await nichedbsports.syncBroadcasts({ events, log });
+  return {
+    updates: out.updates ?? [],
+    requests: out.requests ?? 0,
+    note: out.skipped ? ` (${out.skipped})` : ` (${nichedbsports.name}, by day)`,
+  };
+}
+
+/** The fill's listings from TheSportsDB itself, one request per (sport, day) bucket. */
+async function sportsdbListings(events) {
   /** @type {Map<string, Array<object>>} */
   const cache = new Map();
   let requests = 0;
@@ -779,38 +799,18 @@ export async function syncBroadcasts({ log = console.log, from = null, to = null
     return rows;
   }
 
-  const updates = [];
-  for (const e of events) {
+  const updates = await sportsdb.broadcastUpdates(events, (e, day) =>
     // Only meaningful when the sport is being used to narrow the query. Unfiltered,
     // a sport we have no name for is still covered by the day's listings.
-    if (perSport && !sportsdb.sportName(e.sport)) continue;
-    const rows = [
-      ...(await listings(e.sport, dayOf(e.starts_at, -1))),
-      ...(await listings(e.sport, dayOf(e.starts_at))),
-    ];
-    const hits = sportsdb.matchListings({ home: e.home_name, away: e.away_name }, rows);
-    const markets = sportsdb.allMarkets(hits);
-    if (markets.length === 0) continue;
-    // Every market is stored for the picker; the flat columns keep carrying the
-    // primary one, because the feeds and the reminder emails have nowhere to put
-    // a tab strip and still need a single sentence.
-    const [primary] = markets;
-    updates.push({
-      id: e.id,
-      broadcast: primary.channels.join(', '),
-      country: primary.country === 'International' ? null : primary.country,
-      markets,
-    });
-  }
-
-  const written = await q.fillMissingBroadcasts(updates);
-  log(
-    `[broadcasts] ${events.length} missing, ${written.length} filled, ${requests} requests` +
-      (sportsdb.usingFreeKey()
-        ? ' (SPORTSDB_API_KEY unset: the shared key returns ONE row per query, so coverage is a trickle)'
-        : ' (whole days, one request each)'),
+    perSport && !sportsdb.sportName(e.sport) ? Promise.resolve([]) : listings(e.sport, day),
   );
-  return { checked: events.length, filled: written.length, requests };
+  return {
+    updates,
+    requests,
+    note: perSport
+      ? ' (SPORTSDB_API_KEY unset: the shared key returns ONE row per query, so coverage is a trickle)'
+      : ' (whole days, one request each)',
+  };
 }
 
 /**

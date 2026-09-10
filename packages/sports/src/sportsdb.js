@@ -174,6 +174,50 @@ export function pickMarket(rows, preferCountry = null) {
   return (preferCountry && markets.find((m) => m.country === preferCountry)) || markets[0];
 }
 
+/** The UTC calendar day a kickoff falls on, offset by whole days. */
+export const listingDay = (d, offset = 0) =>
+  new Date(new Date(d).getTime() + offset * 86400_000).toISOString().slice(0, 10);
+
+/**
+ * The broadcast updates a set of fixtures earn from a supply of listings.
+ *
+ * Shared by the two ways the listings arrive -- fetched from TheSportsDB here, or
+ * read from nichedb's `broadcast` items, which are the same rows fetched there --
+ * so both paths match the same way and write the same shape. `listingsFor(event,
+ * day)` answers one calendar day's listings, and is asked for each event's own
+ * UTC day AND the day before: the two providers disagree about which day a late
+ * kickoff belongs to, and the team-name match is what actually establishes
+ * identity, so the wider window costs nothing in precision.
+ *
+ * Every market is kept for the picker; the flat columns carry the primary one,
+ * because the feeds and the reminder emails have nowhere to put a tab strip and
+ * still need a single sentence.
+ *
+ * @param {Array<{id:number, starts_at:Date|string, sport:string, home_name:string, away_name:string}>} events
+ * @param {(event: object, day: string) => Promise<Array<{event:string, channel:string, country:string|null}>>} listingsFor
+ * @returns {Promise<Array<{id:number, broadcast:string, country:string|null, markets:Array}>>}
+ */
+export async function broadcastUpdates(events, listingsFor) {
+  const updates = [];
+  for (const e of events) {
+    const rows = [
+      ...(await listingsFor(e, listingDay(e.starts_at, -1))),
+      ...(await listingsFor(e, listingDay(e.starts_at))),
+    ];
+    const hits = matchListings({ home: e.home_name, away: e.away_name }, rows);
+    const markets = allMarkets(hits);
+    if (markets.length === 0) continue;
+    const [primary] = markets;
+    updates.push({
+      id: e.id,
+      broadcast: primary.channels.join(', '),
+      country: primary.country === 'International' ? null : primary.country,
+      markets,
+    });
+  }
+  return updates;
+}
+
 async function getJson(url, { timeoutMs = 15000 } = {}) {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),

@@ -11,15 +11,25 @@
  * rollback.
  *
  * The contract it reads is docs/consolidation.md in the nichedb repo: kinds
- * `league`, `team`, `fixture`, with the fixture's whole record under `data`.
+ * `league`, `team`, `fixture`, with the fixture's whole record under `data`;
+ * `plays`, one item per fixture in play or just finished, carrying the tail of
+ * its play-by-play and, once final, the box score; and `broadcast`, one item per
+ * TheSportsDB TV listing, which is the non-US broadcaster fill this site used to
+ * fetch itself.
  *
- * Three passes, on the schedulers the direct adapters already had:
+ * Five passes, on the schedulers the direct adapters already had:
  *
  *   - the full sweep walks every league, every team and every fixture from the
  *     backfill floor forward -- about a hundred pages at 200 items each;
  *   - the near pass and the live tick both ask `since=<last sync>` and get only
  *     what nichedb changed, which on a quiet minute is one request returning
- *     nothing and on a busy evening is a page or two.
+ *     nothing and on a busy evening is a page or two;
+ *   - the plays tick asks the same question of the `plays` kind, on its own
+ *     cursor: nichedb reads at most eight summaries a run, so this is one request
+ *     every two minutes and never a second page;
+ *   - the broadcast fill, at the tail of the near pass and the sweep, reads the
+ *     `broadcast` items for each day a fixture without a broadcaster falls on,
+ *     and matches them by team name exactly as the TheSportsDB fill did.
  *
  * Every walk is a keyset on id (`sort=id&order=asc&after=<id>`) over a filter
  * (`since` on updated_at, or `from` on published_at), because the item on the
@@ -32,6 +42,7 @@
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { getJson } from './http.js';
+import { broadcastUpdates } from './sportsdb.js';
 
 export const name = 'nichedb-sports';
 
@@ -52,6 +63,16 @@ export const OVERLAP_MS = 2 * 60_000;
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
+
+/**
+ * Where the plays cursor starts the first time: nichedb only carries a `plays`
+ * item for a fixture in play or ended in the last six hours, so an item changed
+ * earlier than that describes a game whose log has already been closed out there.
+ */
+export const PLAYS_LOOKBACK_MS = 6 * HOUR_MS;
+
+/** The cursor key each since-walk advances. A kind without one walks by window only. */
+const SINCE_KEY = { fixture: 'since', plays: 'playsSince' };
 
 /**
  * ESPN's tennis is skipped, as nichedb's own ESPN sources skip it by default.
@@ -229,6 +250,106 @@ export function mapFixture(item) {
   };
 }
 
+/* ------------------------------------------------------------------ plays -- */
+
+/**
+ * Which event a `plays` item belongs to, as the (provider, provider_key) pair the
+ * events table is unique on.
+ *
+ * The item points at its fixture by `data.fixtureExternalId`, which is the
+ * fixture item's own external id: `<provider>:fixture:<key>`, and `<key>` is
+ * exactly what mapFixture wrote into provider_key. So the join needs no parsing
+ * of the play item's id, and no second lookup. `fixtureKey` is the same key
+ * unwrapped, kept as the fallback should the external id ever be absent.
+ */
+export function fixtureRef(data) {
+  const ext = text(data?.fixtureExternalId);
+  const m = ext ? /^([a-z0-9-]+):fixture:(.+)$/.exec(ext) : null;
+  if (m) return { provider: m[1], provider_key: m[2] };
+  const provider = text(data?.provider);
+  const key = text(data?.fixtureKey);
+  return provider && key ? { provider, provider_key: key } : null;
+}
+
+/** One play off the item -> an event_plays row minus its event_id, or null. */
+function playRow(p) {
+  if (p?.id === null || p?.id === undefined || p?.id === '' || !text(p?.text)) return null;
+  return {
+    provider_play_id: String(p.id),
+    sequence: int(p.sequence),
+    text: p.text,
+    away_score: int(p.awayScore),
+    home_score: int(p.homeScore),
+    scoring: p.scoring === true,
+    period_number: int(p.period),
+    period_label: text(p.periodLabel),
+    play_type: text(p.type),
+  };
+}
+
+/**
+ * A `plays` item -> the event it belongs to, its play rows, and the recap if the
+ * game is over.
+ *
+ * A live item is the tail of the log (the last 400), a final one the whole of it;
+ * either way the rows are appended on (event, play id) and never deleted, so the
+ * two shapes need no telling apart here. `final` is the item's own word for it,
+ * with the state tag as the fallback, and is what decides whether the recap is
+ * written and the fixture closed out.
+ */
+export function mapPlays(item) {
+  const d = item?.data;
+  if (item?.kind !== 'plays' || !d) return null;
+  const ref = fixtureRef(d);
+  if (!ref) return null;
+  const seen = new Set();
+  const plays = [];
+  for (const p of Array.isArray(d.plays) ? d.plays : []) {
+    const row = playRow(p);
+    if (!row || seen.has(row.provider_play_id)) continue;
+    seen.add(row.provider_play_id);
+    plays.push(row);
+  }
+  const final = d.final === true || stateOf(d) === 'post';
+  return {
+    ...ref,
+    final,
+    plays,
+    recap: final && d.recap && typeof d.recap === 'object' ? d.recap : null,
+  };
+}
+
+/* -------------------------------------------------------------- broadcast -- */
+
+/**
+ * A `broadcast` item -> the listing row the team-name matcher reads.
+ *
+ * The item is one TheSportsDB TV row, fetched by nichedb instead of here:
+ * `data.event` is its "Home vs Away" title, and `data.country` the broadcaster's
+ * market by name, which is what events.broadcast_country stores. When the title
+ * is missing the two sides are put back together in the order the matcher
+ * expects; it tries both orderings anyway.
+ */
+export function mapBroadcast(item) {
+  const d = item?.data;
+  if (item?.kind !== 'broadcast' || !d) return null;
+  const home = text(d.home);
+  const away = text(d.away);
+  const event = text(d.event) ?? (home && away ? `${home} vs ${away}` : null);
+  const channel = text(d.channel);
+  if (!event || !channel) return null;
+  const dateTag = (Array.isArray(item.tags) ? item.tags : []).find((t) =>
+    String(t).startsWith('date:'),
+  );
+  return {
+    event,
+    channel,
+    country: text(d.country),
+    sport: text(d.sport),
+    date: dateTag ? dateTag.slice(5) : (text(item.published_at)?.slice(0, 10) ?? null),
+  };
+}
+
 /* ------------------------------------------------------------------- odds -- */
 
 /**
@@ -264,10 +385,18 @@ export function oddsChanged(stored, incoming) {
 
 /**
  * One page of a kind: oldest id first, keyset on `after`, filtered by `since`
- * (updated_at) or `from` (published_at). The base is a parameter so a test can
- * point it anywhere.
+ * (updated_at) or `from` (published_at), and narrowed to items carrying every
+ * tag in `tags`. The base is a parameter so a test can point it anywhere.
  */
-export function pageUrl({ base, kind, since = null, from = null, afterId = 0, limit = PAGE }) {
+export function pageUrl({
+  base,
+  kind,
+  since = null,
+  from = null,
+  tags = null,
+  afterId = 0,
+  limit = PAGE,
+}) {
   const p = new URLSearchParams({
     collection: 'sports',
     kind,
@@ -277,6 +406,7 @@ export function pageUrl({ base, kind, since = null, from = null, afterId = 0, li
   });
   if (since) p.set('since', since);
   if (from) p.set('from', from);
+  if (Array.isArray(tags) && tags.length > 0) p.set('tags', tags.join(','));
   if (afterId) p.set('after', String(afterId));
   return `${base ?? config.sports.nichedb.baseUrl}/items?${p}`;
 }
@@ -328,6 +458,13 @@ export function defaultStore() {
     upsertEvents: (rows) => q.upsertEvents(rows),
     oddsByEventKeys: (refs) => q.oddsByEventKeys(refs),
     recordOddsSnapshots: (ids) => q.recordOddsSnapshots(ids),
+    // The play log and the box score go through the direct poller's own writers,
+    // so a row landed either way is the same row.
+    eventsByKeys: (refs) => q.eventsByProviderKeys(refs),
+    insertPlays: (rows) => q.insertPlays(rows),
+    saveRecap: (id, recap) => q.saveRecap(id, recap),
+    markPlaysFinal: (id) => q.markPlaysFinal(id),
+    markPlaysSynced: (id) => q.markPlaysSynced(id),
     getCursor: () => q.getSyncCursor(CURSOR),
     setCursor: (cursor) => q.setSyncCursor(CURSOR, cursor),
   };
@@ -503,7 +640,73 @@ async function applyFixtures(items, ctx) {
   }
 }
 
-const APPLY = { league: applyLeagues, team: applyTeams, fixture: applyFixtures };
+/**
+ * Plays: the event first, then the rows, then -- once the game is over -- the
+ * recap and the closing stamp, through the same writers the direct poller uses.
+ *
+ * Insert-only on (event, play id): a live item is the tail of the log and a re-read
+ * of a final one (the since-overlap re-reads the last two minutes on purpose) is a
+ * page of conflicts that do nothing. The recap is written once, gated on
+ * recap_synced_at the way the direct queue is closed, so that same re-read cannot
+ * re-stamp a box score already saved. plays_synced_at is stamped on every item
+ * either way, final or not, so a page can say how fresh its log is.
+ */
+async function applyPlays(items, ctx) {
+  const mapped = items.map(mapPlays).filter(Boolean);
+  if (mapped.length === 0) return;
+  const refs = mapped.map((p) => ({ provider: p.provider, provider_key: p.provider_key }));
+  const found = new Map();
+  for (const e of await ctx.store.eventsByKeys(refs))
+    found.set(`${e.provider}|${e.provider_key}`, e);
+
+  for (const p of mapped) {
+    const event = found.get(`${p.provider}|${p.provider_key}`);
+    if (!event) {
+      // The fixture has not been mirrored yet: a fresh database whose plays tick
+      // ran before its first fixture walk. A live item comes round again in two
+      // minutes; a final one is lost to this database, which is the right trade
+      // against holding the cursor back for it.
+      ctx.stats.playsOrphans++;
+      continue;
+    }
+    ctx.stats.playsItems++;
+    if (p.plays.length > 0) {
+      const added = await ctx.store.insertPlays(
+        p.plays.map((row) => ({ event_id: event.id, ...row })),
+      );
+      ctx.stats.plays += added.length;
+    }
+    if (p.final) {
+      if (!event.recap_synced_at) {
+        // Written even when null: the stamp is what closes the recap queue, and a
+        // fixture whose summary has no box score is answered once, not forever.
+        await ctx.store.saveRecap(event.id, p.recap);
+        if (p.recap) ctx.stats.recaps++;
+      }
+      await ctx.store.markPlaysFinal(event.id);
+    } else {
+      await ctx.store.markPlaysSynced(event.id);
+    }
+  }
+}
+
+/** Broadcasts are not written from a page: they are collected for the matcher. */
+async function applyBroadcast(items, ctx) {
+  for (const item of items) {
+    const row = mapBroadcast(item);
+    if (!row) continue;
+    ctx.bucket?.push(row);
+    ctx.stats.listings++;
+  }
+}
+
+const APPLY = {
+  league: applyLeagues,
+  team: applyTeams,
+  fixture: applyFixtures,
+  plays: applyPlays,
+  broadcast: applyBroadcast,
+};
 
 /* ---------------------------------------------------------------- walking -- */
 
@@ -520,6 +723,7 @@ async function walk(spec, ctx) {
     kind: spec.kind,
     since: spec.since ?? null,
     from: spec.from ?? null,
+    tags: spec.tags ?? null,
     afterId: 0,
     startedAt: new Date(ctx.now).toISOString(),
   };
@@ -527,7 +731,9 @@ async function walk(spec, ctx) {
 
   for (;;) {
     if (!ctx.budget.spend()) {
-      ctx.cursor.pending = state;
+      // A walk that collects into this pass's memory (the broadcast listings) has
+      // nothing to resume into next pass; it is simply cut short and asked again.
+      if (spec.resumable !== false) ctx.cursor.pending = state;
       ctx.stats.exhausted = true;
       return false;
     }
@@ -540,12 +746,13 @@ async function walk(spec, ctx) {
   }
 
   ctx.cursor.pending = null;
-  if (state.kind === 'fixture') {
-    // Every fixture that changed before this walk began has now been seen, so the
+  const key = SINCE_KEY[state.kind];
+  if (key) {
+    // Every item that changed before this walk began has now been seen, so the
     // next since-sync starts there -- less the overlap, for the ones that changed
     // during it. Never moved backwards: a resumed old walk must not undo a newer one.
     const next = new Date(Date.parse(state.startedAt) - OVERLAP_MS).toISOString();
-    if (!ctx.cursor.since || next > ctx.cursor.since) ctx.cursor.since = next;
+    if (!ctx.cursor[key] || next > ctx.cursor[key]) ctx.cursor[key] = next;
   }
   return true;
 }
@@ -596,17 +803,28 @@ async function withRun({ store, http, log, now, base, hourlyBudget }, fn) {
         leaguesCreated: 0,
         orphans: 0,
         snapshots: 0,
+        playsItems: 0,
+        plays: 0,
+        recaps: 0,
+        playsOrphans: 0,
+        listings: 0,
         resumed: [],
         exhausted: false,
       },
     };
+    let result;
     try {
-      await fn(ctx);
+      result = await fn(ctx);
     } finally {
       cursor.spend = { hour: budget.state.hour, calls: budget.state.calls };
       await store.setCursor(cursor);
     }
-    return { ...ctx.stats, cursor, spent: `${budget.state.calls}/${budget.state.limit}` };
+    return {
+      ...ctx.stats,
+      result,
+      cursor,
+      spent: `${budget.state.calls}/${budget.state.limit}`,
+    };
   })();
   inflight = run;
   try {
@@ -679,4 +897,104 @@ export async function syncSince(opts = {}) {
   const out = await withRun(ctx, (run) => runWalks([fixturesSince(run.cursor, ctx.now)], run));
   if (!out.skipped) ctx.log(summary(out, 'since'));
   return out;
+}
+
+/* ------------------------------------------------------- plays and recaps -- */
+
+const playsSince = (cursor, now) => ({
+  id: 'plays:since',
+  kind: 'plays',
+  // Never synced: the six hours nichedb itself carries a play item for.
+  since: cursor.playsSince ?? new Date(now - PLAYS_LOOKBACK_MS).toISOString(),
+});
+
+function playsSummary(stats) {
+  const tail = [
+    stats.playsOrphans ? `${stats.playsOrphans} item(s) whose fixture is not mirrored yet` : null,
+    stats.resumed.length ? `resumed ${stats.resumed.join(', ')}` : null,
+    stats.exhausted ? 'hourly budget spent, continuing next pass' : null,
+  ].filter(Boolean);
+  return (
+    `[mirror] plays: ${stats.playsItems} fixture(s), ${stats.plays} new plays, ` +
+    `${stats.recaps} recaps from ${stats.requests} request(s), ${stats.spent} this hour` +
+    (tail.length ? `; ${tail.join('; ')}` : '')
+  );
+}
+
+/**
+ * The play-by-play and recaps that changed since the last look. The plays tick.
+ *
+ * Its own cursor (`playsSince`) beside the fixtures one, because the two walks
+ * run on different clocks and neither may advance the other. nichedb writes at
+ * most eight play items a run, every two minutes, so on the same cadence this is
+ * one request that never needs a second page.
+ */
+export async function syncPlays(opts = {}) {
+  const ctx = defaults(opts);
+  const out = await withRun(ctx, (run) => runWalks([playsSince(run.cursor, ctx.now)], run));
+  if (!out.skipped) ctx.log(playsSummary(out));
+  return out;
+}
+
+/* ------------------------------------------------------------- broadcasts -- */
+
+/**
+ * The broadcast updates a list of fixtures without a broadcaster earn from the
+ * `broadcast` items, matched by team name exactly as the direct fill matches
+ * TheSportsDB's rows -- they ARE TheSportsDB's rows, fetched by nichedb.
+ *
+ * Read per calendar day, tagged `date:<day>`, once per pass however many fixtures
+ * fall on it: the near pass covers three or four days and a fortnight's sweep
+ * about sixteen, at a page or so of listings per day. Each day's walk is cut
+ * short rather than parked if the hour's budget runs out, since it collects into
+ * this pass's memory and nothing could resume it; the fixtures still unmatched
+ * wait for the next pass, as they always did.
+ *
+ * Nothing is written here: the caller owns the events read and the update, so
+ * the two fills share one writer and one guard against undoing an ESPN listing.
+ *
+ * @param {{events: Array<object>}} opts as syncBroadcasts in index.js selects them
+ */
+export async function syncBroadcasts({ events = [], ...rest } = {}) {
+  const ctx = defaults(rest);
+  if (events.length === 0) return { updates: [], requests: 0, listings: 0, days: 0 };
+  const out = await withRun(ctx, async (run) => {
+    /** @type {Map<string, Array<object>>} listings by UTC day, read at most once */
+    const days = new Map();
+    const listingsFor = async (_event, day) => {
+      if (days.has(day)) return days.get(day);
+      const rows = [];
+      // Set before the walk, so a day cut short by the budget is not asked again
+      // by the next fixture on it this pass.
+      days.set(day, rows);
+      run.bucket = rows;
+      await walk(
+        {
+          id: `broadcast:${day}`,
+          kind: 'broadcast',
+          tags: ['broadcast', `date:${day}`],
+          resumable: false,
+        },
+        run,
+      );
+      run.bucket = null;
+      return rows;
+    };
+    const updates = await broadcastUpdates(events, listingsFor);
+    return { updates, days: days.size };
+  });
+  if (out.skipped) return { ...out, updates: [], requests: 0, listings: 0, days: 0 };
+  const result = {
+    ...out.result,
+    requests: out.requests,
+    listings: out.listings,
+    exhausted: out.exhausted,
+    spent: out.spent,
+  };
+  ctx.log(
+    `[mirror] broadcasts: ${events.length} fixture(s) without a listing, ${result.updates.length} matched ` +
+      `from ${result.listings} listing(s) over ${result.days} day(s), ${result.requests} request(s), ` +
+      `${out.spent} this hour${out.exhausted ? '; hourly budget spent, the rest next pass' : ''}`,
+  );
+  return result;
 }
