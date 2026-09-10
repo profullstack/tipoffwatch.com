@@ -2851,8 +2851,8 @@ const LineCard = ({ line, first = false, lineCeiling, livePass }) => (
           </button>
         </div>
         <p class="muted small">
-          Masked because it carries your provider username and password. Show reveals it, and Copy
-          takes whatever is displayed.
+          Masked because it carries your provider username and password. Show reveals it. Copy
+          always copies the whole address, shown or not.
         </p>
       </div>
     ) : null}

@@ -588,12 +588,30 @@ function initCopyButtons() {
     const field = document.querySelector(btn.getAttribute('data-copy'));
     if (!field) return;
 
+    let text = field.value ?? field.textContent;
+
+    // Never the mask. The playlist field shows the address with the credential
+    // dotted out until Show is pressed, and Copy used to take whatever was on
+    // screen -- so a list copied without pressing Show first was a row of bullets
+    // pasted into another player, which 404s everywhere. A copy is a request for
+    // the real thing, and it asks the server for it the same way Show does.
+    if (field.hasAttribute('data-playlist-url')) {
+      btn.disabled = true;
+      try {
+        const real = await fetchPlaylistAddress(field.closest('[data-line]'));
+        if (!real) {
+          flashButton(btn, 'Failed');
+          return;
+        }
+        text = real;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     field.focus?.();
     field.select?.();
-    flashButton(
-      btn,
-      (await writeClipboard(field.value ?? field.textContent)) ? 'Copied' : 'Press Ctrl-C',
-    );
+    flashButton(btn, (await writeClipboard(text)) ? 'Copied' : 'Press Ctrl-C');
   });
 }
 
@@ -660,6 +678,31 @@ function initPlaylistReveal(root = document) {
   }
 }
 
+/**
+ * The whole address of one list, from the server.
+ *
+ * Asked by card, because with several lists a bare request answered with the
+ * first line's address whichever card was pressed. Shared by Show and Copy so
+ * they cannot disagree about which list, or about the answer. Empty when the
+ * server would not say.
+ *
+ * @param {Element | null} card the `[data-line]` card, or null for the only list
+ * @returns {Promise<string>}
+ */
+async function fetchPlaylistAddress(card) {
+  const id = card?.dataset?.line;
+  try {
+    const res = await fetch(
+      id ? `/api/playlist/source?playlist_id=${encodeURIComponent(id)}` : '/api/playlist/source',
+      { headers: { accept: 'application/json' }, cache: 'no-store' },
+    );
+    const data = await res.json().catch(() => ({}));
+    return res.ok && typeof data.url === 'string' ? data.url : '';
+  } catch {
+    return '';
+  }
+}
+
 document.addEventListener('click', async (event) => {
   const btn = event.target?.closest?.('[data-playlist-reveal]');
   if (!btn) return;
@@ -690,21 +733,13 @@ document.addEventListener('click', async (event) => {
 
   btn.disabled = true;
   try {
-    const id = card?.dataset?.line;
-    const res = await fetch(
-      id ? `/api/playlist/source?playlist_id=${encodeURIComponent(id)}` : '/api/playlist/source',
-      {
-        headers: { accept: 'application/json' },
-        cache: 'no-store',
-      },
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.url) {
-      btn.textContent = data.error ? 'Unavailable' : 'Failed';
+    const url = await fetchPlaylistAddress(card);
+    if (!url) {
+      btn.textContent = 'Failed';
       return;
     }
     btn.dataset.masked = field.value;
-    field.value = data.url;
+    field.value = url;
     field.select?.();
     btn.dataset.shown = '1';
     btn.textContent = 'Hide';
@@ -712,9 +747,7 @@ document.addEventListener('click', async (event) => {
     // Fill the edit form too, so changing one character of the host does not mean
     // typing the credential out again.
     const input = scope.querySelector('[data-playlist-input]');
-    if (input && !input.value) input.value = data.url;
-  } catch {
-    btn.textContent = 'Failed';
+    if (input && !input.value) input.value = url;
   } finally {
     btn.disabled = false;
   }
