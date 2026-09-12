@@ -1,0 +1,29 @@
+{
+  "openaccess": "0.1",
+  "name": "TipoffWatch",
+  "url": "https://tipoffwatch.com",
+  "operator": "https://logicsrc.com/.well-known/openprofile.md",
+  "redirect_uris": [
+    "https://tipoffwatch.com/api/v1/openaccess/callback"
+  ],
+  "jwks": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "JbWP5Id8HSmL",
+        "x": "jY4jnSHhpq6Lbr0bY6iN1l_G5xOSxziHCwnupwakP8g",
+        "alg": "EdDSA",
+        "use": "sig"
+      }
+    ]
+  },
+  "scopes": {},
+  "honours": [
+    "profullstack.com/all-access"
+  ],
+  "webhooks": "https://tipoffwatch.com/api/v1/openaccess/events",
+  "hubs": [
+    "https://openaccess.logicsrc.com"
+  ]
+}
