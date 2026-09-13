@@ -4,11 +4,18 @@ import { readFile } from 'node:fs/promises';
 
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
 
+const { Layout } = await import('../apps/web/src/views/Layout.jsx');
+
 const PUBLIC = new URL('../apps/web/public/', import.meta.url).pathname;
 const SOURCES = [
   '../apps/web/src/views/Layout.jsx',
   '../apps/web/src/app.js',
   '../apps/web/public/sw.js',
+].map((f) => new URL(f, import.meta.url).pathname);
+const LITERAL_ICON_SOURCES = [
+  '../apps/web/public/sw.js',
+  '../apps/web/src/lib/jsonld.js',
+  '../apps/web/public/icons/browserconfig.xml',
 ].map((f) => new URL(f, import.meta.url).pathname);
 
 /** Paths the server answers itself rather than reading straight from public/. */
@@ -123,34 +130,89 @@ describe('static asset references', () => {
   });
 });
 
-/** Width and height straight from the IHDR chunk, so checking a size needs no decoder. */
-async function pngDimensions(path) {
+/** The IHDR chunk, read directly: width, height and colour type, with no decoder. */
+async function pngHeader(path) {
   const b = Buffer.from(await readFile(path));
   expect(b.subarray(1, 4).toString()).toBe('PNG');
-  return [b.readUInt32BE(16), b.readUInt32BE(20)];
+  return { width: b.readUInt32BE(16), height: b.readUInt32BE(20), colourType: b[25] };
+}
+
+/**
+ * Every icon the site can hand a browser, read off the markup rather than
+ * restated here.
+ *
+ * The Layout is rendered, because its links go through assetUrl() and the
+ * source regex above needs a leading slash inside quotes and cannot see them.
+ * app.js contributes the manifest and VERSIONED_ICONS through their size
+ * arrays; the service worker, the JSON-LD and the Windows tile config by
+ * literal path. A size added to the Layout that nobody rendered would 404 on
+ * every page with every other test green, which is what this list is for.
+ */
+async function linkedIcons() {
+  const found = new Set();
+  const html = String(await Layout({ user: null, children: 'x' }).toString());
+  for (const m of html.matchAll(
+    /(?:href|src|content)="[^"]*?\/(icons\/[\w.-]+|logo\.\w+)(?:\?v=\w+)?"/g,
+  )) {
+    found.add(m[1]);
+  }
+  const app = await readFile(SOURCES[1], 'utf8');
+  for (const m of app.matchAll(
+    /\[([\d,\s]+)\]\.map\(\(s\) =>[^`]*?`icons\/([\w-]*)\$\{s\}x\$\{s\}([\w-]*)\.png`/g,
+  )) {
+    for (const s of m[1]
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean)) {
+      found.add(`icons/${m[2]}${s}x${s}${m[3]}.png`);
+    }
+  }
+  for (const file of LITERAL_ICON_SOURCES) {
+    for (const m of (await readFile(file, 'utf8')).matchAll(/\/(icons\/[\w.-]+\.png)/g)) {
+      found.add(m[1]);
+    }
+  }
+  return [...found].sort();
 }
 
 /*
  * The icon set is rendered from logo.svg by `bun run icons` (tools/icons) and
- * committed. The sizes below are the ones the Layout, the manifest and the
- * service worker link, spelled out again on purpose: the bug this guards is a
- * generator run that wrote a different set from the one the markup names, or
- * an icon replaced by hand at the wrong size, neither of which fails a build.
+ * committed. The bug this guards is a generator run that wrote a different set
+ * from the one the markup names, or an icon replaced by hand at the wrong size,
+ * neither of which fails a build.
  */
 describe('the generated icon set', () => {
-  const SIZED = [
-    ['icons/favicon-16.png', 16],
-    ['icons/favicon-32.png', 32],
-    ...[76, 120, 144, 152, 180].map((s) => [`icons/apple-touch-icon-${s}x${s}.png`, s]),
-    ...[48, 128, 192, 256, 384, 512].map((s) => [`icons/icon-${s}x${s}.png`, s]),
-    ...[192, 512].map((s) => [`icons/icon-${s}x${s}-maskable.png`, s]),
-    ['logo.png', 1024],
-  ];
-
   test('every icon the markup links exists at the size its name claims', async () => {
-    for (const [file, size] of SIZED) {
-      expect([file, ...(await pngDimensions(PUBLIC + file))]).toEqual([file, size, size]);
+    const linked = await linkedIcons();
+    // The header mark, the tab icon, a home-screen size, a manifest size and a
+    // maskable: if the list is shorter than this, the markup is not being read.
+    expect(linked).toEqual(
+      expect.arrayContaining([
+        'logo.svg',
+        'icons/favicon-32.png',
+        'icons/apple-touch-icon-180x180.png',
+        'icons/icon-512x512.png',
+        'icons/icon-192x192-maskable.png',
+      ]),
+    );
+    for (const file of linked) {
+      expect(existsSync(PUBLIC + file)).toBe(true);
+      const claimed = /(\d+)x(\d+)\.png$/.exec(file) ?? /favicon-(\d+)\.png$/.exec(file);
+      if (!claimed) continue;
+      const size = Number(claimed[1]);
+      const { width, height } = await pngHeader(PUBLIC + file);
+      expect([file, width, height]).toEqual([file, size, size]);
     }
+  });
+
+  test('the sizes looked at full size are lossless; the small ones may be palettes', async () => {
+    // Colour type 3 is a palette. The 512 is the og:image in every link preview
+    // and the Android splash, and logo.png is the bitmap offered to anyone who
+    // wants one; a 256-colour dither shows on the ball and the rim at that size.
+    for (const file of ['logo.png', 'icons/icon-512x512.png', 'icons/icon-512x512-maskable.png']) {
+      expect([file, (await pngHeader(PUBLIC + file)).colourType]).not.toEqual([file, 3]);
+    }
+    expect((await pngHeader(`${PUBLIC}logo.png`)).width).toBe(1024);
   });
 
   test('the mark is a self-contained vector with nothing that runs', async () => {

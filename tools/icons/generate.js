@@ -67,16 +67,41 @@ const master = await sharp(svg, { density: (72 * MASTER) / SOURCE })
   .png()
   .toBuffer();
 
-const png = (pipeline) => pipeline.png({ compressionLevel: 9, effort: 10 }).toBuffer();
+/*
+ * Two PNG encodings, chosen on purpose. Below 256px an icon is drawn at one
+ * image pixel per device pixel, where a 256-colour palette is invisible and a
+ * quarter of the bytes on the tab, home-screen and notification path. From
+ * 256px up the file is looked at full size -- the 512 is the og:image in every
+ * link preview and the Android splash -- and a palette dithers the gradients
+ * on the ball and the rim, so those are lossless.
+ *
+ * `palette` is spelled out both ways because sharp turns it ON when handed
+ * `effort` or `quality` without it, which is how a first cut of this file
+ * quantised every size, logo.png included, while reading as lossless.
+ */
+const LOSSLESS_FROM = 256;
+const png = (pipeline, size, lossless = size >= LOSSLESS_FROM) =>
+  pipeline
+    .png(
+      lossless
+        ? { compressionLevel: 9, adaptiveFiltering: true, palette: false }
+        : { compressionLevel: 9, palette: true, effort: 10 },
+    )
+    .toBuffer();
 
-const transparent = (size) =>
-  png(sharp(master).resize(size, size, { kernel: 'lanczos3', fit: 'contain', background: CLEAR }));
+const transparent = (size, lossless) =>
+  png(
+    sharp(master).resize(size, size, { kernel: 'lanczos3', fit: 'contain', background: CLEAR }),
+    size,
+    lossless,
+  );
 
 const flattened = (size) =>
   png(
     sharp(master)
       .resize(size, size, { kernel: 'lanczos3', fit: 'contain', background: GROUND })
       .flatten({ background: GROUND }),
+    size,
   );
 
 /** Where the ink is: its bounding box, its centre, and how far the furthest ink sits from that centre. */
@@ -150,6 +175,7 @@ async function maskable(size, art) {
     sharp({ create: { width: size, height: size, channels: 4, background: GROUND } }).composite([
       { input: mark, left, top },
     ]),
+    size,
   );
   const outside = await inkOutsideSafeCircle(out, size);
   if (outside > 0) {
@@ -160,7 +186,11 @@ async function maskable(size, art) {
 
 /**
  * An .ico that holds PNG entries, which every browser since Vista reads. Six
- * bytes of header, sixteen per entry, then the images back to back.
+ * bytes of header, sixteen per entry, then the images back to back. The
+ * directory declares each entry 32bpp, so the entries are the lossless RGBA
+ * encoding rather than the palette the small standalone sizes use: Windows'
+ * own loader documents PNG entries as 32bpp ARGB and takes the claim at its
+ * word.
  */
 function ico(entries) {
   const header = Buffer.alloc(6);
@@ -211,7 +241,9 @@ for (const size of MASKABLE) {
 await write(
   new URL('favicon.ico', ICONS),
   ico(
-    await Promise.all(FAVICON_ICO.map(async (size) => ({ size, image: await transparent(size) }))),
+    await Promise.all(
+      FAVICON_ICO.map(async (size) => ({ size, image: await transparent(size, true) })),
+    ),
   ),
 );
 await write(new URL('logo.png', PUBLIC), await transparent(SOURCE));
