@@ -395,6 +395,9 @@ const BroadcastMarkets = ({ event, marketChannels, managed = false }) => {
    * So a single market renders too, but only when there is something of theirs to
    * put in it: with no list, or nothing matched, this section would say exactly
    * what the tile above it already says, and the tile is the better place for it.
+   * The tile does NOT stand down in return: it stays in the fixture's facts
+   * whatever this section offers, so the channels are always named up there and
+   * playable down here.
    */
   const single = markets.length < 2;
   if (single && !marketChannels) return null;
@@ -2036,11 +2039,16 @@ export const EventPage = ({
             </span>
           </li>
         ) : null}
-        {/* One market stays a stat tile; more than one gets the picker below, so
-            the tile does not claim a single answer the fixture does not have. It
-            also stands down when the section below has the reader's own copy of
-            that channel to offer, rather than naming NBC twice on one page. */}
-        {event.broadcast && marketsOf(event).length < 2 && !marketChannels ? (
+        {/* The broadcaster is a fact about the fixture, so it sits with the other
+            facts whenever it is known. This tile used to stand down for a fixture
+            carried in more than one country, and again when "Where to watch" below
+            had the reader's own copy of the channel to offer -- which read as the
+            channel list having been taken out of the metadata and moved down into
+            the stream list. Both are kept: the tile names the channels up here, and
+            the section below is where they can be opened. With several markets the
+            tile names the widest one and says how many more there are, which is
+            what the picker below is for. */}
+        {event.broadcast ? (
           <li>
             <strong>{event.broadcast}</strong>
             {/* Named market, because a listing is only true somewhere. ESPN's are
@@ -2049,6 +2057,9 @@ export const EventPage = ({
                 at all to a reader in Ohio unless the page says so. */}
             <span>
               {event.broadcast_country ? `Watch on TV · ${event.broadcast_country}` : 'Watch on TV'}
+              {marketsOf(event).length > 1
+                ? ` · ${marketsOf(event).length - 1} more ${marketsOf(event).length === 2 ? 'country' : 'countries'}`
+                : ''}
             </span>
           </li>
         ) : null}

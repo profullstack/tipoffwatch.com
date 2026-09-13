@@ -80,14 +80,16 @@ describe('one market, and the reader has that channel', () => {
   });
 
   /*
-   * The tile said the same thing, and it said it first. Leaving both in place put
-   * "NBC" on the page twice within a screen of itself, once as a fact and once as
-   * the same fact with a button -- so the tile stands down when the section can
-   * actually offer something, and stays when it cannot.
+   * The tile used to stand down here, on the reasoning that "NBC" twice on one
+   * page was once too many. That read as the channel list having been removed from
+   * the fixture's metadata and moved down into the stream list, and Anthony asked
+   * for both: the tile names the channel with the other facts, the section below
+   * is where it can be opened.
    */
-  test('the stat tile stands down rather than naming NBC twice', async () => {
+  test('the stat tile stays alongside the section', async () => {
     const out = await html({ marketChannels: MINE });
-    expect(out).not.toContain('Watch on TV · United States');
+    expect(out).toContain('Watch on TV · United States');
+    expect(out).toContain('<h2>Where to watch</h2>');
   });
 });
 
@@ -139,8 +141,10 @@ describe('more than one market is untouched', () => {
     const out = await html({ event: many, marketChannels: null });
     expect(out).toContain('carried in 2 countries');
     expect(out).toContain('Pick yours');
-    // The tile never claimed a single answer for a multi-market fixture.
-    expect(out).not.toContain('Watch on TV · United States');
+    // The tile names the widest market and counts the rest, rather than claiming
+    // a single answer the fixture does not have -- or vanishing, which is how a
+    // multi-market game lost its channels from the metadata altogether.
+    expect(out).toContain('Watch on TV · United States · 1 more country');
   });
 
   test('and still counts what is on the line when something matched', async () => {
