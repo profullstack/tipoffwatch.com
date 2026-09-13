@@ -4536,6 +4536,9 @@ app.get('/manifest.webmanifest', (c) =>
     background_color: '#12161f',
     theme_color: '#12161f',
     icons: [
+      // The vector first: a launcher that reads SVG draws the icon crisp at any
+      // density, and one that does not falls through to the sizes.
+      { src: assetUrl('logo.svg'), sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
       ...[48, 128, 192, 256, 384, 512].map((s) => ({
         src: assetUrl(`icons/icon-${s}x${s}.png`),
         sizes: `${s}x${s}`,
@@ -4695,6 +4698,9 @@ const STATIC_FILES = [
   ['/vendor-player.js', 'vendor-player.js', 'text/javascript'],
   ['/vendor-player.css', 'vendor-player.css', 'text/css'],
   ['/sw.js', 'sw.js', 'text/javascript'],
+  // The mark. The header and the tab icon link the vector; the PNG icon set
+  // under /icons and logo.png are rendered from it by `bun run icons`.
+  ['/logo.svg', 'logo.svg', 'image/svg+xml'],
   ['/logo.png', 'logo.png', 'image/png'],
 ];
 

@@ -80,18 +80,36 @@ describe('static asset references', () => {
     }
   });
 
-  test('the header loads a sized icon, never the 1.4MB source image', async () => {
+  test('the header loads the vector mark, versioned, never a bitmap of it', async () => {
     const layout = await readFile(SOURCES[0], 'utf8');
-    // logo.png and favicon.png are the same 1254x1254 source; linking either from
-    // the header would download 1.4MB on every page to draw a 44px mark.
+    // logo.png is the 1024px render of the mark, there for anyone who wants a
+    // bitmap; linking it from the header would download it on every page to draw
+    // a 112px mark that the SVG draws crisper at a fifth of the bytes.
     expect(layout).not.toContain('"/logo.png"');
     expect(layout).not.toContain('"/favicon.png"');
     expect(layout).toContain('class="brand-logo"');
 
-    const headerIcon = /src="(\/icons\/[\w.-]+)"/.exec(layout);
-    expect(headerIcon).toBeTruthy();
-    const { size } = await Bun.file(PUBLIC + headerIcon[1].replace(/^\//, '')).stat();
+    // Through assetUrl, so a redrawn mark is a new URL rather than a week-old cache.
+    const header = /<a class="brand" href="\/">\s*<img\s+src=\{assetUrl\('logo\.svg'\)\}/.exec(
+      layout,
+    );
+    expect(header).toBeTruthy();
+    const { size } = await Bun.file(`${PUBLIC}logo.svg`).stat();
     expect(size).toBeLessThan(100_000);
+  });
+
+  test('the tab icon is the vector too, with the PNG sizes behind it for Safari', async () => {
+    const layout = await readFile(SOURCES[0], 'utf8');
+    const icons = [...layout.matchAll(/<link rel="icon" type="([\w/+]+)"/g)].map((m) => m[1]);
+    expect(icons[0]).toBe('image/svg+xml');
+    expect(icons).toContain('image/png');
+  });
+
+  test('the mark is served as an image, hashed with the other assets', async () => {
+    const app = await readFile(SOURCES[1], 'utf8');
+    // In STATIC_FILES rather than a route of its own: that list is what
+    // loadAssetVersions hashes, which is what makes assetUrl('logo.svg') versioned.
+    expect(app).toContain("['/logo.svg', 'logo.svg', 'image/svg+xml']");
   });
 
   test('the wordmark is gone but the name survives for screen readers', async () => {
@@ -102,5 +120,58 @@ describe('static asset references', () => {
     // fail the moment the alt text started naming the site being served.
     expect(layout).toContain('alt={brand.name}');
     expect(layout).not.toContain('<span>{brand.name}</span>');
+  });
+});
+
+/** Width and height straight from the IHDR chunk, so checking a size needs no decoder. */
+async function pngDimensions(path) {
+  const b = Buffer.from(await readFile(path));
+  expect(b.subarray(1, 4).toString()).toBe('PNG');
+  return [b.readUInt32BE(16), b.readUInt32BE(20)];
+}
+
+/*
+ * The icon set is rendered from logo.svg by `bun run icons` (tools/icons) and
+ * committed. The sizes below are the ones the Layout, the manifest and the
+ * service worker link, spelled out again on purpose: the bug this guards is a
+ * generator run that wrote a different set from the one the markup names, or
+ * an icon replaced by hand at the wrong size, neither of which fails a build.
+ */
+describe('the generated icon set', () => {
+  const SIZED = [
+    ['icons/favicon-16.png', 16],
+    ['icons/favicon-32.png', 32],
+    ...[76, 120, 144, 152, 180].map((s) => [`icons/apple-touch-icon-${s}x${s}.png`, s]),
+    ...[48, 128, 192, 256, 384, 512].map((s) => [`icons/icon-${s}x${s}.png`, s]),
+    ...[192, 512].map((s) => [`icons/icon-${s}x${s}-maskable.png`, s]),
+    ['logo.png', 1024],
+  ];
+
+  test('every icon the markup links exists at the size its name claims', async () => {
+    for (const [file, size] of SIZED) {
+      expect([file, ...(await pngDimensions(PUBLIC + file))]).toEqual([file, size, size]);
+    }
+  });
+
+  test('the mark is a self-contained vector with nothing that runs', async () => {
+    const svg = await readFile(`${PUBLIC}logo.svg`, 'utf8');
+    expect(svg).toContain('viewBox="0 0 1024 1024"');
+    // Served same-origin under the page's CSP, but an SVG is a document too:
+    // no script, no event handlers, no foreignObject, no reference off-site.
+    expect(svg).not.toMatch(/<script|<foreignObject|javascript:|\son[a-z]+=/i);
+    expect(svg).not.toMatch(/href="(?!#)/);
+  });
+
+  test('favicon.ico holds the small sizes as PNG entries', async () => {
+    const b = Buffer.from(await readFile(`${PUBLIC}icons/favicon.ico`));
+    expect(b.readUInt16LE(2)).toBe(1); // type: icon, not cursor
+    const sizes = [];
+    for (let i = 0; i < b.readUInt16LE(4); i++) {
+      const entry = 6 + 16 * i;
+      const offset = b.readUInt32LE(entry + 12);
+      expect(b.subarray(offset + 1, offset + 4).toString()).toBe('PNG');
+      sizes.push(b.readUInt8(entry));
+    }
+    expect(sizes).toEqual([16, 32, 48]);
   });
 });
