@@ -330,6 +330,8 @@ describe('the market picker renders', () => {
     // list an engine can enumerate and a reader copying it gets the names alone.
     expect(out).toContain('<ul class="market-channels"><li>CBS</li><li>Paramount+</li></ul>');
     expect(out).toContain('TNT Sports');
+    // The stat tile stays too, naming the widest market and counting the rest.
+    expect(out).toContain('Watch on TV · United States · 1 more country');
   });
 
   test('a single market stays a stat tile and grows no picker', async () => {
