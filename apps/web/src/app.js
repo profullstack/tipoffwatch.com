@@ -204,7 +204,9 @@ const crawlGateway = createGateway({
   // so '/leaderboard' alone would open the index and still charge for every
   // board on it. An agent that hits a 402 on the page ranking its own spend
   // cannot read the case for buying a pass.
-  openPaths: ['/llms.txt', '/skill.md', '/leaderboard', '/leaderboard/'],
+  // The OpenAccess descriptor is read by hubs with no cookie and no browser
+  // headers; charging for it means the site is never listed.
+  openPaths: ['/llms.txt', '/skill.md', '/leaderboard', '/leaderboard/', '/.well-known/openaccess.json'],
   /*
    * Lightpanda is a headless browser sold to scrapers, and on 2026-09-02 a
    * fleet of it fetched 8,500 pages here in a day from 104 countries. It is not
