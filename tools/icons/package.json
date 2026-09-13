@@ -1,0 +1,13 @@
+{
+  "name": "tipoffwatch-icons",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renders apps/web/public/logo.svg into the icon set the site links. Deliberately not a workspace: the native rasteriser stays out of the container.",
+  "scripts": {
+    "generate": "bun generate.js"
+  },
+  "devDependencies": {
+    "sharp": "0.35.4"
+  }
+}
