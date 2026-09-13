@@ -42,6 +42,7 @@ packages/auth   Magic link, passkeys, sessions.
 packages/payments CoinPay checkout, webhook verification, entitlements.
 packages/playlists A reader's own M3U line: import, probe, proxy, share.
 packages/radio  A reader's own SiriusXM: email+code sign-in, lineups, HLS proxy.
+tools/icons     Renders apps/web/public/logo.svg into the committed icon set: `bun run icons`.
 ```
 
 ## How reminders scale

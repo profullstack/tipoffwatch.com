@@ -36,12 +36,15 @@ export const Layout = (props) => {
         <meta name="theme-color" content="#12161f" />
         <link rel="manifest" href="/manifest.webmanifest" />
 
-        {/* Deliberately NOT linking the 1254x1254 /favicon.png the generator emits:
-          it is the same 1.4MB source image as the logo, and browsers would fetch it
-          on every page to draw a 16px tab icon. The generated sizes are the point. */}
+        {/* The mark itself, as vector, for the tab. Chrome, Firefox and Edge take
+          an SVG icon and draw it crisp at any density; Safari ignores it and takes
+          the PNG sizes below, which `bun run icons` renders from the same file.
+          Nothing links the 1024px logo.png: it is there for anyone who wants the
+          mark as a bitmap, not for a 16px tab. */}
         {/* Versioned like the stylesheet: icons sit behind a week-long cache, so
           redrawing one under its own name reaches nobody who has already visited.
           A new hash is a new URL, which is the only thing a cache respects. */}
+        <link rel="icon" type="image/svg+xml" sizes="any" href={assetUrl('logo.svg')} />
         <link rel="icon" type="image/png" sizes="32x32" href={assetUrl('icons/favicon-32.png')} />
         <link rel="icon" type="image/png" sizes="16x16" href={assetUrl('icons/favicon-16.png')} />
         {[180, 152, 144, 120, 76].map((s) => (
@@ -174,13 +177,16 @@ export const Layout = (props) => {
         </a>
         <header class="topbar">
           {/* The mark carries the name, so the wordmark beside it was saying the
-            same thing twice. alt keeps it for anyone not seeing the image. */}
+            same thing twice. alt keeps it for anyone not seeing the image.
+            The vector rather than a PNG size: the stylesheet draws it at 112px,
+            which on a phone is three hundred device pixels, and the 192px bitmap
+            it used to load was soft there. One file, every density. */}
           <a class="brand" href="/">
             <img
-              src="/icons/icon-192x192.png"
+              src={assetUrl('logo.svg')}
               alt={brand.name}
-              width="192"
-              height="192"
+              width="112"
+              height="112"
               class="brand-logo"
             />
           </a>
