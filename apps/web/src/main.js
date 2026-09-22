@@ -1,3 +1,4 @@
+import { watchDependencies } from '@profullstack/watchdog';
 import { assertCoinpayMerchantKey, config } from '@tipoff/config';
 import { close as closeDb, healthcheck, sql } from '@tipoff/db';
 import { migrate } from '@tipoff/db/migrate';
@@ -5,7 +6,6 @@ import { configurePayments } from '@tipoff/payments';
 import { closeQueues, connection, installSchedules } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
 import { app } from './app.js';
-import { startDbWatchdog } from './lib/db-watchdog.js';
 
 /*
  * Hand the payments package its database handle and settings.
@@ -87,50 +87,26 @@ if (config.roles.includes('web')) {
  * without anything going red.
  *
  * The probes deliberately go through the shared `sql` handle and the shared
- * `connection`, not a fresh one -- see db-watchdog.js for why a second connection
- * is the one thing guaranteed to look healthy during this failure. `healthcheck()`
- * runs `select 1`; `connection.ping()` is the Redis equivalent and is what hung on
+ * `connection` rather than a fresh one. That is the whole trick, and the package
+ * explains why: a second connection is the one thing guaranteed to look healthy
+ * while every reader gets nothing. `connection.ping()` is what hung on
  * 2026-09-13 and 2026-09-22 while `/healthz` went on answering 200.
  *
- * Read from the environment directly, the way DB_POOL_MAX already is, and every
- * knob has a working default so a service needs no new variables.
+ * Timings, the DB_WATCHDOG and REDIS_WATCHDOG knobs, and the reason Redis is
+ * allowed one more failure than the pool all live in the package now, so the
+ * three sibling sites cannot drift apart on the part that took an outage to work
+ * out.
  */
-const watchdogs = [
-  startDbWatchdog({
-    subject: 'the database pool',
-    probe: async () => {
-      if (!(await healthcheck())) throw new Error('select 1 did not come back');
-    },
-    intervalMs: Number(process.env.DB_WATCHDOG_INTERVAL_MS ?? 30_000),
-    timeoutMs: Number(process.env.DB_WATCHDOG_TIMEOUT_MS ?? 10_000),
-    failures: Number(process.env.DB_WATCHDOG_FAILURES ?? 3),
-  }),
-  startDbWatchdog({
-    subject: 'redis',
-    probe: async () => {
-      if ((await connection.ping()) !== 'PONG') throw new Error('PING did not come back');
-    },
-    /*
-     * One more failure than the pool gets, because a healthy Redis here is
-     * routinely unreachable for a while: it restarts by reading an RDB off the
-     * volume before it accepts anything, 26 seconds at the last measurement and
-     * 124 before the event streams were trimmed. Four 30-second probes puts the
-     * floor around two minutes, which a normal restart stays well under. Tripping
-     * early would be worse than useless -- boot does `preflight('redis')` and
-     * throws if Redis is absent, so an impatient watchdog turns one Redis deploy
-     * into a deploy loop on this service.
-     */
-    intervalMs: Number(process.env.REDIS_WATCHDOG_INTERVAL_MS ?? 30_000),
-    timeoutMs: Number(process.env.REDIS_WATCHDOG_TIMEOUT_MS ?? 10_000),
-    failures: Number(process.env.REDIS_WATCHDOG_FAILURES ?? 4),
-  }),
-];
+const watchdogs = watchDependencies({
+  postgres: () => healthcheck(),
+  redis: () => connection.ping(),
+});
 
 async function shutdown(signal) {
   console.log(`[main] ${signal}, draining`);
   // Before anything else: a shutdown closes these clients, and a watchdog probing
   // a closing pool would call a clean drain a wedge and exit(1) over the top of it.
-  for (const w of watchdogs) w.stop();
+  watchdogs.stop();
   // Stop taking new work before closing the pool, so an in-flight fan-out finishes
   // its claim rather than half-sending a batch.
   await Promise.allSettled([server?.stop(true), ...workers.map((w) => w.close())]);
