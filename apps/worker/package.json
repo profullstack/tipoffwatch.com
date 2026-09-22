@@ -7,9 +7,11 @@
     "start": "bun src/main.js"
   },
   "dependencies": {
+    "@profullstack/watchdog": "^0.2.0",
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
     "@tipoff/notify": "workspace:*",
+    "@tipoff/payments": "workspace:*",
     "@tipoff/queue": "workspace:*",
     "@tipoff/sports": "workspace:*"
   }
