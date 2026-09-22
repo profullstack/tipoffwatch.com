@@ -40,10 +40,26 @@ const defaults = {
   backoff: { type: 'exponential', delay: 2000 },
 };
 
+/**
+ * How many entries a queue's event stream keeps.
+ *
+ * BullMQ's own default is 10,000, which is a sensible count and a dangerous size:
+ * a `completed` event carries the processor's return value, so the stream costs
+ * 10,000 times whatever the biggest job hands back. When the live tick briefly
+ * returned the mirror's whole payload that came to 15GB in one key, which is what
+ * filled the volume and stopped Redis saving at all. These are for observability
+ * -- nothing here reads them back -- so a thousand is plenty, and the smaller
+ * ceiling means a future fat return value shows up as a slow query rather than an
+ * outage.
+ */
+export const EVENT_STREAM_MAX_LEN = 1000;
+
+export const streams = { events: { maxLen: EVENT_STREAM_MAX_LEN } };
+
 export const queues = Object.fromEntries(
   Object.entries(QUEUES).map(([k, name]) => [
     k,
-    new Queue(name, { connection, defaultJobOptions: defaults }),
+    new Queue(name, { connection, defaultJobOptions: defaults, streams }),
   ]),
 );
 
