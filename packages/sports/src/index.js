@@ -512,7 +512,15 @@ export async function syncLiveScores({ log = console.log } = {}) {
   // and nichedb's own live pass is what makes the answer minute-fresh.
   if (mirrorEnabled()) {
     const out = await nichedbsports.syncSince({ log });
-    return { leagues: 0, events: out.fixtures ?? 0, failed: 0, mirror: out };
+    /*
+     * Counts only. What a processor returns is written twice -- into the job hash
+     * and into the queue's `completed` event -- so handing back the mirror's whole
+     * payload put a copy of every synced row in Redis sixty times an hour. Nothing
+     * reads it: `bull:live-scores:events` reached 15GB of ~1.5MB entries, the RDB
+     * grew past what a background save could write to the volume, and each failed
+     * save left a multi-GB temp file behind until the disk filled.
+     */
+    return { leagues: 0, events: out.fixtures ?? 0, failed: 0 };
   }
   const leagues = await q.leaguesWithLiveGames();
   if (leagues.length === 0) return { leagues: 0, events: 0 };
@@ -568,7 +576,6 @@ export async function syncPlays({ log = console.log, limit = 8 } = {}) {
       plays: out.plays ?? 0,
       recaps: out.recaps ?? 0,
       failed: 0,
-      mirror: out,
     };
   }
   // A reserved share for the catch-up reads, but only while there is live work to
