@@ -63,6 +63,17 @@ describe('a row on the reader own line', () => {
     expect(out).not.toContain('vlc-x-callback');
   });
 
+  test('offers the stream on nixamp, in a new tab', async () => {
+    const out = await render(ChannelRow({ ch: OWN }));
+    expect(out).toContain(`href="https://nixamp.com/?link=${encodeURIComponent(OWN.url)}"`);
+    expect(out).toContain('>nixamp</a>');
+  });
+
+  test('a managed row gets no nixamp link either', async () => {
+    const out = await render(ChannelRow({ ch: { ...OWN, providerManaged: true } }));
+    expect(out).not.toContain('nixamp.com');
+  });
+
   test('a managed LIST is still managed when the flag comes as a prop', async () => {
     const out = await render(ChannelRow({ ch: OWN, managed: true }));
     expect(out).not.toContain('data-copy-url');

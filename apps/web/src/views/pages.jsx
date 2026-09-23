@@ -122,6 +122,10 @@ function playerLinks(url) {
     // The documented VLC-iOS form; VLC on Android registers the same handler.
     vlc: `vlc-x-callback://x-callback-url/stream?url=${target}`,
     infuse: `infuse://x-callback-url/play?url=${target}`,
+    // Not an app scheme but a page: nixamp.com reads ?link= and plays it, or
+    // offers to put it live on a server when the browser cannot. So unlike the
+    // two above it works on a desktop, and app.js leaves it alone.
+    nixamp: `https://nixamp.com/?link=${target}`,
   };
 }
 
@@ -256,7 +260,7 @@ export const ChannelRow = ({ ch, managed = false }) => {
       <span class="own-channel-actions">
         {mine ? <PlayButton channelId={mine} /> : null}
         {/* A managed list is OUR line, bought with a pass. It plays here and
-            nowhere else: every one of these three hands over the stream address,
+            nowhere else: every one of these hands over the stream address,
             which on a managed list is our reseller credential. Same shape as
             SharedChannelRow, for the same reason. */}
         {managedRow ? null : (
@@ -266,6 +270,15 @@ export const ChannelRow = ({ ch, managed = false }) => {
             </a>
             <a class="ghost small-btn" href={playerLinks(ch.url).infuse}>
               Infuse
+            </a>
+            <a
+              class="ghost small-btn"
+              href={playerLinks(ch.url).nixamp}
+              target="_blank"
+              rel="noopener"
+              title="Open this in nixamp"
+            >
+              nixamp
             </a>
             {mine ? (
               <a class="ghost small-btn" href={`/my/channels/${mine}/playlist.m3u`}>
