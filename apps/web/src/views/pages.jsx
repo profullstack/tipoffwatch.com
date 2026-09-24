@@ -559,8 +559,8 @@ const BroadcastMarkets = ({ event, marketChannels, managed = false }) => {
   );
 };
 
-export const Landing = ({ user, today, vapidKey }) => (
-  <Layout title={null} user={user} vapidKey={vapidKey} canonical="/">
+export const Landing = ({ user, today }) => (
+  <Layout title={null} user={user} canonical="/">
     <section class="hero">
       <h1>{brand.copy.heroTitle}</h1>
       <p>{brand.copy.heroBody}</p>
@@ -1405,8 +1405,8 @@ const countPhrase = (follows, counts) => {
   return parts.join(' and ') || 'nothing';
 };
 
-export const Following = ({ user, events, follows, cleared, vapidKey, calendarUrl }) => (
-  <Layout title="My games" user={user} vapidKey={vapidKey}>
+export const Following = ({ user, events, follows, cleared, calendarUrl }) => (
+  <Layout title="My games" user={user}>
     <h1>{brand.copy.mine}</h1>
 
     {/* Rendered always and revealed by script once it knows the real state, so the
@@ -3665,11 +3665,10 @@ export const NotFound = ({ user }) => (
  * answer, and telling those apart otherwise means DevTools. This runs the same
  * calls the toggle makes, one at a time, and prints what each one did.
  */
-export const PushCheck = ({ user, vapidKey }) => (
+export const PushCheck = ({ user }) => (
   <Layout
     title="Notification check"
     user={user}
-    vapidKey={vapidKey}
     canonical="/push-check"
     script={assetUrl('push-check.js')}
   >

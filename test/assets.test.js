@@ -36,7 +36,11 @@ const ROUTE_SERVED = new Map([
 const PACKAGE_SERVED = new Map([
   ['/vendor-multiview.js', '@profullstack/multiview'],
   ['/vendor-multiview.css', '@profullstack/multiview/multiview.css'],
+  ['/vendor-notifications.js', '@profullstack/notifications/client'],
 ]);
+
+/** Resolved from the web app, whose dependencies the serving route resolves through. */
+const WEB_APP = new URL('../apps/web/', import.meta.url).pathname;
 
 async function referencedPaths() {
   const found = new Set();
@@ -67,7 +71,7 @@ describe('static asset references', () => {
     const missing = [...referenced].filter((p) => {
       if (PACKAGE_SERVED.has(p)) {
         try {
-          return !existsSync(Bun.fileURLToPath(import.meta.resolve(PACKAGE_SERVED.get(p))));
+          return !existsSync(Bun.resolveSync(PACKAGE_SERVED.get(p), WEB_APP));
         } catch {
           return true;
         }

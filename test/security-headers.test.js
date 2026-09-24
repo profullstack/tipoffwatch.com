@@ -1,25 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
 
-const { buildPolicy, SECURITY_HEADERS, vapidScript } = await import(
-  '../apps/web/src/lib/security-headers.js'
-);
+const { buildPolicy, SECURITY_HEADERS } = await import('../apps/web/src/lib/security-headers.js');
 const { Layout } = await import('../apps/web/src/views/Layout.jsx');
 
-/** A real VAPID public key shape: 65 bytes, base64url. */
-const KEY =
-  'BDU8swQUlpZBiNRdnbaSMwmSuLhWzJXTX8QAJ0lSpNzPnnFsmwZbXpSTFqLrJDLPzYgIeUuMTQCzYtDcqLRqUCQ';
-
-/*
- * Built for a known key rather than read off the shipped header. `bun test`
- * shares one module registry across files, so whichever file imports config first
- * decides what VAPID_PUBLIC_KEY was -- and a test that reads the live policy
- * passes alone and fails in a full run for reasons that have nothing to do with
- * the policy.
- */
-const csp = buildPolicy(KEY);
+const csp = buildPolicy();
 
 describe('security headers', () => {
   test.each([
@@ -48,30 +34,20 @@ describe('security headers', () => {
 
 describe('the CSP matches the page it is protecting', () => {
   /*
-   * The whole point of hashing rather than nonce-ing is that signed-out pages are
-   * cached byte-identical in Redis, so a per-request nonce would disagree with the
-   * header on every hit but the first. The cost of a hash is that it stops
-   * matching the moment somebody edits the markup -- and a CSP that silently stops
-   * matching takes push notifications down with it. So: hash what actually renders.
+   * There is no inline script to allow. The push key used to be one, hashed into
+   * this header; the browser now fetches it from /api/push/vapid-public-key, so a
+   * key that changes (or was missing when a page was cached) cannot desynchronise
+   * the page from its policy.
    */
-  test('the hash in script-src is the hash of the inline script on the page', async () => {
-    const out = (await Layout({ user: null, vapidKey: KEY, children: 'x' }).toString()).toString();
-
-    const inline = out.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-    expect(inline).toBe(vapidScript(KEY));
-
-    const hash = `'sha256-${createHash('sha256').update(inline, 'utf8').digest('base64')}'`;
-    expect(csp).toContain(hash);
+  test('the page carries no inline script and the policy no hash', async () => {
+    const out = (await Layout({ user: null, children: 'x' }).toString()).toString();
+    expect(out).not.toMatch(/<script>/);
+    expect(out).not.toContain('__VAPID');
+    expect(csp).not.toContain('sha256-');
   });
 
-  test('and the header the site actually sends is built the same way', () => {
-    expect(SECURITY_HEADERS['content-security-policy']).toStartWith("default-src 'self';");
-  });
-
-  test('with push unconfigured there is no hash rather than a broken one', () => {
-    const bare = buildPolicy(null);
-    expect(bare).not.toContain('sha256-');
-    expect(bare).not.toContain('unsafe-inline');
+  test('and the header the site actually sends is the same policy', () => {
+    expect(SECURITY_HEADERS['content-security-policy']).toBe(csp);
   });
 
   test('and nothing else may go inline', () => {

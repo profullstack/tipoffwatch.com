@@ -1,32 +1,12 @@
-import { createHash } from 'node:crypto';
-import { config } from '@tipoff/config';
-
-/**
- * The one inline script on the whole site, as a string.
- *
- * It lives here rather than inside the Layout because the Content-Security-Policy
- * below has to hash exactly these bytes, and a policy that hashes a copy of the
- * markup is a policy that silently stops matching the first time somebody edits a
- * space into the template. One function, called by both, so they cannot drift --
- * and a test asserts the rendered page really does contain what was hashed.
- *
- * The alternative was a nonce, which cannot work here: signed-out pages are
- * rendered once and served from Redis to everyone, so a nonce baked into the
- * cached HTML would disagree with the header on every subsequent request.
- */
-export const vapidScript = (key) => `window.__VAPID = "${key}";`;
-
-/** CSP source expression for an inline script's contents. */
-const sha256 = (src) => `'sha256-${createHash('sha256').update(src, 'utf8').digest('base64')}'`;
-
 /*
  * What each directive is here to permit, so the next person to add a resource
  * knows which line to widen and why it was narrow.
  *
- *   script-src   our own bundles, the analytics beacon, and the VAPID line above.
- *                No 'unsafe-inline': there is exactly one inline script and it is
- *                hashed, so adding a second one fails loudly in development
- *                rather than quietly widening the policy for everybody.
+ *   script-src   our own bundles and the analytics beacon. No 'unsafe-inline' and
+ *                no hashes: there is no inline script at all (the push key used
+ *                to be one; the browser now fetches it from
+ *                /api/push/vapid-public-key), so adding one fails loudly in
+ *                development rather than quietly widening the policy.
  *   style-src    'unsafe-inline' is NOT here either -- the stylesheet is a file
  *                and no view emits a style attribute. Google Fonts is named
  *                because styles.css @imports it.
@@ -43,21 +23,13 @@ const sha256 = (src) => `'sha256-${createHash('sha256').update(src, 'utf8').dige
  *                form that posts anywhere else is an injection.
  */
 /**
- * The policy, as a function of the one key that varies.
- *
- * A parameter rather than a read of `config` inside, so a test can build the
- * policy for a known key instead of depending on whether it happened to set the
- * environment before something else imported config -- which in a shared module
- * registry is decided by test file ordering.
- *
- * Every page that carries the inline script carries `config.push.publicKey`, so
- * one hash covers all of them. With push unconfigured there is no inline script
- * and no hash, and the policy is stricter rather than broken.
+ * The policy. A function rather than a constant so a test builds exactly what the
+ * header carries.
  */
-export const buildPolicy = (publicKey) =>
+export const buildPolicy = () =>
   [
     "default-src 'self'",
-    `script-src 'self' https://crawlproof.com${publicKey ? ` ${sha256(vapidScript(publicKey))}` : ''}`,
+    "script-src 'self' https://crawlproof.com",
     "style-src 'self' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     /*
@@ -100,7 +72,7 @@ export const buildPolicy = (publicKey) =>
  * discourage submitting to it, and getting off it takes months.
  */
 export const SECURITY_HEADERS = {
-  'content-security-policy': buildPolicy(config.push.publicKey),
+  'content-security-policy': buildPolicy(),
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'x-content-type-options': 'nosniff',
   // Redundant with frame-ancestors for anything modern, and the whole policy for
