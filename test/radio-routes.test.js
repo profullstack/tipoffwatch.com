@@ -124,10 +124,29 @@ describe('radio routes', () => {
 
   test('the bundle asks the house player for the audio bar', async () => {
     const entry = await read('../apps/web/src/client/radio-entry.js');
-    expect(entry).toContain("import { createPlayer } from '@profullstack/player'");
+    // Matched on the specifier and the named import rather than the whole
+    // import line. The line was asserted verbatim, so adding attachAds beside
+    // createPlayer failed a test whose point — the bar comes from the house
+    // player, not a local copy — was never in question. Asserting the exact
+    // text of an import makes every future addition to it look like a
+    // regression.
+    expect(entry).toContain("from '@profullstack/player'");
+    expect(entry).toContain('createPlayer');
     expect(entry).toContain('audio: true');
     expect(entry).toContain("kind: 'hls'");
     expect(entry).toContain('live: true');
+  });
+
+  test('the bar carries ad breaks, and tears them down with the station', async () => {
+    const entry = await read('../apps/web/src/client/radio-entry.js');
+    // attachAds is the house player's break machinery; a local reimplementation
+    // is the thing worth catching here.
+    expect(entry).toContain('attachAds');
+    expect(entry).toContain("fetch('/api/ads/next'");
+    // The controller holds a timer and listeners on the media element. A
+    // station switched twice would otherwise leave two running against
+    // elements nobody can hear.
+    expect(entry).toContain('ads.destroy()');
   });
 });
 
