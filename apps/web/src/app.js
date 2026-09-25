@@ -78,6 +78,7 @@ import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
 import { RadioPage, RadioSidesFragment } from './views/radio.jsx';
 import { WatchChannel, WatchIndex } from './views/watch.jsx';
+import { nextAdvert } from './lib/ads.js';
 
 export const app = new Hono();
 
@@ -375,6 +376,19 @@ async function cached(c, key, ttl, produce) {
 }
 
 app.get('/healthz', (c) => c.text('ok'));
+
+/**
+ * An advert for a break in the radio bar.
+ *
+ * Unauthenticated on purpose: the listeners who get adverts are the ones who
+ * have not signed in. Nothing about which advert plays is decided here — that
+ * is the ad network's auction, and it meters the impression — so this must not
+ * cache or ask twice for one break.
+ */
+app.get('/api/ads/next', async (c) => {
+  c.header('cache-control', 'no-store');
+  return c.json(await nextAdvert(c.req.query('kind') ?? null));
+});
 
 /**
  * How far back a results list reaches, in days.

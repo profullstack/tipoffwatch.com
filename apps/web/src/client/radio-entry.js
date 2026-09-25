@@ -12,7 +12,7 @@
  * it. app.js injects the tag on the first press.
  */
 
-import { createPlayer } from '@profullstack/player';
+import { attachAds, createPlayer } from '@profullstack/player';
 
 /** Can this browser play HLS through Media Source? iPhone Safari cannot, and has no fallback we can offer. */
 function supported() {
@@ -66,6 +66,15 @@ function mediaSession(media, meta, onStop) {
  *   onStop: () => void}} meta
  * @returns {() => void} teardown
  */
+/**
+ * How often a break comes round.
+ *
+ * Five minutes is the house default. Radio convention is far more frequent than
+ * this, but the inventory is one five-second spot and the listener asked for a
+ * station, not an ad slot.
+ */
+const AD_EVERY_SECONDS = 300;
+
 function play(stage, src, meta) {
   const media = document.createElement('audio');
   media.autoplay = true;
@@ -82,6 +91,32 @@ function play(stage, src, meta) {
     // A live station has no position worth remembering.
     mediaId: undefined,
   });
+  // Adverts between songs on a live station.
+  //
+  // attachAds is the house player's own break machinery, so nothing about
+  // scheduling or playback is reimplemented here. What it needs is a source of
+  // creatives, and that is the server route: it proxies the ad network, which
+  // runs the auction and meters the impression.
+  //
+  // A break that cannot be filled does not happen. Every failure path on the
+  // server answers with a null url and `next` returns null, which attachAds
+  // treats as "no advert" — the station keeps playing, which is the only
+  // acceptable outcome on something live.
+  const ads = attachAds(stage, media, {
+    everySeconds: AD_EVERY_SECONDS,
+    next: async () => {
+      try {
+        const answer = await fetch('/api/ads/next', { headers: { accept: 'application/json' } });
+        if (!answer.ok) return null;
+        const body = await answer.json();
+        return body && typeof body.url === 'string' ? { url: body.url, kind: body.kind } : null;
+      } catch {
+        return null;
+      }
+    },
+    onError: (error) => console.warn('advert failed', error),
+  });
+
   const clearSession = mediaSession(media, meta, meta.onStop);
   media.addEventListener('error', () => {
     // hls.js reports its own failures through the bar; this is the element
@@ -92,6 +127,10 @@ function play(stage, src, meta) {
   });
   return () => {
     clearSession();
+    // Before the element goes: the break controller holds a timer and listeners
+    // on this media element, and a station switched twice would otherwise leave
+    // two of them running against elements nobody can see.
+    ads.destroy();
     player.destroy();
     media.remove();
   };
