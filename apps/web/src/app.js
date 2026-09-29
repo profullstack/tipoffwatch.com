@@ -3673,6 +3673,22 @@ async function grantStreamSeat(tx, { meta, payment }) {
   const offerId = Number(meta.offer_id);
   if (!Number.isFinite(eventId)) return null;
 
+  /*
+   * A payment that already bought its seat must not claim a second one.
+   *
+   * CoinPay sends payment.confirmed AND payment.forwarded for one payment, both
+   * settle, and either can be retried. The entitlement insert below is a no-op the
+   * second time, but the seat claim is an UPDATE that counts -- so without this,
+   * every payment would sell two seats and a sold-out fixture would turn real
+   * buyers away. Same transaction as the claim, so two deliveries cannot both miss.
+   */
+  if (payment?.id) {
+    const [held] = await tx`
+      select event_id, expires_at from entitlements where payment_id = ${payment.id}
+    `;
+    if (held) return { eventId: Number(held.event_id), expiresAt: held.expires_at, replayed: true };
+  }
+
   if (Number.isFinite(offerId) && !(await q.claimOfferSeat(tx, offerId))) return null;
 
   const startsAt = await q.eventStartsAt(tx, eventId);
@@ -3714,7 +3730,8 @@ app.post('/api/webhooks/coinpay', async (c) => {
    * the entitlement are one decision -- which is what stops two buyers being sold
    * the last seat at once.
    */
-  const result = await pay.settleWebhook(JSON.parse(raw), {
+  const payload = JSON.parse(raw);
+  const result = await pay.settleWebhook(payload, {
     grant: async (tx, { meta, payment }) => {
       /*
        * Two things are sold through one webhook, and only the metadata says which.
@@ -3781,7 +3798,10 @@ app.post('/api/webhooks/coinpay', async (c) => {
    * here leaves /live showing "set up my channels", which calls the same thing.
    */
   if (result.granted && result.result?.kind === live.LIVE_PASS_KIND) {
-    const meta = JSON.parse(raw)?.metadata ?? {};
+    // Through readWebhook, never `payload.metadata`: that is the flat shape, and on
+    // every real (nested) webhook it is undefined, so the line was never set up and
+    // the log named nobody.
+    const { meta } = pay.readWebhook(payload);
     try {
       const outcome = await live.ensureLine(meta.user_id);
       console.log(`[live] pass for ${meta.user_id}: ${outcome.done?.join(', ') || outcome.reason}`);
