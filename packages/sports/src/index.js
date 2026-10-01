@@ -376,6 +376,8 @@ export async function syncLeague(
     provider_key: f.providerKey,
     league_id: league.id,
     starts_at: f.startsAt,
+    time_known: f.timeKnown !== false,
+    precision: f.timeKnown === false ? 'day' : 'minute',
     state: f.state,
     status_detail: f.statusDetail,
     name: f.name,

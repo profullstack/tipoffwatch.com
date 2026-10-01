@@ -934,7 +934,11 @@ function normaliseEvent(e, providerKey) {
   const competitors = comp.competitors ?? [];
   const side = (which) => {
     const c = competitors.find((x) => x.homeAway === which);
-    if (!c?.team) return null;
+    // An undecided playoff slot is a competitor with a negative id named "TBD" --
+    // the same marker isUndrawn reads for tennis. Not a team anyone can follow.
+    if (!c?.team || Number(c.team.id) < 0 || Number(c.id) < 0 || c.team.displayName === 'TBD') {
+      return null;
+    }
     const t = c.team;
     return {
       // Same league scoping as fetchTeams -- these must agree or a fixture's teams
@@ -953,6 +957,10 @@ function normaliseEvent(e, providerKey) {
 
   const home = side('home');
   const away = side('away');
+  // Both sides undecided: a bracket slot, not a fixture. It comes back with names
+  // once the series before it is settled. Only for games that HAVE two sides --
+  // a race or a fight card legitimately has neither.
+  if (!home && !away && competitors.length === 2) return null;
 
   // Broadcasters come grouped by market (national / home / away). Flattened and
   // de-duplicated, because "MLB.TV, Tigers.TV" is what a viewer wants to read.
@@ -976,6 +984,8 @@ function normaliseEvent(e, providerKey) {
   return {
     providerKey: `${providerKey}/${e.id}`,
     startsAt: new Date(e.date),
+    // false when ESPN has a date and no slot yet; the time is then padded midnight.
+    timeKnown: comp.timeValid !== false,
     state,
     // Free -- it rides on this same response -- and it has to be taken here or not
     // at all, because the field is gone by the time the game is worth reading about.
