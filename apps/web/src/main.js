@@ -3,7 +3,7 @@ import { assertCoinpayMerchantKey, config } from '@tipoff/config';
 import { close as closeDb, healthcheck, sql } from '@tipoff/db';
 import { migrate } from '@tipoff/db/migrate';
 import { configurePayments } from '@tipoff/payments';
-import { closeQueues, connection, installSchedules } from '@tipoff/queue';
+import { closeQueues, connection, installSchedules, pruneHistory } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
 import { app } from './app.js';
 
@@ -67,6 +67,9 @@ let workers = [];
 if (config.roles.includes('worker')) {
   await preflight('redis', () => installSchedules());
   workers = startWorkers();
+  // History written under the old, looser retention -- 385MB of it in
+  // bull:sync:events on 2026-10-01. Paced in small steps and never awaited.
+  pruneHistory().catch((err) => console.error('[queue] retention pass', err));
 }
 
 let server;

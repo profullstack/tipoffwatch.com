@@ -13,6 +13,7 @@ import {
 } from '@tipoff/sports';
 import { Worker } from 'bullmq';
 import { connection, QUEUES, queues, streams } from './index.js';
+import { boundedReturn } from './retention.js';
 
 const log = (...a) => console.log('[worker]', ...a);
 
@@ -213,12 +214,14 @@ async function runBatch(job) {
 /* ------------------------------------------------------------------- boot --- */
 
 export function startWorkers({ concurrency = {} } = {}) {
+  // Every processor's return value is stored twice in Redis; see boundedReturn.
+  const cap = (name, processor) => boundedReturn(name, processor, { log });
   const workers = [
-    new Worker(QUEUES.scan, runScan, { connection, streams, concurrency: 1 }),
+    new Worker(QUEUES.scan, cap(QUEUES.scan, runScan), { connection, streams, concurrency: 1 }),
 
     new Worker(
       QUEUES.sync,
-      async (job) => {
+      cap(QUEUES.sync, async (job) => {
         // Explicit rather than a ternary chain: three kinds share this queue so
         // that concurrency 1 serialises them, and an unknown kind must not
         // silently fall through to the most expensive one.
@@ -239,7 +242,7 @@ export function startWorkers({ concurrency = {} } = {}) {
         // Everything that is not ESPN: tv, film, anime, music, spaceflight.
         out.catalog = await syncBrandCatalog({ force: Boolean(job.data?.force) });
         return out;
-      },
+      }),
       {
         connection,
         streams,
@@ -249,29 +252,45 @@ export function startWorkers({ concurrency = {} } = {}) {
 
     // Scores only; concurrency 1 because it already fans out internally and a
     // second overlapping tick would just refetch the same leagues.
-    new Worker(QUEUES.live, () => syncLiveScores(), { connection, streams, concurrency: 1 }),
+    new Worker(
+      QUEUES.live,
+      cap(QUEUES.live, () => syncLiveScores()),
+      { connection, streams, concurrency: 1 },
+    ),
 
     // Concurrency 1: these responses are large and the point is to stagger them.
-    new Worker(QUEUES.plays, () => syncPlays(), { connection, streams, concurrency: 1 }),
+    new Worker(
+      QUEUES.plays,
+      cap(QUEUES.plays, () => syncPlays()),
+      { connection, streams, concurrency: 1 },
+    ),
 
     // Concurrency 1, and the poller itself is sequential inside. These are other
     // people's subscriptions: several ~800KB pulls at once from one datacenter IP
     // is the traffic pattern that gets a line cut off.
-    new Worker(QUEUES.playlists, () => refreshDuePlaylists(), {
-      connection,
-      streams,
-      concurrency: 1,
-    }),
+    new Worker(
+      QUEUES.playlists,
+      cap(QUEUES.playlists, () => refreshDuePlaylists()),
+      {
+        connection,
+        streams,
+        concurrency: 1,
+      },
+    ),
 
     // Down only: lapsed managed lists are removed or handed back. Nothing here
     // talks to the line provider.
-    new Worker(QUEUES.livePasses, () => reconcileLapsed({ log }), {
-      connection,
-      streams,
-      concurrency: 1,
-    }),
+    new Worker(
+      QUEUES.livePasses,
+      cap(QUEUES.livePasses, () => reconcileLapsed({ log })),
+      {
+        connection,
+        streams,
+        concurrency: 1,
+      },
+    ),
 
-    new Worker(QUEUES.fanout, runFanout, {
+    new Worker(QUEUES.fanout, cap(QUEUES.fanout, runFanout), {
       connection,
       streams,
       concurrency: concurrency.fanout ?? 4,
@@ -279,7 +298,7 @@ export function startWorkers({ concurrency = {} } = {}) {
 
     // The delivery tier is the one that scales horizontally. Raising this is the
     // first lever if reminders start landing late under load.
-    new Worker(QUEUES.batch, runBatch, {
+    new Worker(QUEUES.batch, cap(QUEUES.batch, runBatch), {
       connection,
       streams,
       concurrency: concurrency.batch ?? 16,

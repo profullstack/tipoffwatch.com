@@ -823,6 +823,27 @@ async function sportsdbListings(events) {
 }
 
 /**
+ * A mirror pass's counts, for a job's return value: every scalar it reports,
+ * and none of its `result` or `cursor`.
+ *
+ * What a processor returns is written twice in Redis -- the job hash and the
+ * queue's `completed` event -- and nothing reads it back. The live tick learned
+ * that in #78; sync-near and sync-all kept returning the whole pass, ~18MB a
+ * completion, and by 2026-10-01 `bull:sync:events` held 385MB in 485 entries.
+ */
+export function mirrorCounts(mirror) {
+  if (!mirror || typeof mirror !== 'object') return mirror;
+  return Object.fromEntries(
+    Object.entries(mirror).filter(
+      ([, v]) =>
+        v === null ||
+        typeof v !== 'object' ||
+        (Array.isArray(v) && v.length <= 50 && v.every((x) => typeof x === 'string')),
+    ),
+  );
+}
+
+/**
  * Refresh the fixtures that are about to be played, and nothing else.
  *
  * The full sweep asks all 359 leagues for a fortnight and costs two requests each,
@@ -862,7 +883,13 @@ export async function syncNear({ log = console.log, hours = config.sports.nearWi
     } catch (err) {
       log(`[near] broadcast pass failed: ${err.message}`);
     }
-    return { leagues: 0, events: mirror.fixtures ?? 0, failed: 0, broadcasts, mirror };
+    return {
+      leagues: 0,
+      events: mirror.fixtures ?? 0,
+      failed: 0,
+      broadcasts,
+      mirror: mirrorCounts(mirror),
+    };
   }
 
   const leagues = await q.leaguesWithFixturesBetween({ from, to });
@@ -936,7 +963,7 @@ export async function syncAll({
       events: mirror.fixtures ?? 0,
       failed: 0,
       broadcasts,
-      mirror,
+      mirror: mirrorCounts(mirror),
     };
   }
   const leagues = await q.listLeagues({ limit: 1000 });
