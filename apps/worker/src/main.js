@@ -10,7 +10,7 @@ import { config } from '@tipoff/config';
 import { close as closeDb, healthcheck, sql } from '@tipoff/db';
 import { migrate } from '@tipoff/db/migrate';
 import { configurePayments } from '@tipoff/payments';
-import { closeQueues, connection, installSchedules } from '@tipoff/queue';
+import { closeQueues, connection, installSchedules, pruneHistory } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
 
 /*
@@ -27,6 +27,8 @@ configurePayments({ sql, coinpay: config.coinpay, siteUrl: config.siteUrl });
 await migrate();
 await installSchedules();
 const workers = startWorkers();
+// History written under the old, looser retention. Paced, never awaited.
+pruneHistory().catch((err) => console.error('[queue] retention pass', err));
 
 /*
  * The same two watchdogs the combined entry runs.

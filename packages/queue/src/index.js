@@ -3,6 +3,9 @@ import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import { pruneQueues, retention, streams } from './retention.js';
+
+export { EVENT_STREAM_MAX_LEN, streams } from './retention.js';
 
 /**
  * BullMQ requires `maxRetriesPerRequest: null` on the connection it blocks on, or
@@ -33,28 +36,17 @@ export const QUEUES = {
   livePasses: 'live-pass-reconcile',
 };
 
-const defaults = {
-  removeOnComplete: { age: 3600, count: 5000 },
-  removeOnFail: { age: 86400 },
+/*
+ * Retention lives in retention.js. BullMQ merges these into every add()
+ * shallowly, so an add that passes its own options (a repeat, a jobId, a
+ * delay) still inherits removeOnComplete/removeOnFail unless it names them --
+ * and none does.
+ */
+export const defaults = {
+  ...retention,
   attempts: 5,
   backoff: { type: 'exponential', delay: 2000 },
 };
-
-/**
- * How many entries a queue's event stream keeps.
- *
- * BullMQ's own default is 10,000, which is a sensible count and a dangerous size:
- * a `completed` event carries the processor's return value, so the stream costs
- * 10,000 times whatever the biggest job hands back. When the live tick briefly
- * returned the mirror's whole payload that came to 15GB in one key, which is what
- * filled the volume and stopped Redis saving at all. These are for observability
- * -- nothing here reads them back -- so a thousand is plenty, and the smaller
- * ceiling means a future fat return value shows up as a slow query rather than an
- * outage.
- */
-export const EVENT_STREAM_MAX_LEN = 1000;
-
-export const streams = { events: { maxLen: EVENT_STREAM_MAX_LEN } };
 
 export const queues = Object.fromEntries(
   Object.entries(QUEUES).map(([k, name]) => [
@@ -256,6 +248,14 @@ export async function installSchedules({ log = console.log } = {}) {
 const dayStamp = () => new Date().toISOString().slice(0, 10);
 const hourStamp = () => new Date().toISOString().slice(0, 13);
 const minuteStamp = () => new Date().toISOString().slice(0, 16).replace(':', '-');
+
+/**
+ * Bring what is already in Redis inside the retention caps: the options above
+ * only govern jobs added from now on. Idempotent; see pruneQueues.
+ */
+export function pruneHistory({ log = console.log } = {}) {
+  return pruneQueues(Object.values(queues), { log });
+}
 
 export async function closeQueues() {
   await Promise.all(Object.values(queues).map((q) => q.close()));
