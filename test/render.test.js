@@ -131,7 +131,7 @@ test('the kickoff time carries its own separators', async () => {
   expect(components).toContain("{' \u00b7 '}");
   expect(components).toContain('data-tz-abbr');
   // Below the matchup, not squeezed into the middle column.
-  expect(pages).toContain('<KickoffTime at={event.starts_at} />');
+  expect(pages).toContain('<KickoffTime at={event.starts_at} timeKnown={event.time_known} />');
   expect(pages).toContain('class="kickoff"');
   // And it must stay on one line, overriding the stacking default.
   expect(/time\.line \{[^}]*display: inline/s.test(css)).toBe(true);

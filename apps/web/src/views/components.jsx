@@ -54,6 +54,34 @@ export const LocalTime = ({ at, zone = false }) => {
 };
 
 /**
+ * A fixture with a date and no announced start (`time_known` false): a playoff
+ * game scheduled before its slot is sold, a postponed fixture re-dated.
+ *
+ * The stored instant is a placeholder -- ESPN pads these to midnight Eastern,
+ * other providers to noon UTC -- so it is never shown as a clock time, and it is
+ * deliberately NOT marked data-local: localising midnight Eastern to a Pacific
+ * viewer would move the game to the evening before. Both anchors fall on the
+ * intended date in UTC, so the UTC day is the right one for everybody.
+ */
+const untimed = (event) => event?.time_known === false;
+
+const DateOnly = ({ at, line = false }) => {
+  const iso = new Date(at).toISOString().slice(0, 10);
+  return line ? (
+    <time class="line" datetime={iso}>
+      <span>Time TBA</span>
+      {' · '}
+      <span>{fmtDayUtc(at)}</span>
+    </time>
+  ) : (
+    <time datetime={iso}>
+      <span class="t">TBA</span>
+      <span class="d">{fmtDayUtc(at)}</span>
+    </time>
+  );
+};
+
+/**
  * One line: "3:00 PM · Wed, Aug 19 · PDT".
  *
  * The separators are real text in the markup, not borders or gaps, because the
@@ -62,7 +90,8 @@ export const LocalTime = ({ at, zone = false }) => {
  * context, or a browser still holding an old cached copy) it renders as
  * "3:00 PMWed, Aug 19PDT". This one reads correctly with no stylesheet at all.
  */
-export const KickoffTime = ({ at }) => {
+export const KickoffTime = ({ at, timeKnown = true }) => {
+  if (timeKnown === false) return <DateOnly at={at} line />;
   const iso = new Date(at).toISOString();
   return (
     <time class="line" datetime={iso} data-local>
@@ -83,7 +112,9 @@ export const KickoffTime = ({ at }) => {
  * underneath for anyone checking they are watching the right one.
  */
 export const RowTime = ({ event }) => {
-  if (event.state !== 'in') return <LocalTime at={event.starts_at} />;
+  if (event.state !== 'in') {
+    return untimed(event) ? <DateOnly at={event.starts_at} /> : <LocalTime at={event.starts_at} />;
+  }
   return (
     <time datetime={new Date(event.starts_at).toISOString()} data-local>
       <span class="t live-clock">{event.status_detail ?? 'Live'}</span>

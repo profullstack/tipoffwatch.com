@@ -669,6 +669,40 @@ describe('mapFixture', () => {
   });
 });
 
+/*
+ * Unfilled playoff slots, as nichedb served the 2026 MLB bracket on 2026-09-30:
+ * both sides a negative id named "TBD", the time a padded midnight Eastern.
+ */
+const tbd = (id, name = 'TBD') => ({ key: `baseball/mlb/${id}`, name, displayName: name });
+
+describe('bracket placeholders', () => {
+  test('a game with both sides undecided is not a fixture', () => {
+    const f = nflFixture({ home: tbd(-1), away: tbd(-2) });
+    expect(m.mapFixture({ ...f, time_known: false })).toBeNull();
+  });
+
+  test('a game with one side decided keeps the real team and drops the slot', () => {
+    // ESPN names a half-settled slot after both candidates, with the id still negative.
+    const f = m.mapFixture(nflFixture({ away: tbd(-2, 'Padres/Cubs') }));
+    expect(f).not.toBeNull();
+    expect(f.home).toMatchObject({ provider_key: nflFixture().data.home.key });
+    expect(f.away).toBeNull();
+  });
+
+  test('a placeholder is never a team, by id or by name', () => {
+    expect(m.isPlaceholderSide(tbd(-1))).toBe(true);
+    expect(m.isPlaceholderSide(tbd(-2, 'Phillies/Braves'))).toBe(true);
+    expect(m.isPlaceholderSide(tbd(77, 'TBD'))).toBe(true);
+    expect(m.isPlaceholderSide(nflFixture().data.home)).toBe(false);
+    expect(m.isPlaceholderSide(null)).toBe(false);
+    const team = {
+      kind: 'team',
+      data: { provider: 'espn', sport: 'baseball', leagues: ['baseball-mlb'], ...tbd(-1) },
+    };
+    expect(m.mapTeam(team)).toBeNull();
+  });
+});
+
 describe('state', () => {
   test('pre, in and post pass through; anything else is pre', () => {
     expect(m.stateOf({ state: 'pre' })).toBe('pre');

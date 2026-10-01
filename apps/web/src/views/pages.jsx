@@ -2034,7 +2034,7 @@ export const EventPage = ({
           read as one run-on string the moment the stylesheet did not reach it. */}
       {live || done ? null : (
         <p class="kickoff">
-          <KickoffTime at={event.starts_at} />
+          <KickoffTime at={event.starts_at} timeKnown={event.time_known} />
         </p>
       )}
 

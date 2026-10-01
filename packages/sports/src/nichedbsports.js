@@ -159,9 +159,30 @@ export function leagueFromFixture(data) {
   };
 }
 
+/**
+ * An unfilled bracket slot, not a team.
+ *
+ * ESPN publishes a postseason before it knows who is in it: every undecided side
+ * is a competitor with a negative id ("baseball/mlb/-1") named "TBD", or once one
+ * series is settled, "Padres/Cubs". Stored as a team, it became a club called TBD
+ * with 31 fixtures and a Follow button, and every playoff game read "TBD at TBD".
+ * The negative id is the signal that does not depend on wording; the name check
+ * catches a provider that leaves the id positive. Same rule as tennis's
+ * isUndrawn in espn.js.
+ */
+export function isPlaceholderSide(d) {
+  if (!d) return false;
+  const id = String(d.key ?? '')
+    .split('/')
+    .pop();
+  if (/^-\d+$/.test(id)) return true;
+  const name = text(d.displayName) ?? text(d.name);
+  return name !== null && /^(tbd|tba|tbc)$/i.test(name);
+}
+
 /** One side of a fixture, or a `team` item's record -> a teams row minus its league. */
 function teamRow(d, item = null) {
-  if (!d?.key) return null;
+  if (!d?.key || isPlaceholderSide(d)) return null;
   const displayName = text(d.displayName) ?? text(d.name) ?? text(item?.title);
   if (!displayName) return null;
   return {
@@ -206,6 +227,11 @@ export function mapFixture(item) {
 
   const home = teamRow(d.home);
   const away = teamRow(d.away);
+  // Neither side decided: a slot in a bracket, not a fixture anyone can follow or
+  // watch. It arrives again, with names, once the series before it is settled. A
+  // game with ONE side known is kept -- it is that team's next fixture -- and the
+  // unknown side is simply left without a team.
+  if (isPlaceholderSide(d.home) && isPlaceholderSide(d.away)) return null;
   const broadcast = text(d.broadcast);
   const markets =
     Array.isArray(d.broadcastMarkets) && d.broadcastMarkets.length > 0 ? d.broadcastMarkets : null;
