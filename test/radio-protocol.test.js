@@ -421,7 +421,7 @@ describe('otp login', () => {
       sxm.startOtpLogin('unknown@example.com', {
         deviceGrant: JSON.stringify({ grant: 'device-grant' }),
       }),
-    ).rejects.toMatchObject({ status: 404, message: 'SiriusXM does not know that email address.' });
+    ).rejects.toMatchObject({ status: 404, message: sxm.UNKNOWN_EMAIL_MESSAGE });
   });
 
   test('a wrong code is a 400 with words a reader can act on', async () => {
