@@ -320,6 +320,23 @@ export const Layout = (props) => {
             ))}
             {' · '}Data furnished by <a href={dataSource.url}>{dataSource.name}</a>
           </p>
+          {/* The Profullstack OpenWebring. `from` must be this site's own apex
+              address or the ring sends the reader to a random member. */}
+          <nav class="webring muted" aria-label="Profullstack webring">
+            <a
+              href={`https://rssamplifier.com/ring/profullstack/previous?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
+              rel="prev"
+            >
+              {'<<'}
+            </a>{' '}
+            <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>{' '}
+            <a
+              href={`https://rssamplifier.com/ring/profullstack/next?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
+              rel="next"
+            >
+              {'>>'}
+            </a>
+          </nav>
         </footer>
 
         {/* Registers the service worker and wires the push opt-in. Everything on the
