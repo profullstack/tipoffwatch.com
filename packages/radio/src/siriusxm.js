@@ -78,6 +78,10 @@ export class SiriusXmError extends Error {
 
 /* ------------------------------------------------------------------ http -- */
 
+/** What the reader sees when every exit was refused at SiriusXM's edge. */
+export const EDGE_BLOCK_MESSAGE =
+  'SiriusXM refused every address this site tried to reach it from (403 at its AWS edge). Your account is fine; try again in a minute.';
+
 /**
  * What a status means, when it did not come from SiriusXM at all.
  *
@@ -97,27 +101,52 @@ const MAX_ATTEMPTS = 4;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * AWS's load balancer in front of SiriusXM refusing the exit IP, not SiriusXM
+ * answering. It is a 403 with `server: awselb/2.0` and a bare HTML page; SXM's
+ * own API refuses a bearer with a JSON 401 from KrakenD. Datacenter addresses
+ * (dev2, dev1) always get it, and so does roughly one rotating-proxy exit in
+ * three or four (measured 2026-10-04).
+ */
+export function isEdgeBlock(res) {
+  if (res.status !== 403) return false;
+  return (
+    /awselb/i.test(res.headers.get('server') ?? '') ||
+    (res.headers.get('content-type') ?? '').startsWith('text/html')
+  );
+}
+
+/**
  * fetch, with a proxy and a retry.
  *
  * A residential proxy pool hands out peers, and some of them are peers SXM
  * resets at the TLS handshake. That arrives as a thrown fetch, never as an HTTP
- * status, so only a throw is retried: a 403 is an answer and asking again gets
- * the same one.
+ * status, and is retried. So is an edge block through a proxy: the next exit is
+ * usually allowed. Bun keeps the proxy tunnel alive and every request on it
+ * leaves from the same exit, so the retry goes out with keepalive off to get a
+ * new one. Any other status is SiriusXM's answer and is returned as is.
  */
 export async function sxmFetch(url, init = {}, { proxy = null } = {}) {
   let lastErr;
+  let fresh = false;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let res;
     try {
-      return await fetch(url, {
+      res = await fetch(url, {
         ...init,
         ...(proxy ? { proxy } : {}),
+        ...(fresh ? { keepalive: false } : {}),
         signal: init.signal ?? AbortSignal.timeout(30_000),
       });
     } catch (err) {
       lastErr = err;
       if (err?.name === 'AbortError' && init.signal?.aborted) throw err;
+      fresh = true;
       await sleep(300 * (attempt + 1));
+      continue;
     }
+    if (!proxy || !isEdgeBlock(res) || attempt === MAX_ATTEMPTS - 1) return res;
+    await res.body?.cancel().catch(() => {});
+    fresh = true;
   }
   throw lastErr;
 }
@@ -243,6 +272,29 @@ async function mintDeviceGrantViaBrowser({ proxy }) {
   }
   const { default: puppeteer } = await import('puppeteer-core');
   const proxyUrl = proxy ? new URL(proxy) : null;
+  // A browser holds one tunnel to the proxy, so one exit for its whole life. When
+  // SiriusXM's edge refuses that exit, a new browser is a new exit; without a
+  // proxy the address never changes and one launch is all there is.
+  const launches = proxyUrl ? BROWSER_LAUNCHES : 1;
+  const refused = [];
+  for (let i = 0; i < launches; i++) {
+    try {
+      return await mintInOneBrowser(puppeteer, proxyUrl);
+    } catch (err) {
+      if (!err?.data?.edgeBlocked) throw err;
+      refused.push(err.message);
+    }
+  }
+  throw new SiriusXmError(
+    `browser: SiriusXM's edge refused all ${launches} proxy exits tried. ${refused.at(-1)}`,
+    502,
+  );
+}
+
+/** Browsers launched, at most, before the mint gives up on the proxy's exits. */
+const BROWSER_LAUNCHES = 4;
+
+async function mintInOneBrowser(puppeteer, proxyUrl) {
   const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
   const browser = await puppeteer.launch({
     headless: true,
@@ -269,12 +321,16 @@ async function mintDeviceGrantViaBrowser({ proxy }) {
 
     // Every edge-gateway answer, so a failure says whether the device-grant
     // XHR fired at all and what SXM said to it.
+    // A 403 there is the edge refusing this exit: every later call on the same
+    // tunnel gets it too, so stop waiting and let the caller relaunch.
     const apiLog = [];
+    let edgeBlocked = false;
     page.on('response', async (res) => {
       const url = res.url();
       if (!url.includes('api.edge-gateway.siriusxm.com')) return;
       const path = url.replace(/^https:\/\/api\.edge-gateway\.siriusxm\.com/, '');
       const status = res.status();
+      if (status === 403) edgeBlocked = true;
       let extra = '';
       if (status >= 400 && path.startsWith('/device/')) {
         extra = ` body=${(await res.text().catch(() => '')).slice(0, 200)}`;
@@ -310,7 +366,13 @@ async function mintDeviceGrantViaBrowser({ proxy }) {
         const cookies = await page.cookies(...origins);
         const dg = cookies.find((c) => c.name === 'DEVICE_GRANT' && c.value);
         if (dg) return parseDeviceGrant(dg.value);
+        if (edgeBlocked) break;
         await sleep(500);
+      }
+      if (edgeBlocked) {
+        throw new SiriusXmError(`edge-gateway answers: [${apiLog.slice(0, 6).join(' | ')}]`, 502, {
+          edgeBlocked: true,
+        });
       }
     }
 
@@ -511,6 +573,11 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
         proxy,
       })
     : unauth;
+  // The live gateway says "unknown" as a 404 with this code (seen 2026-10-04),
+  // not the empty 200 the fake gateway gives.
+  if (status.status === 404 && status.data?.code === 'userServices.identity.identityDoesNotExist') {
+    throw new SiriusXmError('SiriusXM does not know that email address.', 404, status.data);
+  }
   if (status.status >= 400) {
     throw new SiriusXmError(
       explainStatus(status.status, `identity status failed: ${status.status}`),
@@ -879,11 +946,14 @@ async function apiJson(url, init, { bearer, proxy, unauthorized }) {
       { proxy },
     );
   let res = await send(await bearer());
-  if ((res.status === 401 || res.status === 403) && unauthorized) {
+  if ((res.status === 401 || res.status === 403) && !isEdgeBlock(res) && unauthorized) {
     await unauthorized();
     res = await send(await bearer());
   }
   const text = await res.text();
+  if (isEdgeBlock(res)) {
+    throw new SiriusXmError(EDGE_BLOCK_MESSAGE, 502, text.slice(0, 300));
+  }
   if (res.status === 401 || res.status === 403) {
     throw new SiriusXmError(
       'SiriusXM no longer accepts this session. Connect your account again in settings.',

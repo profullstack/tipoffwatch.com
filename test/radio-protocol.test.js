@@ -216,6 +216,78 @@ describe('key decoding', () => {
  * call time. The fake records every request so the test can say which step
  * carried which bearer.
  */
+describe('edge block', () => {
+  // What SiriusXM's AWS load balancer answers a refused address, verbatim.
+  const blocked = () =>
+    new Response('<html>\r\n<head><title>403 Forbidden</title></head>\r\n</html>\r\n', {
+      status: 403,
+      headers: { server: 'awselb/2.0', 'content-type': 'text/html' },
+    });
+  const answer = (status) =>
+    new Response('{}', { status, headers: { 'content-type': 'application/json' } });
+  const realFetch = globalThis.fetch;
+  /** Stubs fetch with these replies in order; returns the init of every call. */
+  const replies = (...queue) => {
+    const inits = [];
+    globalThis.fetch = (_url, init) => {
+      inits.push(init);
+      return Promise.resolve(queue.shift()());
+    };
+    return inits;
+  };
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("tells AWS's refusal from SiriusXM's own", () => {
+    expect(sxm.isEdgeBlock(blocked())).toBe(true);
+    expect(sxm.isEdgeBlock(answer(403))).toBe(false);
+    expect(sxm.isEdgeBlock(answer(401))).toBe(false);
+  });
+
+  test('through a proxy, retries a refused exit on a fresh tunnel', async () => {
+    const inits = replies(blocked, () => answer(200));
+    const res = await sxm.sxmFetch(
+      'https://api.edge-gateway.siriusxm.com/x',
+      {},
+      { proxy: 'http://p:1' },
+    );
+    expect(res.status).toBe(200);
+    expect(inits).toHaveLength(2);
+    expect(inits[0].keepalive).toBeUndefined();
+    expect(inits[1].keepalive).toBe(false);
+  });
+
+  test("SiriusXM's own 403 is an answer, not retried", async () => {
+    const inits = replies(() => answer(403));
+    const res = await sxm.sxmFetch(
+      'https://api.edge-gateway.siriusxm.com/x',
+      {},
+      { proxy: 'http://p:1' },
+    );
+    expect(res.status).toBe(403);
+    expect(inits).toHaveLength(1);
+  });
+
+  test('without a proxy the address never changes, so no retry', async () => {
+    const inits = replies(blocked);
+    const res = await sxm.sxmFetch('https://api.edge-gateway.siriusxm.com/x');
+    expect(sxm.isEdgeBlock(res)).toBe(true);
+    expect(inits).toHaveLength(1);
+  });
+
+  test('gives up after four exits and hands back the refusal', async () => {
+    const inits = replies(blocked, blocked, blocked, blocked);
+    const res = await sxm.sxmFetch(
+      'https://api.edge-gateway.siriusxm.com/x',
+      {},
+      { proxy: 'http://p:1' },
+    );
+    expect(sxm.isEdgeBlock(res)).toBe(true);
+    expect(inits).toHaveLength(4);
+  });
+});
+
 describe('otp login', () => {
   let server;
   let calls;
@@ -256,6 +328,10 @@ describe('otp login', () => {
             // anonymous-session path; the pasted grant makes it possible.
             if (!auth) return json({ error: 'auth' }, 401);
             if (url.searchParams.get('handle') === 'nobody@example.com') return json({});
+            // What the live gateway answered an unknown handle on 2026-10-04.
+            if (url.searchParams.get('handle') === 'unknown@example.com') {
+              return json({ code: 'userServices.identity.identityDoesNotExist' }, 404);
+            }
             return json({ identityId: 'id-1' }, 200, { 'set-cookie': 'sxm=jar1; Path=/' });
           case 'POST /session/v1/sessions/anonymous':
             if (auth !== 'Bearer device-grant') return json({}, 403);
@@ -338,6 +414,14 @@ describe('otp login', () => {
         deviceGrant: JSON.stringify({ grant: 'device-grant' }),
       }),
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  test("so is the live gateway's 404 for one", async () => {
+    await expect(
+      sxm.startOtpLogin('unknown@example.com', {
+        deviceGrant: JSON.stringify({ grant: 'device-grant' }),
+      }),
+    ).rejects.toMatchObject({ status: 404, message: 'SiriusXM does not know that email address.' });
   });
 
   test('a wrong code is a 400 with words a reader can act on', async () => {
