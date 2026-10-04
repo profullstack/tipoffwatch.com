@@ -78,6 +78,13 @@ export class SiriusXmError extends Error {
 
 /* ------------------------------------------------------------------ http -- */
 
+/**
+ * SiriusXM's own answer for an email with no account behind it. Its player
+ * says the same; the usual cause is an account under another address.
+ */
+export const UNKNOWN_EMAIL_MESSAGE =
+  'SiriusXM has no account under that email. Use the address you sign in to siriusxm.com with.';
+
 /** What the reader sees when every exit was refused at SiriusXM's edge. */
 export const EDGE_BLOCK_MESSAGE =
   'SiriusXM refused every address this site tried to reach it from (403 at its AWS edge). Your account is fine; try again in a minute.';
@@ -576,7 +583,7 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
   // The live gateway says "unknown" as a 404 with this code (seen 2026-10-04),
   // not the empty 200 the fake gateway gives.
   if (status.status === 404 && status.data?.code === 'userServices.identity.identityDoesNotExist') {
-    throw new SiriusXmError('SiriusXM does not know that email address.', 404, status.data);
+    throw new SiriusXmError(UNKNOWN_EMAIL_MESSAGE, 404, status.data);
   }
   if (status.status >= 400) {
     throw new SiriusXmError(
@@ -588,7 +595,7 @@ export async function startOtpLogin(email, { proxy = null, deviceGrant = null } 
   jar = mergeCookies(jar, status.setCookie);
   const identityId = status.data?.identityId;
   if (!identityId) {
-    throw new SiriusXmError('SiriusXM does not know that email address.', 404, status.data);
+    throw new SiriusXmError(UNKNOWN_EMAIL_MESSAGE, 404, status.data);
   }
 
   const initiate = await sxmCall('otp/v1/otp/initiate', {
