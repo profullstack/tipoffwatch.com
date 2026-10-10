@@ -1,4 +1,5 @@
 import { brand, config } from '@tipoff/config';
+import { calledOff } from './ics.js';
 import { marketsOf } from './markets.js';
 
 /**
@@ -78,6 +79,17 @@ const EVENT_STATUS = {
   post: 'https://schema.org/EventScheduled',
 };
 
+/**
+ * A game called off is not still scheduled: a search engine shows the status,
+ * and "Scheduled" on a game that will never be played is the wrong answer.
+ */
+const statusOf = (event) =>
+  calledOff(event)
+    ? /^postponed/i.test(event.status_detail)
+      ? 'https://schema.org/EventPostponed'
+      : 'https://schema.org/EventCancelled'
+    : (EVENT_STATUS[event.state] ?? EVENT_STATUS.pre);
+
 const place = (event) => {
   if (!event.venue) return null;
   // The city and region are separate columns, and either may be missing. An
@@ -128,7 +140,7 @@ export const eventNode = (event) => {
      * published as fact is worse than a date on its own.
      */
     startDate: event.time_known === false ? isoDay(event.starts_at) : iso(event.starts_at),
-    eventStatus: EVENT_STATUS[event.state] ?? EVENT_STATUS.pre,
+    eventStatus: statusOf(event),
     eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
     location: place(event),
     // Both sides are competitors; `homeTeam`/`awayTeam` only make sense when there
