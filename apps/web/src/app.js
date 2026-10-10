@@ -41,6 +41,7 @@ import {
   searchEverything,
 } from '@tipoff/sports';
 import { Hono } from 'hono';
+import { contextStorage } from 'hono/context-storage';
 import { getCookie, setCookie } from 'hono/cookie';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
@@ -48,7 +49,7 @@ import { buildCalendar } from './lib/ics.js';
 import { agentName, leaderboard } from './lib/leaderboard.js';
 import { MAX_TILES, parseChannelIds } from './lib/multiview.js';
 import { buildFeed } from './lib/rss.js';
-import { SECURITY_HEADERS } from './lib/security-headers.js';
+import { buildPolicy, SECURITY_HEADERS } from './lib/security-headers.js';
 import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
 import { Feeds } from './views/feeds.jsx';
 import { Contact, Privacy, Terms } from './views/legal.jsx';
@@ -81,6 +82,9 @@ import { WatchChannel, WatchIndex } from './views/watch.jsx';
 import { nextAdvert } from './lib/ads.js';
 
 export const app = new Hono();
+
+// Lets a view read the request it is rendering for (the footer's CSP nonce).
+app.use(contextStorage());
 
 /* ----------------------------------------------------------------- helpers -- */
 
@@ -295,8 +299,13 @@ app.use('*', async (c, next) => {
  * policy itself lives in lib/security-headers.js.
  */
 app.use('*', async (c, next) => {
+  // A fresh nonce per response for the footer's inline <style>; Layout reads it
+  // back through hono/context-storage (see ProfullstackFooter there).
+  const styleNonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+  c.set('styleNonce', styleNonce);
   await next();
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
+  c.header('content-security-policy', buildPolicy({ styleNonce }));
 });
 
 app.use('*', async (c, next) => {
@@ -4677,7 +4686,10 @@ app.get('/.well-known/openwebring.json', (c) => {
     site: { url: `https://${brand.domain}/`, name: brand.name },
     made_by: 'both',
     rings: [
-      { ring: 'https://rssamplifier.com/ring/profullstack', slug: brand.domain.replace(/\./g, '-') },
+      {
+        ring: 'https://rssamplifier.com/ring/profullstack',
+        slug: brand.domain.replace(/\./g, '-'),
+      },
     ],
   });
 });

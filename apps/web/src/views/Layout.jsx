@@ -1,6 +1,34 @@
+import { footerHtml } from '@profullstack/footer';
 import { brand, config, dataSource, href, network, Word } from '@tipoff/config';
+import { getContext } from 'hono/context-storage';
+import { raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 import { serialise, siteGraph } from '../lib/jsonld.js';
+
+/**
+ * @profullstack/footer, rendered on the server per request (it caches its
+ * template for an hour), with this response's CSP nonce on its <style>. Outside
+ * a request (tests) there is no nonce and the footer still renders.
+ */
+const ProfullstackFooter = async () => {
+  let nonce;
+  try {
+    nonce = getContext().get('styleNonce');
+  } catch {
+    nonce = undefined;
+  }
+  return raw(
+    await footerHtml({
+      site: `https://${brand.domain}/`,
+      nonce,
+      links: [
+        { label: 'Contact', href: '/contact' },
+        { label: 'Privacy', href: '/privacy' },
+        { label: 'Terms', href: '/terms' },
+      ],
+    }),
+  );
+};
 
 /**
  * The single HTML shell. Everything renders through here, including the signed-out
@@ -296,12 +324,6 @@ export const Layout = (props) => {
             <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
             <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
           </p>
-          {/* A privacy policy nobody can find is a privacy policy nobody has. The
-              footer is on every page, which is the only place these three belong. */}
-          <p class="muted">
-            <a href="/contact">Contact</a> · <a href="/privacy">Privacy</a> ·{' '}
-            <a href="/terms">Terms</a>
-          </p>
           {/* The rest of the network, on every page of every site in it.
               The site the reader is already on is named but not linked: a link
               to where you already are is noise, while leaving it out entirely
@@ -320,33 +342,12 @@ export const Layout = (props) => {
             ))}
             {' · '}Data furnished by <a href={dataSource.url}>{dataSource.name}</a>
           </p>
-          {/* The Profullstack OpenWebring. `from` must be this site's own apex
-              address or the ring sends the reader to a random member. */}
-          <nav class="webring muted" aria-label="Profullstack webring">
-            <a
-              href={`https://rssamplifier.com/ring/profullstack/previous?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
-              rel="prev"
-              title="Previous site"
-            >
-              {'<<'}
-            </a>{' '}
-            <a href="https://rssamplifier.com/ring/profullstack">Profullstack</a>{' '}
-            <a
-              href={`https://rssamplifier.com/ring/profullstack/next?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
-              rel="next"
-              title="Next site"
-            >
-              {'>>'}
-            </a>{' '}
-            <a
-              href={`https://rssamplifier.com/ring/profullstack/random?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
-              title="Random site"
-              aria-label="Random site"
-            >
-              {'⚄'}
-            </a>
-          </nav>
         </footer>
+        {/* The bottom bar: @profullstack/footer, the same on every Profullstack
+            site (links, copyright, the webring). Contact, Privacy and Terms
+            moved into it: a privacy policy nobody can find is a privacy policy
+            nobody has, and this is on every page. */}
+        <ProfullstackFooter />
 
         {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}

@@ -50,6 +50,14 @@ describe('the CSP matches the page it is protecting', () => {
     expect(SECURITY_HEADERS['content-security-policy']).toBe(csp);
   });
 
+  test("the footer's inline style is allowed by a per-request nonce, nothing wider", () => {
+    const withNonce = buildPolicy({ styleNonce: 'abc123' });
+    const styleSrc = withNonce.split('; ').find((d) => d.startsWith('style-src'));
+    expect(styleSrc).toContain("'nonce-abc123'");
+    expect(withNonce).not.toContain('unsafe-inline');
+    expect(csp).not.toContain('nonce-');
+  });
+
   test('and nothing else may go inline', () => {
     // No 'unsafe-inline' escape hatch: a second inline script has to be a file, or
     // it fails visibly in development instead of widening the policy for everyone.

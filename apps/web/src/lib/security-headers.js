@@ -26,11 +26,17 @@
  * The policy. A function rather than a constant so a test builds exactly what the
  * header carries.
  */
-export const buildPolicy = () =>
+export const buildPolicy = ({ styleNonce } = {}) =>
   [
     "default-src 'self'",
     "script-src 'self' https://crawlproof.com",
-    "style-src 'self' https://fonts.googleapis.com",
+    /*
+     * The one inline <style> is @profullstack/footer's, and it is allowed by a
+     * per-request nonce rather than 'unsafe-inline' or a hash: its CSS comes
+     * from the package's @latest template, so a hash would break on every
+     * release. The nonce is minted in app.js for each response.
+     */
+    `style-src 'self' https://fonts.googleapis.com${styleNonce ? ` 'nonce-${styleNonce}'` : ''}`,
     "font-src 'self' https://fonts.gstatic.com",
     /*
      * 'self' is NOT redundant with https: here.
