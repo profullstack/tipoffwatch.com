@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
 
-const { buildCalendar } = await import('../apps/web/src/lib/ics.js');
+const { buildCalendar, calledOff } = await import('../apps/web/src/lib/ics.js');
 const { buildFeed } = await import('../apps/web/src/lib/rss.js');
 
 const EVENT = {
@@ -63,6 +63,24 @@ describe('iCalendar', () => {
 
   test('includes an hour-before alarm', () => {
     expect(ics).toContain('TRIGGER:-PT60M');
+  });
+});
+
+describe('iCalendar: a game called off', () => {
+  test('is sent as CANCELLED with no alarm, so subscribed calendars drop it', () => {
+    const off = { ...EVENT, state: 'post', status_detail: 'Canceled', home_score: null };
+    const out = buildCalendar([off], OPTS);
+    expect(out).toContain('STATUS:CANCELLED');
+    expect(out).not.toContain('STATUS:CONFIRMED');
+    expect(out).not.toContain('BEGIN:VALARM');
+  });
+
+  test('only a post fixture whose detail says so counts', () => {
+    expect(calledOff({ state: 'post', status_detail: 'Postponed' })).toBe(true);
+    expect(calledOff({ state: 'post', status_detail: 'Cancelled' })).toBe(true);
+    expect(calledOff({ state: 'post', status_detail: 'Final' })).toBe(false);
+    expect(calledOff({ state: 'pre', status_detail: 'Canceled' })).toBe(false);
+    expect(buildCalendar([EVENT], OPTS)).toContain('STATUS:CONFIRMED');
   });
 });
 
