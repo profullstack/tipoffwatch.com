@@ -64,6 +64,15 @@ function title(event) {
  * @param {object[]} events
  * @param {{ name: string, siteUrl: string, defaultMinutes?: number }} opts
  */
+/**
+ * Called off, in the provider's words. ESPN writes a cancelled or postponed game
+ * as `post` with that word as the detail and no score, and nichedb writes an
+ * "if necessary" playoff game ESPN deleted the same way. A postponed fixture is
+ * re-listed under a new id, so the old entry is done with either way.
+ */
+export const calledOff = (event) =>
+  event?.state === 'post' && /^(cancell?ed|postponed)\b/i.test(event.status_detail ?? '');
+
 export function buildCalendar(events, { name, siteUrl, defaultMinutes = 150 }) {
   const lines = [
     'BEGIN:VCALENDAR',
@@ -112,12 +121,19 @@ export function buildCalendar(events, { name, siteUrl, defaultMinutes = 150 }) {
       // Duration is a guess for most sports, so mark it as such rather than
       // blocking out someone's calendar as if it were a confirmed meeting.
       'TRANSP:TRANSPARENT',
-      'STATUS:CONFIRMED',
-      'BEGIN:VALARM',
-      'TRIGGER:-PT60M',
-      'ACTION:DISPLAY',
-      `DESCRIPTION:${esc(`${title(e)} starts in an hour`)}`,
-      'END:VALARM',
+      // Kept in the feed rather than dropped: a client only removes an entry it
+      // is told was cancelled, and one that simply vanishes from a subscription
+      // stays on some calendars, alarm and all.
+      ...(calledOff(e)
+        ? ['STATUS:CANCELLED']
+        : [
+            'STATUS:CONFIRMED',
+            'BEGIN:VALARM',
+            'TRIGGER:-PT60M',
+            'ACTION:DISPLAY',
+            `DESCRIPTION:${esc(`${title(e)} starts in an hour`)}`,
+            'END:VALARM',
+          ]),
       'END:VEVENT',
     );
   }
