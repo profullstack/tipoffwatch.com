@@ -111,6 +111,14 @@ describe('a fixture', () => {
     expect(untimed.startDate).toBe('2026-08-30');
   });
 
+  test('a game called off says so instead of Scheduled', () => {
+    const status = (detail) =>
+      eventNode({ ...FIXTURE, state: 'post', status_detail: detail }).eventStatus;
+    expect(status('Canceled')).toBe('https://schema.org/EventCancelled');
+    expect(status('Postponed')).toBe('https://schema.org/EventPostponed');
+    expect(status('Final')).toBe('https://schema.org/EventScheduled');
+  });
+
   test('a missing venue emits no empty Place', () => {
     expect(eventNode({ ...FIXTURE, venue: null }).location).toBeUndefined();
   });
