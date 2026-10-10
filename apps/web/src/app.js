@@ -214,6 +214,7 @@ const crawlGateway = createGateway({
     '/leaderboard',
     '/leaderboard/',
     '/.well-known/openaccess.json',
+    '/.well-known/openwebring.json',
   ],
   /*
    * Lightpanda is a headless browser sold to scrapers, and on 2026-09-02 a
@@ -4663,6 +4664,22 @@ app.get('/.well-known/openaccess.json', async (c) => {
   c.header('content-type', 'application/json');
   c.header('cache-control', 'public, max-age=300');
   return c.body(await f.arrayBuffer());
+});
+
+/**
+ * The OpenWebring descriptor (logicsrc.com/openwebring): this site's membership
+ * in the Profullstack ring, built from the brand so each site names itself.
+ */
+app.get('/.well-known/openwebring.json', (c) => {
+  c.header('cache-control', 'public, max-age=3600');
+  return c.json({
+    openwebring: '0.1',
+    site: { url: `https://${brand.domain}/`, name: brand.name },
+    made_by: 'both',
+    rings: [
+      { ring: 'https://rssamplifier.com/ring/profullstack', slug: brand.domain.replace(/\./g, '-') },
+    ],
+  });
 });
 
 /**

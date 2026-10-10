@@ -326,6 +326,7 @@ export const Layout = (props) => {
             <a
               href={`https://rssamplifier.com/ring/profullstack/previous?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
               rel="prev"
+              title="Previous site"
             >
               {'<<'}
             </a>{' '}
@@ -333,8 +334,16 @@ export const Layout = (props) => {
             <a
               href={`https://rssamplifier.com/ring/profullstack/next?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
               rel="next"
+              title="Next site"
             >
               {'>>'}
+            </a>{' '}
+            <a
+              href={`https://rssamplifier.com/ring/profullstack/random?from=${encodeURIComponent(`https://${brand.domain}/`)}`}
+              title="Random site"
+              aria-label="Random site"
+            >
+              {'⚄'}
             </a>
           </nav>
         </footer>
