@@ -32,10 +32,9 @@ export const buildPolicy = ({ styleNonce } = {}) =>
     "default-src 'self'",
     "script-src 'self' https://crawlproof.com",
     /*
-     * The one inline <style> is @profullstack/footer's, and it is allowed by a
-     * per-request nonce rather than 'unsafe-inline' or a hash: its CSS comes
-     * from the package's @latest template, so a hash would break on every
-     * release. The nonce is minted in app.js for each response.
+     * The one inline <style> is the pit.world network footer's, and it is
+     * allowed by a per-request nonce rather than 'unsafe-inline' or a hash: its
+     * CSS is fetched from pit.world, so a hash would break on every change. The nonce is minted in app.js for each response.
      */
     `style-src 'self' https://fonts.googleapis.com${styleNonce ? ` 'nonce-${styleNonce}'` : ''}`,
     "font-src 'self' https://fonts.gstatic.com",
