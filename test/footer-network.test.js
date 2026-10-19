@@ -16,7 +16,7 @@ const footer = async (props) => {
 
 /*
  * The site footer is the data credit; the links, copyright and webring are the
- * @profullstack/footer row after it, and the pit.world footer comes last.
+ * @profullstack/footer row after it.
  */
 describe('the site footer', () => {
   test('credits the data platform', async () => {
@@ -37,10 +37,10 @@ describe('the site footer', () => {
     expect(out.match(/<p /g)?.length).toBe(1);
   });
 
-  test('is followed by the webring row and then the pit.world footer', async () => {
+  test('is followed by the webring row, and carries no pit.world footer', async () => {
+    // tipoffwatch.com is not a Moshpit name; the pit.world footer is not for it.
     const out = (await Layout({ user: null, children: 'x' }).toString()).toString();
     expect(out).toContain('ring/profullstack');
-    const pit = out.indexOf('data-pit-footer');
-    if (pit !== -1) expect(pit).toBeGreaterThan(out.indexOf('pfs-footer'));
+    expect(out).not.toContain('data-pit-footer');
   });
 });
