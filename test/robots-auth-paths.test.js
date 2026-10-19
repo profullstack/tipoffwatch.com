@@ -150,7 +150,7 @@ describe('training crawlers that come in anyway are sold a pass', () => {
   test('the gateway is registered after the block and before the session', async () => {
     const src = await readFile(APP, 'utf8');
     const block = src.indexOf("BLOCKED_AGENTS = ['awariobot']");
-    const gate = src.indexOf('x402Gateway(crawlGateway)');
+    const gate = src.indexOf('crawlGateway.handle(c.req.raw)');
     const session = src.indexOf('auth.userFromRequest(sid)');
     expect(block).toBeGreaterThan(0);
     expect(gate).toBeGreaterThan(block);
@@ -166,7 +166,7 @@ describe('training crawlers that come in anyway are sold a pass', () => {
     const src = await readFile(APP, 'utf8');
     const wiring = src.slice(
       src.indexOf('createGateway({'),
-      src.indexOf('x402Gateway(crawlGateway)'),
+      src.indexOf('crawlGateway.handle(c.req.raw)'),
     );
     expect(wiring).toContain('denyCidrs: OVH_RANGES');
     expect(wiring).toContain('chargeSpoofedBrowsers: true');
@@ -180,7 +180,7 @@ describe('training crawlers that come in anyway are sold a pass', () => {
     const src = await readFile(APP, 'utf8');
     const wiring = src.slice(
       src.indexOf('createGateway({'),
-      src.indexOf('x402Gateway(crawlGateway)'),
+      src.indexOf('crawlGateway.handle(c.req.raw)'),
     );
     for (const key of [
       'config.coinpay.x402Key',
@@ -194,6 +194,6 @@ describe('training crawlers that come in anyway are sold a pass', () => {
 
   test('the maps stay readable, so a crawler can find the cheaper way in', async () => {
     const src = await readFile(APP, 'utf8');
-    expect(src).toMatch(/openPaths: \['\/llms\.txt', '\/skill\.md'\]/);
+    expect(src).toMatch(/openPaths: \[\s*'\/llms\.txt',\s*'\/skill\.md'/);
   });
 });
