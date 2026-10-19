@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+// The house player's TV list, reached through the web app's own install: the
+// root of this monorepo does not depend on the package itself.
+import {
+  isTvBrowser,
+  tvBrowserType,
+} from '../apps/web/node_modules/@profullstack/player/dist/index.js';
 import { codecName, mseCandidates, unplayableReason } from '../apps/web/src/client/codecs.js';
-import { isTvBrowser, playerConfig, tvBrowserType } from '../apps/web/src/client/tv.js';
 
 /**
  * Why a channel that connects, transfers and then dies says so.
@@ -272,102 +277,45 @@ describe('the buffering profile follows the screen', () => {
     expect(isTvBrowser(undefined)).toBe(false);
   });
 
-  test('every screen gets the same profile now', () => {
-    /*
-     * The split was the bug, so this is the rule worth pinning.
-     *
-     * A television was given a read-ahead buffer and no latency chasing, and it
-     * worked. A desktop was given the exact opposite on the theory that a laptop
-     * has bandwidth to spare -- and bandwidth was never what was wrong. These
-     * are media-streamer's live TV numbers, which survive an evening on the same
-     * provider lines this player was dying on.
-     */
-    expect(playerConfig(false)).toEqual(playerConfig(true));
-  });
-
-  test('nothing closes drift by seeking', () => {
-    /*
-     * liveBufferLatencyChasing assigns to currentTime. That is a hard seek, MSE
-     * rebuilds the decode pipeline on every one, it is evaluated on every
-     * appended fragment, and it leaves only liveBufferLatencyMinRemain seconds
-     * of buffer behind -- one second, as it was set. One second is a single
-     * jitter spike from an underrun; the underrun refills past the ceiling; it
-     * seeks again. Each hitch was also a chance to spend a restart, which is how
-     * a stutter turned into a stream that ended.
-     */
-    expect(playerConfig(false).liveBufferLatencyChasing).toBe(false);
-  });
-
-  test('every screen reads ahead rather than demuxing whatever just landed', () => {
-    // A transport stream arrives in bursts regardless of the viewer's
-    // bandwidth, so with nothing in front of the demuxer every gap between
-    // bursts is an underrun. On a desktop this was 128 *bytes*.
-    const config = playerConfig(false);
-    expect(config.enableStashBuffer).toBe(true);
-    expect(config.stashInitialSize).toBe(384 * 1024);
-  });
-
-  test('the demuxer does NOT run off the main thread', () => {
-    /*
-     * A regression test with a real outage behind it.
-     *
-     * `enableWorker: true` reads like free performance and media-streamer's
-     * live TV player does set it, so it was copied over -- and every stream
-     * stopped playing. mpegts.js builds its worker by stringifying
-     * `__webpack_modules__`, webpack's internal module registry. media-streamer
-     * is Next.js, so that global is there. This bundle is built by Bun, so it
-     * is not, and the worker is broken.
-     *
-     * The failure is silent: Transmuxer's try/catch only sees a SYNCHRONOUS
-     * throw, and a Worker that constructs from a bad blob fails asynchronously.
-     * Nothing throws, nothing falls back to inline transmuxing, no init segment
-     * ever arrives, and the player reports no error at all.
-     *
-     * Do not turn this on again without changing how this file is bundled.
-     */
-    expect(playerConfig(false).enableWorker).toBe(false);
-  });
-
-  test('both profiles still drop what has been watched, and never idle', () => {
-    // Without the cleanup a three hour match fills the source buffer and the tab
-    // is killed -- soonest on exactly the device this is all for. lazyLoad would
-    // drop the provider connection mid-match, on a line that permits one.
-    for (const config of [playerConfig(true), playerConfig(false)]) {
-      expect(config.autoCleanupSourceBuffer).toBe(true);
-      expect(config.lazyLoad).toBe(false);
-    }
+  /*
+   * The buffering profile itself (one for every screen, no latency chasing, a
+   * 384KB stash, no worker under a non-webpack bundler, cleanup on, lazyLoad
+   * off) now lives in @profullstack/player's transport stream engine and is
+   * pinned by its own test/mpegts-config.test.ts. What is pinned here is that
+   * this site hands it the television answer rather than baking one in.
+   */
+  test('the television answer is passed to the house player', () => {
+    const entry = readFileSync(
+      new URL('../apps/web/src/client/player-entry.js', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(entry).toContain('isTv: isTvBrowser(navigator.userAgent)');
   });
 });
 
 /**
- * When the restart budget comes back, which is what "the stream dies after a
- * minute or two" turned out to mean.
+ * The restart budget (five rebuilds doubling from two seconds, refilled on
+ * `playing`) is the house player's, and test/player-restart.test.js drives it
+ * through this site's attach. What is pinned here is that nothing local
+ * reimplements it.
  */
-describe('the restart budget', () => {
+describe('the delivery is the house player', () => {
   const entry = readFileSync(
     new URL('../apps/web/src/client/player-entry.js', import.meta.url).pathname,
     'utf8',
   );
 
-  test('a picture refills it', () => {
-    /*
-     * It used to refill only after thirty unbroken seconds, measured from the
-     * last restart and checked solely from inside the stall watcher. Three
-     * hiccups inside half a minute therefore spent the whole allowance and the
-     * channel was given up on for good -- even though all three restarts had
-     * worked and the picture was back within seconds each time. On a provider
-     * line that drops a connection now and then, that is a hard ceiling of
-     * three recoveries per stream, about a minute's worth.
-     */
-    expect(entry).toMatch(/const onPlaying = \(\) => \{\s*restarts = 0;/);
-    expect(entry).not.toContain('RECOVERED_AFTER_MS');
+  test('attachSource does the work, as a transport stream', () => {
+    expect(entry).toContain("from '@profullstack/player'");
+    expect(entry).toContain('attachSource(video');
+    expect(entry).toContain("kind: 'mpegts'");
+    expect(entry).toContain('withCredentials: true');
   });
 
-  test('a channel that never plays is still given up on', () => {
-    // The budget is spent by failures to RECOVER, not by failures. Nothing ever
-    // fires `playing` for a channel that never starts, so the bound still holds.
-    expect(entry).toMatch(/const MAX_RESTARTS = 5;/);
-    expect(entry).toContain('if (restarts >= MAX_RESTARTS) return giveUp(finalMessage);');
+  test('no demuxer of our own', () => {
+    expect(entry).not.toContain("from 'mpegts.js'");
+    expect(entry).not.toContain('mpegts.createPlayer');
+    expect(entry).not.toContain('MAX_RESTARTS');
   });
 });
 
@@ -425,13 +373,16 @@ describe('the player asks at the right moment', () => {
     new URL('../apps/web/src/client/player-entry.js', import.meta.url).pathname,
     'utf8',
   );
+  const errors = readFileSync(
+    new URL('../apps/web/src/client/stream-errors.js', import.meta.url).pathname,
+    'utf8',
+  );
 
-  test('the check hangs off media info, not off the button', () => {
-    // Nothing about a channel says what is inside it until the demuxer has read
-    // the stream: the playlist gives a name and a URL, the response gives
-    // video/mp2t, and a transport stream carries whatever was put in it.
-    expect(entry).toContain('mpegts.Events.MEDIA_INFO');
-    expect(entry).toMatch(/unplayableReason\(\s*info\b/);
+  test('the codec check is the house one, in our words', () => {
+    // The engine checks on media info, the first honest moment. What it says
+    // is ours: the word "channel" and the VLC button beside Play.
+    expect(entry).toContain('unplayableAdvice: ADVICE');
+    expect(entry).toContain("unplayableSubject: 'channel'");
   });
 
   test('the failure detail is no longer dropped on the floor', () => {
@@ -439,12 +390,7 @@ describe('the player asks at the right moment', () => {
     // "the stream is malformed", and it was being discarded.
     // A regex, not a string literal: writing the placeholder as text trips the
     // lint rule that looks for accidental template interpolation.
-    expect(entry).toMatch(/That stream could not be played here \(\$\{detail\}\)/);
-  });
-
-  test('the profile is chosen from the user agent, not baked in', () => {
-    // The settings used to be a literal in the createPlayer call, which is how a
-    // laptop's tuning came to be what a Fire TV got.
-    expect(entry).toContain('playerConfig(isTvBrowser(navigator.userAgent))');
+    expect(errors).toMatch(/That stream could not be played here \(\$\{detail\}\)/);
+    expect(entry).toContain('onStreamError: classifyStreamError');
   });
 });

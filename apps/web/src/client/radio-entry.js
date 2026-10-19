@@ -79,21 +79,21 @@ function mediaSession(media, meta, onStop) {
 const AD_EVERY_SECONDS = 10;
 
 function play(stage, src, meta) {
-  const media = document.createElement('audio');
-  media.autoplay = true;
-  stage.append(media);
+  // The player builds its own <audio>: `audio: true` is what tells it a live
+  // .m3u8 has no picture, and it hands the element back for the lock screen and
+  // the ad breaks, which both need it.
   const player = createPlayer(stage, {
     src,
     kind: 'hls',
     audio: true,
     live: true,
-    media,
     autoplay: true,
     withCredentials: true,
     unplayableAdvice: '',
     // A live station has no position worth remembering.
     mediaId: undefined,
   });
+  const { media } = player;
   // Adverts between songs on a live station.
   //
   // attachAds is the house player's own break machinery, so nothing about
@@ -135,7 +135,6 @@ function play(stage, src, meta) {
     // two of them running against elements nobody can see.
     ads.destroy();
     player.destroy();
-    media.remove();
   };
 }
 

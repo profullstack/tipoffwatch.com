@@ -501,3 +501,84 @@
   margin-bottom: 0.5rem;
   max-width: none;
 }
+
+/* ---------------------------------------------------------------- adverts -- */
+
+/*
+ * The advert sits over the stage rather than replacing the programme, so the
+ * engine underneath keeps its buffer and, on a live stream, its position.
+ */
+.pux-ad {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  background: #000;
+}
+
+.pux-ad__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.pux-ad__badge {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.25rem;
+  background: rgb(0 0 0 / 0.65);
+  color: #fff;
+  font:
+    600 0.75rem/1.4 system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pux-ad__skip {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid rgb(255 255 255 / 0.4);
+  border-radius: 0.3rem;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+  font:
+    500 0.85rem/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+
+.pux-ad__skip[disabled] {
+  cursor: default;
+  opacity: 0.65;
+}
+
+/* The programme's own bar is not reachable while an advert is up. */
+.pux-player--ad .pux-player__bar,
+.pux-player--ad .pux-player__overlay {
+  pointer-events: none;
+  opacity: 0;
+}
+
+/*
+ * An audio advert has no picture. The layer stays only to carry the badge and
+ * the countdown, so the artwork underneath is not covered by a black rectangle
+ * for the length of an MP3.
+ */
+.pux-ad--audio {
+  background: rgb(0 0 0 / 0.35);
+}
+
+.pux-ad--audio .pux-ad__video {
+  display: none;
+}
+
+.pux-ad__audio {
+  display: none;
+}

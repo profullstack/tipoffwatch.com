@@ -4793,9 +4793,10 @@ const STATIC_FILES = [
   ['/diag.js', 'diag.js', 'text/javascript'],
   ['/push-check.js', 'push-check.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
-  // Fetched by app.js on the first press of Play, not linked by the Layout: it is
-  // a quarter of a megabyte of demuxer that most readers never need.
-  ['/vendor-mpegts.js', 'vendor-mpegts.js', 'text/javascript'],
+  // Fetched by app.js on the first press of Play, not linked by the Layout: the
+  // house player's transport stream engine is a quarter of a megabyte of demuxer
+  // that most readers never need.
+  ['/vendor-player-ts.js', 'vendor-player-ts.js', 'text/javascript'],
   // Same again for the radio player and its stylesheet: fetched on the first
   // press of Play on a station, by app.js.
   ['/vendor-player.js', 'vendor-player.js', 'text/javascript'],
