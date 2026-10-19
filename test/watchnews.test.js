@@ -265,8 +265,8 @@ describe('no view hardcodes the sports vocabulary', () => {
   const layout = read('apps/web/src/views/Layout.jsx');
 
   test('the footer names the brand it is serving', () => {
-    expect(layout).not.toContain('TipoffWatch is free');
-    expect(layout).toContain('{brand.name} is free');
+    expect(layout).not.toContain('TipoffWatch');
+    expect(layout).toContain('{brand.name}');
   });
 
   test("the browse blurb is per brand, not one site's sentence", () => {

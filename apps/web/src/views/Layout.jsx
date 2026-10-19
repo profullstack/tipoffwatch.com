@@ -1,33 +1,23 @@
-import { footerHtml } from '@profullstack/footer';
-import { brand, config, dataSource, href, network, Word } from '@tipoff/config';
+import { brand, config, dataSource, href, Word } from '@tipoff/config';
 import { getContext } from 'hono/context-storage';
 import { raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 import { serialise, siteGraph } from '../lib/jsonld.js';
+import { pitFooterHtml } from '../lib/pit-footer.js';
 
 /**
- * @profullstack/footer, rendered on the server per request (it caches its
- * template for an hour), with this response's CSP nonce on its <style>. Outside
- * a request (tests) there is no nonce and the footer still renders.
+ * The pit.world network footer, last in <body>, with this response's CSP nonce
+ * on its <style>. Outside a request (tests) there is no nonce and it still
+ * renders; when pit.world cannot be reached it renders nothing.
  */
-const ProfullstackFooter = async () => {
+const PitFooter = async () => {
   let nonce;
   try {
     nonce = getContext().get('styleNonce');
   } catch {
     nonce = undefined;
   }
-  return raw(
-    await footerHtml({
-      site: `https://${brand.domain}/`,
-      nonce,
-      links: [
-        { label: 'Contact', href: '/contact' },
-        { label: 'Privacy', href: '/privacy' },
-        { label: 'Terms', href: '/terms' },
-      ],
-    }),
-  );
+  return raw(await pitFooterHtml(nonce));
 };
 
 /**
@@ -300,16 +290,15 @@ export const Layout = (props) => {
         <main id="main">{props.children}</main>
 
         <footer>
-          <p>
-            {brand.name} is free. Times are shown in your own time zone (
-            <span data-tz-label>your device</span>).
-          </p>
-          {/* Where the rows actually came from, per brand. This used to name ESPN
-            and a tennis API on every site, which was wrong on the two that have
-            never called either -- and a credit that names the wrong upstream is
-            worse than no credit, because a reader takes it as a fact. */}
           <p class="muted">
-            {brand.sources.lead}{' '}
+            <a href="/about">About</a> · <a href="/feeds">RSS &amp; calendars</a> ·{' '}
+            <a href="/api/v1">Public API</a> · <a href="/contact">Contact</a> ·{' '}
+            <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
+          </p>
+          {/* Where the rows actually came from, per brand: a credit that names the
+            wrong upstream is worse than none, because a reader takes it as fact. */}
+          <p class="muted">
+            © {new Date().getFullYear()} {brand.name} · {brand.sources.lead}{' '}
             {brand.sources.list.map((s, i) => (
               <>
                 {i > 0 ? (i === brand.sources.list.length - 1 ? ' and ' : ', ') : ''}
@@ -319,35 +308,14 @@ export const Layout = (props) => {
               </>
             ))}
             . {brand.sources.note}
-          </p>
-          <p class="muted">
-            <a href={href.category()}>{brand.words.browse}</a> · <a href="/about">About</a> ·{' '}
-            <a href="/feeds">RSS &amp; calendars</a> · <a href="/api/v1">Public API</a>
-          </p>
-          {/* The rest of the network, on every page of every site in it.
-              The site the reader is already on is named but not linked: a link
-              to where you already are is noise, while leaving it out entirely
-              would make each footer a different list and lose the fact that
-              these three are one shop. */}
-          <p class="muted">
-            {network.map((site, i) => (
+            {brand.sources.note.includes(dataSource.name) ? null : (
               <>
-                {i ? ' · ' : null}
-                {site.domain === brand.domain ? (
-                  <span aria-current="true">{site.name}</span>
-                ) : (
-                  <a href={site.url}>{site.name}</a>
-                )}
+                {' '}
+                Data furnished by <a href={dataSource.url}>{dataSource.name}</a>.
               </>
-            ))}
-            {' · '}Data furnished by <a href={dataSource.url}>{dataSource.name}</a>
+            )}
           </p>
         </footer>
-        {/* The bottom bar: @profullstack/footer, the same on every Profullstack
-            site (links, copyright, the webring). Contact, Privacy and Terms
-            moved into it: a privacy policy nobody can find is a privacy policy
-            nobody has, and this is on every page. */}
-        <ProfullstackFooter />
 
         {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}
@@ -355,6 +323,7 @@ export const Layout = (props) => {
         <script src={assetUrl('app.js')} defer />
         {/* One page needs a script of its own; the rest must not carry it. */}
         {props.script ? <script src={props.script} defer /> : null}
+        <PitFooter />
       </body>
     </html>
   );
