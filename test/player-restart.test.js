@@ -17,6 +17,11 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
  * file is about which errors are which -- because reconnecting to the wrong one
  * means three more connections on a line that suspends accounts for concurrency.
  *
+ * The ladder itself is @profullstack/player's transport stream engine now;
+ * this file drives it through the site's own attach, with mpegts.js mocked
+ * underneath, so the statuses our proxy answers with are still pinned to what
+ * the reader is told and whether the line is tried again.
+ *
  * Both clocks are driven by hand. Real timers would make a test of a backoff
  * schedule take eleven seconds and still be flaky.
  */
@@ -119,6 +124,7 @@ function fakeVideo() {
     },
     removeAttribute: () => {},
     load: () => {},
+    play: () => Promise.resolve(),
   };
 }
 
@@ -133,10 +139,14 @@ const DESKTOP =
  * goes looking for `window.location.pathname`, which took nine unrelated database
  * tests down the first time this was written without the restore.
  */
-const REAL = { window: globalThis.window, navigator: globalThis.navigator };
+const REAL = {
+  window: globalThis.window,
+  navigator: globalThis.navigator,
+  MediaSource: globalThis.MediaSource,
+};
 
 function restoreGlobals() {
-  for (const key of ['window', 'navigator']) {
+  for (const key of ['window', 'navigator', 'MediaSource']) {
     if (REAL[key] === undefined) {
       try {
         delete globalThis[key];
@@ -151,9 +161,10 @@ function restoreGlobals() {
 
 /** Chromium's real answers, so the codec check behaves as it does in a browser. */
 function fakeGlobals() {
-  globalThis.window = {
-    MediaSource: { isTypeSupported: (t) => /avc1|mp4a\.40\.(2|5|29)\b/.test(t) },
-  };
+  const MediaSource = { isTypeSupported: (t) => /avc1|mp4a\.40\.(2|5|29)\b/.test(t) };
+  globalThis.window = { MediaSource };
+  // The house player reads globalThis, which in a browser IS window.
+  globalThis.MediaSource = MediaSource;
   globalThis.navigator = { userAgent: DESKTOP };
 }
 
@@ -203,8 +214,14 @@ afterEach(() => {
   restoreGlobals();
 });
 
-/** Start a player and hand back everything a test needs to poke at it. */
-function play() {
+/**
+ * Start a player and hand back everything a test needs to poke at it.
+ *
+ * Async because the house player's engine arrives by dynamic import: attach
+ * returns its teardown at once, and the first mpegts.js player is built a
+ * moment later. Bun.sleep is Bun's own timer, untouched by the fake clock.
+ */
+async function play() {
   const video = fakeVideo();
   const errors = [];
   const notices = [];
@@ -214,12 +231,13 @@ function play() {
     (m) => errors.push(m),
     (m) => notices.push(m),
   );
+  for (let i = 0; i < 50 && built.length === 0; i += 1) await Bun.sleep(1);
   return { video, errors, notices, stop, latest: () => built[built.length - 1] };
 }
 
 describe('an MSE failure is a reason to reconnect', () => {
-  test('the first one rebuilds the player rather than reporting', () => {
-    const { errors, notices, latest } = play();
+  test('the first one rebuilds the player rather than reporting', async () => {
+    const { errors, notices, latest } = await play();
     const first = latest();
 
     first.emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
@@ -236,8 +254,8 @@ describe('an MSE failure is a reason to reconnect', () => {
     expect(latest().destroyed).toBe(false);
   });
 
-  test('the waits double from two seconds', () => {
-    const { errors, latest } = play();
+  test('the waits double from two seconds', async () => {
+    const { errors, latest } = await play();
 
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
     clock.advance(2000);
@@ -250,8 +268,8 @@ describe('an MSE failure is a reason to reconnect', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a sixth failure is the reader being told, in the original words', () => {
-    const { errors, latest } = play();
+  test('a sixth failure is the reader being told, in the original words', async () => {
+    const { errors, latest } = await play();
 
     // Six, not four: the allowance went 3 -> 5 to match media-streamer's live
     // TV player. None of these is separated by a picture, so none of them
@@ -271,8 +289,8 @@ describe('an MSE failure is a reason to reconnect', () => {
     expect(built).toHaveLength(count);
   });
 
-  test('a dropped connection reconnects too', () => {
-    const { errors, latest } = play();
+  test('a dropped connection reconnects too', async () => {
+    const { errors, latest } = await play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', {});
     clock.advance(2000);
     expect(built).toHaveLength(2);
@@ -299,8 +317,8 @@ describe('what must never be reconnected', () => {
   ];
 
   for (const [code, expected] of terminal) {
-    test(`${code} is reported once and never retried`, () => {
-      const { errors, latest } = play();
+    test(`${code} is reported once and never retried`, async () => {
+      const { errors, latest } = await play();
       latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code });
 
       expect(errors).toHaveLength(1);
@@ -321,8 +339,8 @@ describe('what must never be reconnected', () => {
    * stream -- for a channel that was playing five seconds earlier and would
    * have played again on the next attempt.
    */
-  test('503 -- the line is busy -- reconnects rather than ending the match', () => {
-    const { errors, latest } = play();
+  test('503 -- the line is busy -- reconnects rather than ending the match', async () => {
+    const { errors, latest } = await play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
 
     expect(errors).toHaveLength(0);
@@ -335,7 +353,7 @@ describe('what must never be reconnected', () => {
     expect(built).toHaveLength(2);
   });
 
-  test('a busy line still gives up eventually, in words that name it', () => {
+  test('a busy line still gives up eventually, in words that name it', async () => {
     /*
      * Advanced by exactly the wait each time, which is not fussiness: the stall
      * watcher is re-armed by every rebuild, and running the clock past fifteen
@@ -344,7 +362,7 @@ describe('what must never be reconnected', () => {
      * The ladder is doubling from six seconds rather than from two.
      */
     const waits = [6_000, 12_000, 24_000, 48_000, 96_000];
-    const { errors, latest } = play();
+    const { errors, latest } = await play();
 
     for (const wait of waits) {
       latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
@@ -360,8 +378,8 @@ describe('what must never be reconnected', () => {
     expect(errors[0]).toContain('busy');
   });
 
-  test('504 -- the provider did not answer in time -- reconnects on the usual ladder', () => {
-    const { errors, latest } = play();
+  test('504 -- the provider did not answer in time -- reconnects on the usual ladder', async () => {
+    const { errors, latest } = await play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 504 });
 
     expect(errors).toHaveLength(0);
@@ -371,10 +389,10 @@ describe('what must never be reconnected', () => {
     expect(built).toHaveLength(2);
   });
 
-  test('a picture between hiccups means a busy line is survived indefinitely', () => {
+  test('a picture between hiccups means a busy line is survived indefinitely', async () => {
     // The whole point of the budget refilling on `playing`: a line that is busy
     // now and then, which is all of them, must not accumulate toward a ceiling.
-    const { errors, video, latest } = play();
+    const { errors, video, latest } = await play();
     for (let i = 0; i < 12; i += 1) {
       latest().emit(EVENTS.ERROR, ERROR_TYPES.NETWORK_ERROR, 'Exception', { code: 503 });
       clock.advance(6_000);
@@ -384,10 +402,10 @@ describe('what must never be reconnected', () => {
     expect(built).toHaveLength(13);
   });
 
-  test('a codec this browser cannot decode is terminal, not retried', () => {
+  test('a codec this browser cannot decode is terminal, not retried', async () => {
     // A browser without an HEVC decoder will not have grown one by the second
     // attempt. Reconnecting three times to fail the same way wastes the line.
-    const { errors, latest } = play();
+    const { errors, latest } = await play();
     latest().emit(EVENTS.MEDIA_INFO, { videoCodec: 'hvc1.1.6.L93.B0', audioCodec: 'mp4a.40.2' });
 
     expect(errors).toHaveLength(1);
@@ -396,9 +414,9 @@ describe('what must never be reconnected', () => {
     expect(built).toHaveLength(1);
   });
 
-  test('AAC Main is not an error at all any more', () => {
+  test('AAC Main is not an error at all any more', async () => {
     // The Silk bug: mpegts.js rewrites this to LC before MSE ever sees it.
-    const { errors, notices, latest } = play();
+    const { errors, notices, latest } = await play();
     latest().emit(EVENTS.MEDIA_INFO, { videoCodec: 'avc1.64001f', audioCodec: 'mp4a.40.1' });
     expect(errors).toEqual([]);
     expect(notices).toEqual([]);
@@ -406,10 +424,10 @@ describe('what must never be reconnected', () => {
 });
 
 describe('a stream that stops sending without ever erroring', () => {
-  test('fifteen seconds of a frozen clock is treated as the failure it is', () => {
+  test('fifteen seconds of a frozen clock is treated as the failure it is', async () => {
     // The picture stops, the socket stays open, and mpegts.js reports nothing
     // because nothing failed. On a stick this is how an evening usually ends.
-    const { video, notices } = play();
+    const { video, notices } = await play();
 
     // Playing normally, and then the clock stops moving.
     video.currentTime = 12;
@@ -424,8 +442,8 @@ describe('a stream that stops sending without ever erroring', () => {
     expect(notices.at(-1)).toContain('Reconnecting');
   });
 
-  test('a clock that is still moving is left alone', () => {
-    const { video, notices, errors } = play();
+  test('a clock that is still moving is left alone', async () => {
+    const { video, notices, errors } = await play();
     for (let i = 0; i < 10; i += 1) {
       video.currentTime += 5;
       clock.advance(5000);
@@ -434,8 +452,8 @@ describe('a stream that stops sending without ever erroring', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a paused video is not a stalled one', () => {
-    const { video, notices } = play();
+  test('a paused video is not a stalled one', async () => {
+    const { video, notices } = await play();
     video.paused = true;
     clock.advance(60_000);
     expect(notices.filter(Boolean)).toEqual([]);
@@ -455,8 +473,8 @@ describe('the reconnect budget', () => {
    * which is all of them, that is a hard ceiling of three recoveries per stream
    * and about a minute of watching.
    */
-  test('a picture earns it back, immediately', () => {
-    const { video, latest, errors } = play();
+  test('a picture earns it back, immediately', async () => {
+    const { video, latest, errors } = await play();
 
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
     clock.advance(2000);
@@ -472,10 +490,10 @@ describe('the reconnect budget', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a channel that recovers every time is never given up on', () => {
+  test('a channel that recovers every time is never given up on', async () => {
     // The point of the change. Under the old rule this stream was dead on the
     // fourth hiccup however well it played in between.
-    const { video, latest, errors } = play();
+    const { video, latest, errors } = await play();
 
     for (let i = 0; i < 12; i += 1) {
       latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
@@ -486,13 +504,13 @@ describe('the reconnect budget', () => {
     expect(errors).toEqual([]);
   });
 
-  test('a clock that moves is not the same as a picture', () => {
+  test('a clock that moves is not the same as a picture', async () => {
     /*
      * The budget refills on `playing`, not on the stall watcher seeing progress.
      * That distinction is what keeps the bound real: a channel that never
      * actually resumes never fires `playing`, so it still runs out.
      */
-    const { video, latest, errors } = play();
+    const { video, latest, errors } = await play();
 
     for (const wait of [0, 2000, 4000, 8000, 16_000, 32_000]) {
       clock.advance(wait);
@@ -503,8 +521,8 @@ describe('the reconnect budget', () => {
     expect(errors).toHaveLength(1);
   });
 
-  test('the notice comes off the page as soon as there is a picture', () => {
-    const { video, notices, latest } = play();
+  test('the notice comes off the page as soon as there is a picture', async () => {
+    const { video, notices, latest } = await play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
     clock.advance(1500);
     expect(notices.at(-1)).toContain('Reconnecting');
@@ -515,11 +533,11 @@ describe('the reconnect budget', () => {
 });
 
 describe('stopping means stopping', () => {
-  test('a pending reconnect is cancelled, not left to fire into a dead page', () => {
+  test('a pending reconnect is cancelled, not left to fire into a dead page', async () => {
     // The teardown path runs on Stop, on a client-side navigation that replaces
     // <main>, and on pagehide. A timer surviving any of those opens a connection
     // on the reader's line for a player that is no longer on screen.
-    const { stop, latest } = play();
+    const { stop, latest } = await play();
     latest().emit(EVENTS.ERROR, ERROR_TYPES.MEDIA_ERROR, 'MediaMSEError', {});
     stop();
 
@@ -528,16 +546,16 @@ describe('stopping means stopping', () => {
     expect(clock.pending()).toBe(0);
   });
 
-  test('the stall watcher stops with it', () => {
-    const { video, stop, notices } = play();
+  test('the stall watcher stops with it', async () => {
+    const { video, stop, notices } = await play();
     video.currentTime = 3;
     stop();
     clock.advance(60_000);
     expect(notices.filter(Boolean)).toEqual([]);
   });
 
-  test('the player is destroyed, which is what releases the socket', () => {
-    const { stop, latest } = play();
+  test('the player is destroyed, which is what releases the socket', async () => {
+    const { stop, latest } = await play();
     const player = latest();
     stop();
     expect(player.destroyed).toBe(true);

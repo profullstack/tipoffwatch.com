@@ -6,14 +6,19 @@ import { dirname } from 'node:path';
  * Bundled rather than pulled from a CDN: the page must keep working under a strict
  * CSP and with no third-party origin in the critical path of signing in.
  *
- * Two bundles rather than one, and deliberately so. The WebAuthn helper is small
- * and loads on every page; the player carries a whole MPEG-2 transport stream
- * demuxer and loads only when somebody presses play. Merging them would put a few
- * hundred kilobytes on every page view to serve the handful that watch.
+ * Separate bundles, and deliberately so. The WebAuthn helper is small and loads
+ * on every page; the players load only when somebody presses play. Merging them
+ * would put a few hundred kilobytes on every page view to serve the handful that
+ * watch.
+ *
+ * Every player bundle is @profullstack/player. The live TV one takes its
+ * transport stream engine (the MPEG-2 demuxer) and leaves hls.js out; the radio
+ * and news ones take hls.js and leave the demuxer out. One package, cut two ways,
+ * so nobody pressing Play downloads an engine their source will never use.
  */
 const BUNDLES = [
   ['webauthn-entry.js', 'vendor-webauthn.js'],
-  ['player-entry.js', 'vendor-mpegts.js'],
+  ['player-entry.js', 'vendor-player-ts.js'],
   // The house player with its control bar, for radio. A third bundle rather than
   // a second entry in the second: a reader pressing Play on a channel row must
   // not download hls.js, and one pressing Play on a station must not download
@@ -67,6 +72,15 @@ const hlsLight = {
 const HLS_ONLY = { external: ['mpegts.js'], plugins: [hlsLight] };
 const PLAYER_BUNDLES = new Set(['radio-entry.js', 'watch-entry.js']);
 
+/**
+ * The live TV bundle is the mirror image: transport streams only. The player
+ * loads its engines on demand and a bundler with no code splitting inlines
+ * every dynamic import, so hls.js is marked external -- the import stays a bare
+ * specifier that a channel row, always `kind: 'mpegts'`, never reaches.
+ */
+const TS_ONLY = { external: ['hls.js'] };
+const TS_BUNDLES = new Set(['player-entry.js']);
+
 for (const [entry, name] of BUNDLES) {
   const out = await Bun.build({
     entrypoints: [new URL(`./src/client/${entry}`, import.meta.url).pathname],
@@ -75,6 +89,7 @@ for (const [entry, name] of BUNDLES) {
     minify: true,
     target: 'browser',
     ...(PLAYER_BUNDLES.has(entry) ? HLS_ONLY : {}),
+    ...(TS_BUNDLES.has(entry) ? TS_ONLY : {}),
   });
   if (!out.success) {
     for (const l of out.logs) console.error(l);

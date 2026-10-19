@@ -85,7 +85,7 @@ describe('the page', () => {
     const html = await render(
       Multiview({ user, hasList: true, tiles, allowance: 1, panelConnections: null, live: [] }),
     );
-    expect(html).toContain('data-mv-player-src="/vendor-mpegts.js');
+    expect(html).toContain('data-mv-player-src="/vendor-player-ts.js');
     expect(html).not.toContain('data-player-src=');
   });
 

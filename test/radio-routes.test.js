@@ -135,6 +135,10 @@ describe('radio routes', () => {
     expect(entry).toContain('audio: true');
     expect(entry).toContain("kind: 'hls'");
     expect(entry).toContain('live: true');
+    // The player builds the <audio> itself and hands it back, rather than this
+    // file making one and passing it in.
+    expect(entry).not.toContain("createElement('audio')");
+    expect(entry).toContain('const { media } = player;');
   });
 
   test('the bar carries ad breaks, and tears them down with the station', async () => {

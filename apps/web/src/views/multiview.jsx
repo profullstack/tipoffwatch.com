@@ -117,7 +117,7 @@ export const Multiview = ({
       data-multiview
       data-max={allowance}
       data-max-tiles={maxTiles}
-      data-mv-player-src={assetUrl('vendor-mpegts.js')}
+      data-mv-player-src={assetUrl('vendor-player-ts.js')}
       data-search="/api/my/channels/search"
     >
       <div class="mv-head">

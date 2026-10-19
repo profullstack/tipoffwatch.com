@@ -436,7 +436,7 @@ const BroadcastMarkets = ({ event, marketChannels, managed = false }) => {
     <section
       class="markets"
       data-markets
-      data-player-src={marketChannels ? assetUrl('vendor-mpegts.js') : null}
+      data-player-src={marketChannels ? assetUrl('vendor-player-ts.js') : null}
     >
       <h2>Where to watch</h2>
       <p class="muted small">
@@ -1327,7 +1327,7 @@ export const TeamPage = ({
       nothing is scheduled.
     */}
       {ownChannels?.hasList && (ownChannels.matches.length || ownChannels.competition?.length) ? (
-        <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+        <section class="own-line" data-player-src={assetUrl('vendor-player-ts.js')}>
           <h2>On your line</h2>
           <p class="muted small">
             Channels on your own list that name {team.display_name}
@@ -2313,7 +2313,7 @@ export const EventPage = ({
           an unversioned URL is served with a sixty-second cache, so a deploy
           would take an hour to reach anyone. */}
       {ownChannels?.hasList ? (
-        <section class="own-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+        <section class="own-line" data-player-src={assetUrl('vendor-player-ts.js')}>
           <h2>On your line</h2>
           {/* Sent here by the .m3u route when every candidate it probed was dead.
               Naming what the provider actually said beats "something went wrong":
@@ -2413,7 +2413,7 @@ export const EventPage = ({
         their own still gets a player, which that guard would otherwise deny them.
       */}
       {sharedChannels?.channelCount > 0 ? (
-        <section class="own-line shared-line" data-player-src={assetUrl('vendor-mpegts.js')}>
+        <section class="own-line shared-line" data-player-src={assetUrl('vendor-player-ts.js')}>
           <h2>Shared with you</h2>
           {sharedChannels.channels.length > 0 || sharedChannels.network?.length ? (
             <>
