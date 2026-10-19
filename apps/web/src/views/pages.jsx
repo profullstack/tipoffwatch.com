@@ -576,13 +576,14 @@ export const Landing = ({ user, today }) => (
       <p class="muted small">Free forever. No app to install — add it to your home screen.</p>
     </section>
 
+    {/* Between the hero and the day's games: top of the content, never at the
+        bottom pressed against the footer. */}
+    <Ad />
+
     <section>
       <h2>Today</h2>
       <EventList events={today} emptyText="No games scheduled today." />
     </section>
-
-    {/* After the day's games: a seam where the reader has finished the list. */}
-    <Ad />
   </Layout>
 );
 
@@ -2095,6 +2096,11 @@ export const EventPage = ({
 
       {done && recap ? <Recap event={event} recap={recap} /> : null}
 
+      {/* A seam after the fixture's facts and its story, with the watch options,
+          follow and comments still below: in the page, never at the bottom
+          pressed against the footer. */}
+      <Ad />
+
       <BroadcastMarkets
         event={event}
         marketChannels={marketChannels}
@@ -2522,8 +2528,6 @@ export const EventPage = ({
           </ul>
         )}
       </section>
-
-      <Ad />
     </Layout>
   );
 };
