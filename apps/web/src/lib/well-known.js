@@ -1,3 +1,4 @@
+import { SCRAPER_AGENTS, TRAINING_AGENTS } from '@profullstack/x402-gateway/agents';
 import { robotsTxt as gatewayRobots } from '@profullstack/x402-gateway/robots';
 import { brand, config, href, Word } from '@tipoff/config';
 
@@ -56,6 +57,8 @@ export const robotsTxt = () =>
     disallow: DISALLOW,
     allow: ALLOW,
     refused: ['AwarioBot'],
+    // SEO resellers obey robots.txt, so refusing them here is what stops them asking.
+    training: [...TRAINING_AGENTS, ...SCRAPER_AGENTS],
   });
 
 /**
