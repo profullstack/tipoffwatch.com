@@ -17,6 +17,7 @@
  *                the stream player. Without it Play fails with no console error
  *                that names the cause.
  *   worker-src   blob: as well, for the radio player's demuxing worker.
+ *   frame-src    crawlproof.com only, for the sandboxed display ad frame.
  *   frame-ancestors  the clickjacking control that actually matters; the site is
  *                never meant to be embedded.
  *   form-action  every control on the site is a plain form posting to us, so a
@@ -59,6 +60,14 @@ export const buildPolicy = ({ styleNonce } = {}) =>
      * nothing that script-src has not already decided.
      */
     "worker-src 'self' blob:",
+    /*
+     * The display ad, and nothing else. It is a cross-origin document from
+     * /api/ads/frame rather than ad.js, because ad.js writes the creative into a
+     * srcdoc frame that inherits THIS policy -- and the creative is inline
+     * styles, which style-src above refuses. One frame-src entry is the whole
+     * cost of the frame path.
+     */
+    'frame-src https://crawlproof.com',
     "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
