@@ -1,3 +1,4 @@
+import { footerHtml } from '@profullstack/footer';
 import { brand, config, dataSource, href, Word } from '@tipoff/config';
 import { getContext } from 'hono/context-storage';
 import { raw } from 'hono/html';
@@ -10,6 +11,34 @@ import { pitFooterHtml } from '../lib/pit-footer.js';
  * on its <style>. Outside a request (tests) there is no nonce and it still
  * renders; when pit.world cannot be reached it renders nothing.
  */
+/**
+ * @profullstack/footer: the links, copyright and Profullstack webring row every
+ * fleet site ends with, rendered on the server per request (it caches its
+ * template for an hour) with this response's CSP nonce on its <style>.
+ */
+const ProfullstackFooter = async () => {
+  let nonce;
+  try {
+    nonce = getContext().get('styleNonce');
+  } catch {
+    nonce = undefined;
+  }
+  return raw(
+    await footerHtml({
+      site: `https://${brand.domain}/`,
+      nonce,
+      links: [
+        { label: 'About', href: '/about' },
+        { label: 'RSS & calendars', href: '/feeds' },
+        { label: 'Public API', href: '/api/v1' },
+        { label: 'Contact', href: '/contact' },
+        { label: 'Privacy', href: '/privacy' },
+        { label: 'Terms', href: '/terms' },
+      ],
+    }),
+  );
+};
+
 const PitFooter = async () => {
   let nonce;
   try {
@@ -290,15 +319,10 @@ export const Layout = (props) => {
         <main id="main">{props.children}</main>
 
         <footer>
-          <p class="muted">
-            <a href="/about">About</a> · <a href="/feeds">RSS &amp; calendars</a> ·{' '}
-            <a href="/api/v1">Public API</a> · <a href="/contact">Contact</a> ·{' '}
-            <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a>
-          </p>
           {/* Where the rows actually came from, per brand: a credit that names the
             wrong upstream is worse than none, because a reader takes it as fact. */}
           <p class="muted">
-            © {new Date().getFullYear()} {brand.name} · {brand.sources.lead}{' '}
+            {brand.sources.lead}{' '}
             {brand.sources.list.map((s, i) => (
               <>
                 {i > 0 ? (i === brand.sources.list.length - 1 ? ' and ' : ', ') : ''}
@@ -316,6 +340,8 @@ export const Layout = (props) => {
             )}
           </p>
         </footer>
+        {/* The links, copyright and webring row; the pit.world footer is last. */}
+        <ProfullstackFooter />
 
         {/* Registers the service worker and wires the push opt-in. Everything on the
           site works without this file -- it only adds notifications. */}
