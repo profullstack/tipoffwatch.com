@@ -300,7 +300,7 @@ app.use('*', async (c, next) => {
  */
 app.use('*', async (c, next) => {
   // A fresh nonce per response for the footer's inline <style>; Layout reads it
-  // back through hono/context-storage (see PitFooter there).
+  // back through hono/context-storage (see ProfullstackFooter there).
   const styleNonce = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
   c.set('styleNonce', styleNonce);
   await next();

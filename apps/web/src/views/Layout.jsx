@@ -4,13 +4,7 @@ import { getContext } from 'hono/context-storage';
 import { raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 import { serialise, siteGraph } from '../lib/jsonld.js';
-import { pitFooterHtml } from '../lib/pit-footer.js';
 
-/**
- * The pit.world network footer, last in <body>, with this response's CSP nonce
- * on its <style>. Outside a request (tests) there is no nonce and it still
- * renders; when pit.world cannot be reached it renders nothing.
- */
 /**
  * @profullstack/footer: the links, copyright and Profullstack webring row every
  * fleet site ends with, rendered on the server per request (it caches its
@@ -37,16 +31,6 @@ const ProfullstackFooter = async () => {
       ],
     }),
   );
-};
-
-const PitFooter = async () => {
-  let nonce;
-  try {
-    nonce = getContext().get('styleNonce');
-  } catch {
-    nonce = undefined;
-  }
-  return raw(await pitFooterHtml(nonce));
 };
 
 /**
@@ -340,7 +324,7 @@ export const Layout = (props) => {
             )}
           </p>
         </footer>
-        {/* The links, copyright and webring row; the pit.world footer is last. */}
+        {/* The links, copyright and webring row. */}
         <ProfullstackFooter />
 
         {/* Registers the service worker and wires the push opt-in. Everything on the
@@ -349,7 +333,6 @@ export const Layout = (props) => {
         <script src={assetUrl('app.js')} defer />
         {/* One page needs a script of its own; the rest must not carry it. */}
         {props.script ? <script src={props.script} defer /> : null}
-        <PitFooter />
       </body>
     </html>
   );
