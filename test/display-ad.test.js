@@ -40,6 +40,14 @@ describe('the display ad', () => {
     expect(layout).not.toContain('ad.js');
   });
 
+  test('no page ends with the unit, right above the footer', async () => {
+    const pages = await readFile(
+      new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
+      'utf8',
+    );
+    expect(pages).not.toMatch(/<Ad[^>]*\/>(\s*:\s*null\})?\s*<\/Layout>/);
+  });
+
   test('no slot id is hardcoded in the views', async () => {
     for (const f of ['components.jsx', 'pages.jsx', 'Layout.jsx']) {
       const src = await readFile(
