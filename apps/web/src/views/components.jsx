@@ -1,4 +1,4 @@
-import { href } from '@tipoff/config';
+import { config, href } from '@tipoff/config';
 
 /** Shared bits of markup. Kept small and dumb on purpose. */
 
@@ -632,3 +632,37 @@ export const TeamRow = ({ team, user, next }) => (
     />
   </li>
 );
+
+/**
+ * One CrawlProof display ad, as a script-free cross-origin iframe.
+ *
+ * Not ad.js: ad.js fills a srcdoc frame, a srcdoc document inherits this
+ * site's Content-Security-Policy, and the creative is inline styles that the
+ * policy refuses -- the unit would bill and render blank. /api/ads/frame serves
+ * the same creative as its own document; the cost here is one frame-src entry.
+ *
+ * text_link because it is the one fluid format: 40px tall at any width. Every
+ * banner creative is laid out at its exact pixel width, so a narrower column
+ * crops it, and choosing a size by viewport would need a script. Two units with
+ * CSS hiding one would bill two impressions for one reader, so it is one unit,
+ * one format. It carries its own "Sponsored" mark, so no label is added here.
+ * No theme is passed: the frame answers prefers-color-scheme itself.
+ */
+export const Ad = ({ format = 'text_link' }) => {
+  if (!config.ads.enabled) return null;
+  const src = `${config.ads.origin}/api/ads/frame?slot=${encodeURIComponent(config.ads.slot)}&format=${encodeURIComponent(format)}`;
+  return (
+    <aside class={`ad ad-${format}`} aria-label="Advertisement" data-cp-ad="">
+      {/* No allow-scripts, no allow-same-origin: the creative is static HTML.
+          The popup permissions let its click-through open a new tab. */}
+      <iframe
+        src={src}
+        title="Advertisement"
+        height={40}
+        loading="lazy"
+        scrolling="no"
+        sandbox="allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+      />
+    </aside>
+  );
+};

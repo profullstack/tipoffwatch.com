@@ -3,6 +3,7 @@ import { assetUrl } from '../lib/asset-version.js';
 import { breadcrumbNode, eventNode, faqNode, watchListNode } from '../lib/jsonld.js';
 import { marketsOf } from '../lib/markets.js';
 import {
+  Ad,
   EventList,
   FollowButton,
   KickoffTime,
@@ -579,6 +580,9 @@ export const Landing = ({ user, today }) => (
       <h2>Today</h2>
       <EventList events={today} emptyText="No games scheduled today." />
     </section>
+
+    {/* After the day's games: a seam where the reader has finished the list. */}
+    <Ad />
   </Layout>
 );
 
@@ -2518,6 +2522,8 @@ export const EventPage = ({
           </ul>
         )}
       </section>
+
+      <Ad />
     </Layout>
   );
 };

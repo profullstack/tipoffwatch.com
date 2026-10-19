@@ -2887,3 +2887,18 @@ ul.group-grid .meta {
   border-top: 1px solid var(--line);
   padding-top: 0.9rem;
 }
+
+/*
+ * The one display ad (components.jsx Ad). A sandboxed cross-origin frame with
+ * the text_link creative, which is fluid: full column width, 40px tall. The box
+ * is the frame's own height, so nothing shifts when it loads.
+ */
+.ad {
+  margin: 2rem 0;
+}
+.ad iframe {
+  display: block;
+  width: 100%;
+  height: 40px;
+  border: 0;
+}
