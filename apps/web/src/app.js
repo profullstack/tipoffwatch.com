@@ -44,6 +44,7 @@ import {
 import { Hono } from 'hono';
 import { contextStorage } from 'hono/context-storage';
 import { getCookie, setCookie } from 'hono/cookie';
+import { nextAdvert } from './lib/ads.js';
 import { assetUrl, isCurrentVersion, loadAssetVersions } from './lib/asset-version.js';
 import { attempt, callerAddress, forgive, MISS, VIEW } from './lib/auth-throttle.js';
 import { buildCalendar } from './lib/ics.js';
@@ -80,7 +81,6 @@ import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
 import { RadioPage, RadioSidesFragment } from './views/radio.jsx';
 import { WatchChannel, WatchIndex } from './views/watch.jsx';
-import { nextAdvert } from './lib/ads.js';
 
 export const app = new Hono();
 
@@ -288,7 +288,9 @@ const throttle = createThrottle({
   limit: 100,
   credential: { limit: 600, ceiling: 1200 },
   credentialFrom: (request) => {
-    const m = (request.headers.get('cookie') ?? '').match(new RegExp(`${config.session.cookie}=([^;]+)`));
+    const m = (request.headers.get('cookie') ?? '').match(
+      new RegExp(`${config.session.cookie}=([^;]+)`),
+    );
     return m ? `session:${m[1]}` : null;
   },
   rules: [
@@ -3678,17 +3680,13 @@ app.post('/api/events/:id/buy', async (c) => {
    */
   const { checkoutUrl } = await pay.createCheckout({
     user,
+    // CoinPay files every session under who paid; the hosted page offers every coin + PayPal.
+    email: user.email,
+    accountId: String(user.id),
     amountCents: offer.price_cents,
     currency: offer.currency,
     description: `Stream: ${event.name}`,
     metadata: { event_id: String(event.id), offer_id: String(offer.id) },
-    blockchain: config.payments.blockchain,
-    /*
-     * Normally undefined, and that is right: the upstream then forwards to this
-     * business's own wallet for the chain, and refuses the payment outright if
-     * none is configured. Set only to pay somebody who is not this business.
-     */
-    payTo: config.payments.payoutAddress || undefined,
     successUrl: `${config.siteUrl}/events/${event.id}?paid=1`,
     cancelUrl: `${config.siteUrl}/events/${event.id}`,
   });
@@ -3931,12 +3929,13 @@ app.post('/api/membership/buy', async (c) => {
    */
   const { checkoutUrl } = await pay.createCheckout({
     user,
+    // CoinPay files every session under who paid; the hosted page offers every coin + PayPal.
+    email: user.email,
+    accountId: String(user.id),
     amountCents: config.membership.priceCents,
     currency: config.membership.currency,
     description: `${brand.name} premium, ${config.membership.termDays} days`,
     metadata: { kind: member.MEMBERSHIP_KIND },
-    blockchain: config.payments.blockchain,
-    payTo: config.payments.payoutAddress || undefined,
     successUrl: `${config.siteUrl}/premium?paid=1`,
     cancelUrl: `${config.siteUrl}/premium`,
   });
@@ -4084,13 +4083,14 @@ app.post('/api/live/buy', async (c) => {
   const back = Number.isInteger(eventId) && eventId > 0 ? `/events/${eventId}` : '/live';
   const { checkoutUrl } = await pay.createCheckout({
     user,
+    // CoinPay files every session under who paid; the hosted page offers every coin + PayPal.
+    email: user.email,
+    accountId: String(user.id),
     amountCents: plan.priceCents,
     currency: plan.currency,
     // What the buyer reads at checkout. "Live TV", never the provider.
     description: `${brand.name} Live TV, ${plan.days} days`,
     metadata: { kind: live.LIVE_PASS_KIND, plan: plan.key },
-    blockchain: config.payments.blockchain,
-    payTo: config.payments.payoutAddress || undefined,
     successUrl: `${config.siteUrl}/live?paid=1${back !== '/live' ? `&event=${eventId}` : ''}`,
     cancelUrl: `${config.siteUrl}${back}`,
   });
