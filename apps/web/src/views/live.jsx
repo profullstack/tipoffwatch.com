@@ -139,8 +139,8 @@ export const LivePage = ({
             ))}
           </ul>
           <p class="muted small">
-            Paid in crypto through the same checkout as {brand.copy.premiumTitle}. Access begins the
-            moment the payment settles, usually within a few minutes.
+            Paid through the same checkout as {brand.copy.premiumTitle}: any major coin or PayPal.
+            Access begins the moment the payment settles, usually within a few minutes.
           </p>
         </section>
       ) : null}
