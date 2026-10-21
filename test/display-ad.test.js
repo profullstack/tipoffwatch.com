@@ -48,6 +48,17 @@ describe('the display ad', () => {
     expect(pages).not.toMatch(/<Ad[^>]*\/>(\s*:\s*null\})?\s*<\/Layout>/);
   });
 
+  test('the homepage (Landing) carries no ad unit', async () => {
+    const pages = await readFile(
+      new URL('../apps/web/src/views/pages.jsx', import.meta.url).pathname,
+      'utf8',
+    );
+    const start = pages.indexOf('export const Landing');
+    const landing = pages.slice(start, pages.indexOf('\nexport const ', start + 1));
+    expect(landing.length).toBeGreaterThan(0);
+    expect(landing).not.toMatch(/<Ad\b/);
+  });
+
   test('no slot id is hardcoded in the views', async () => {
     for (const f of ['components.jsx', 'pages.jsx', 'Layout.jsx']) {
       const src = await readFile(

@@ -2894,7 +2894,7 @@ ul.group-grid .meta {
  * is the frame's own height, so nothing shifts when it loads.
  */
 .ad {
-  margin: 2rem 0;
+  margin: 0.5rem 0;
 }
 .ad iframe {
   display: block;

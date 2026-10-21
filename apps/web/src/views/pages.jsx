@@ -576,9 +576,7 @@ export const Landing = ({ user, today }) => (
       <p class="muted small">Free forever. No app to install — add it to your home screen.</p>
     </section>
 
-    {/* Between the hero and the day's games: top of the content, never at the
-        bottom pressed against the footer. */}
-    <Ad />
+    {/* The homepage carries no ad unit. */}
 
     <section>
       <h2>Today</h2>
