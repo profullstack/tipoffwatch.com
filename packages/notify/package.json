@@ -7,7 +7,7 @@
     ".": "./src/index.js"
   },
   "dependencies": {
-    "@profullstack/notifications": "^0.1.0",
+    "@profullstack/notifications": "^0.1.4",
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*"
   }
