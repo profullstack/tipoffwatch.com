@@ -9,7 +9,7 @@
     "build:client": "bun build-client.js"
   },
   "dependencies": {
-    "@profullstack/footer": "latest",
+    "@profullstack/footer": "^0.4.0",
     "@profullstack/leaderboard": "^0.3.1",
     "@profullstack/notifications": "^0.1.4",
     "@profullstack/player": "0.16.0",
