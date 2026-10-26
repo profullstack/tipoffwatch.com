@@ -39,9 +39,14 @@ describe('the CSP matches the page it is protecting', () => {
    * key that changes (or was missing when a page was cached) cannot desynchronise
    * the page from its policy.
    */
-  test('the page carries no inline script and the policy no hash', async () => {
+  test("the page's only inline script is the footer's newsletter form, and the policy has no hash", async () => {
     const out = (await Layout({ user: null, children: 'x' }).toString()).toString();
-    expect(out).not.toMatch(/<script>/);
+    // @profullstack/footer 0.4.0+ wires its subscribe form with one inline script,
+    // nonce'd per response (no nonce outside a request, as here).
+    // (JSON-LD blocks carry a type attribute and do not execute, so they are not matched.)
+    const inline = [...out.matchAll(/<script(?:\s+nonce="[^"]*")?>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(inline.length).toBeLessThanOrEqual(1);
+    for (const body of inline) expect(body).toContain('/api/subscribe');
     expect(out).not.toContain('__VAPID');
     expect(csp).not.toContain('sha256-');
   });
@@ -50,10 +55,12 @@ describe('the CSP matches the page it is protecting', () => {
     expect(SECURITY_HEADERS['content-security-policy']).toBe(csp);
   });
 
-  test("the footer's inline style is allowed by a per-request nonce, nothing wider", () => {
+  test("the footer's inline style and script are allowed by a per-request nonce, nothing wider", () => {
     const withNonce = buildPolicy({ styleNonce: 'abc123' });
     const styleSrc = withNonce.split('; ').find((d) => d.startsWith('style-src'));
     expect(styleSrc).toContain("'nonce-abc123'");
+    const scriptSrc = withNonce.split('; ').find((d) => d.startsWith('script-src'));
+    expect(scriptSrc).toContain("'nonce-abc123'");
     expect(withNonce).not.toContain('unsafe-inline');
     expect(csp).not.toContain('nonce-');
   });

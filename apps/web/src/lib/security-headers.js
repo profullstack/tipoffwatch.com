@@ -3,10 +3,10 @@
  * knows which line to widen and why it was narrow.
  *
  *   script-src   our own bundles and the analytics beacon. No 'unsafe-inline' and
- *                no hashes: there is no inline script at all (the push key used
- *                to be one; the browser now fetches it from
- *                /api/push/vapid-public-key), so adding one fails loudly in
- *                development rather than quietly widening the policy.
+ *                no hashes: the only inline script is @profullstack/footer's
+ *                newsletter form (0.4.0+), allowed by the same per-response nonce
+ *                as the footer's <style>. Any other inline script still fails
+ *                loudly in development rather than quietly widening the policy.
  *   style-src    'unsafe-inline' is NOT here either -- the stylesheet is a file
  *                and no view emits a style attribute. Google Fonts is named
  *                because styles.css @imports it.
@@ -21,7 +21,8 @@
  *   frame-ancestors  the clickjacking control that actually matters; the site is
  *                never meant to be embedded.
  *   form-action  every control on the site is a plain form posting to us, so a
- *                form that posts anywhere else is an injection.
+ *                form that posts anywhere else is an injection. The one exception
+ *                is the shared footer's newsletter form, which posts to pit.world.
  */
 /**
  * The policy. A function rather than a constant so a test builds exactly what the
@@ -30,7 +31,12 @@
 export const buildPolicy = ({ styleNonce } = {}) =>
   [
     "default-src 'self'",
-    "script-src 'self' https://crawlproof.com",
+    /*
+     * The nonce here is the response's footer nonce (minted in app.js, named
+     * styleNonce for its first use): @profullstack/footer 0.4.0 puts it on the
+     * inline script that posts the newsletter form and reports the result inline.
+     */
+    `script-src 'self' https://crawlproof.com${styleNonce ? ` 'nonce-${styleNonce}'` : ''}`,
     /*
      * The inline <style>s are @profullstack/footer's and the pit.world network
      * footer's, allowed by a per-request nonce rather than 'unsafe-inline' or a
@@ -51,7 +57,8 @@ export const buildPolicy = ({ styleNonce } = {}) =>
      */
     "img-src 'self' https: data:",
     "media-src 'self' blob:",
-    "connect-src 'self' https://crawlproof.com",
+    // pit.world: the footer's newsletter form posts to pit.world/api/subscribe.
+    "connect-src 'self' https://crawlproof.com https://pit.world",
     /*
      * blob: alongside 'self', for hls.js. The radio player demuxes in a worker
      * it builds from a blob URL; refused, it falls back to the main thread and
@@ -71,7 +78,8 @@ export const buildPolicy = ({ styleNonce } = {}) =>
     "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
-    "form-action 'self'",
+    // pit.world: the footer newsletter form's no-script fallback posts to pit.world/subscribe.
+    "form-action 'self' https://pit.world",
     "frame-ancestors 'none'",
   ].join('; ');
 
