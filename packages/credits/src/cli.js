@@ -62,7 +62,7 @@ async function main() {
       else {
         console.log(c.code);
         console.log(
-          `${c.days} days of ${c.unit}, ${c.max_redemptions} use(s)${c.expires_at ? `, expires ${c.expires_at}` : ''}`,
+          `${c.days} day${c.days === 1 ? '' : 's'} of ${c.unit},${c.max_redemptions} use(s)${c.expires_at ? `, expires ${c.expires_at}` : ''}`,
         );
         console.log(`redeem at ${c.url}`);
         console.log(`id ${c.id} (for revoke)`);
