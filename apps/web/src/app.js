@@ -1,9 +1,17 @@
 import { vapidKeysFromEnv, vapidPublicKeyResponse } from '@profullstack/notifications/server';
+import {
+  createProfileStore,
+  mountProfileRoutes,
+  PROFILE_ENHANCE_SCRIPT,
+  saveSignupProfile,
+  validateProfile,
+} from '@profullstack/profile';
 import { createThrottle } from '@profullstack/throttle';
 import { createGateway } from '@profullstack/x402-gateway';
 import * as auth from '@tipoff/auth';
 import * as invites from '@tipoff/auth/invites';
 import { brand, config, href } from '@tipoff/config';
+import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
 import * as live from '@tipoff/live';
 import { sendInviteEmail, sendLoginLink } from '@tipoff/notify';
@@ -1067,6 +1075,36 @@ for (const [path, fn] of [
     return respond(c, { json: { ok: true }, redirectTo: '/messages' });
   });
 }
+
+/*
+ * The shared Profullstack profile (@profullstack/profile): email, names, company
+ * domain, job title and LinkedIn, in the user_profiles table. Separate from the
+ * public handle/bio above -- this is never shown to other people.
+ *
+ * GET/PUT/PATCH /api/v1/me/profile are the package's own handlers; the settings
+ * form below is the same validation for a page without script.
+ */
+const profiles = createProfileStore(sql);
+const profileUser = (c) => {
+  const user = c.get('user');
+  return user ? { id: user.id, email: user.email } : null;
+};
+mountProfileRoutes(app, { store: profiles, getUser: (_req, c) => profileUser(c) });
+
+app.post('/api/settings/contact', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const check = validateProfile({ ...body, email: user.email });
+  if (!check.ok) {
+    return respond(c, {
+      json: { error: 'Some fields need fixing.', errors: check.errors },
+      status: 400,
+      redirectTo: `/settings?contact_error=${encodeURIComponent(Object.values(check.errors)[0])}#contact`,
+    });
+  }
+  const profile = await profiles.save(user.id, check.profile);
+  return respond(c, { json: { profile }, redirectTo: '/settings?contact=saved#contact' });
+});
 
 app.post('/api/profile', async (c) => {
   const user = requireUser(c);
@@ -2555,18 +2593,40 @@ app.post(
 );
 app.post('/api/auth/magic', async (c) => {
   const body = await c.req.parseBody();
+  const accept = c.req.header('accept') ?? '';
+
+  /*
+   * The signup form carries the shared profile fields; plain sign-in does not and
+   * is never asked for them. They are checked here, before any link exists, and
+   * a refusal goes back to the form with what was typed -- the same answer for a
+   * known or unknown address, so it says nothing about who has an account.
+   */
+  let profile = null;
+  if (body.mode === 'signup') {
+    const check = validateProfile(body);
+    if (!check.ok) {
+      if (accept.includes('application/json')) {
+        return c.json({ error: 'Some fields need fixing.', errors: check.errors }, 400);
+      }
+      return c.html(
+        await render(<SignIn mode="signup" next={body.next} values={body} errors={check.errors} />),
+        400,
+      );
+    }
+    profile = check.profile;
+  }
+
   const email = String(body.email ?? '')
     .trim()
     .toLowerCase();
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     try {
-      const url = await auth.createLoginLink(email);
+      const url = await auth.createLoginLink(email, { profile });
       await sendLoginLink({ email, url });
     } catch (err) {
       console.error('[auth] link send failed:', err.message);
     }
   }
-  const accept = c.req.header('accept') ?? '';
   if (accept.includes('application/json')) return c.json({ ok: true });
   return c.html(await render(<SignIn mode="login" sent />));
 });
@@ -2608,6 +2668,15 @@ app.get('/auth/magic', async (c) => {
 
   const code = getCookie(c, invites.INVITE_COOKIE);
   if (code) await invites.claimInvite({ code, user: result.user, created: result.created });
+
+  // The fields typed on the signup form, saved now that the account exists and the
+  // link has proved the mailbox. Like the invite, a failure here must not cost
+  // anybody their sign-in: the settings page asks again.
+  if (result.profile) {
+    await saveSignupProfile(profiles, result.user.id, result.profile, {
+      email: result.user.email,
+    }).catch((err) => console.error('[auth] signup profile save failed:', err.message));
+  }
 
   /*
    * The session header goes on FIRST, and clearing the invite cookie after it.
@@ -2976,6 +3045,7 @@ app.get('/settings', async (c) => {
   // were connected: the share-candidates list is truthy. A positional list of
   // five unrelated things is exactly where that happens; a sixth does not join it.
   const radioSession = config.radio.enabled ? await radio.storedSession(user.id) : null;
+  const contact = await profiles.get(user.id);
   // The people this owner could name on their SiriusXM line. Its own line and
   // its own read, for the same reason the playlist picker is fetched
   // unconditionally: it must exist the instant the line is connected.
@@ -3056,6 +3126,9 @@ app.get('/settings', async (c) => {
         playlistError={c.req.query('playlist_error') ?? null}
         profileError={c.req.query('profile_error') ?? null}
         profileSaved={c.req.query('profile') === 'saved'}
+        contact={contact ?? { email: user.email }}
+        contactError={c.req.query('contact_error') ?? null}
+        contactSaved={c.req.query('contact') === 'saved'}
         passwordNotice={
           c.req.query('password') === 'set'
             ? 'Password saved. You can sign in with it on a device that cannot do the others.'
@@ -4838,6 +4911,14 @@ for (const [route, spec, type] of PACKAGE_FILES) {
     return c.body(await Bun.file(path).arrayBuffer());
   });
 }
+
+// The signup form's company-from-work-email helper, from @profullstack/profile.
+// Served as a file because the policy allows no inline script.
+app.get('/vendor-profile.js', (c) => {
+  c.header('content-type', 'text/javascript');
+  c.header('cache-control', 'public, max-age=60');
+  return c.body(PROFILE_ENHANCE_SCRIPT);
+});
 
 for (const [route, file, type] of STATIC_FILES) {
   app.get(route, async (c) => {
