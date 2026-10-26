@@ -1,0 +1,20 @@
+{
+  "name": "@tipoff/credits",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "tipoff-credits": "./src/cli.js"
+  },
+  "dependencies": {
+    "@profullstack/affiliates": "^0.2.0",
+    "@profullstack/redeem-credits": "^0.2.0",
+    "@tipoff/config": "workspace:*",
+    "@tipoff/db": "workspace:*",
+    "@tipoff/live": "workspace:*",
+    "@tipoff/payments": "workspace:*"
+  }
+}

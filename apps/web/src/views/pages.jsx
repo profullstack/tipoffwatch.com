@@ -15,6 +15,7 @@ import {
   setScoreOf,
   TeamRow,
 } from './components.jsx';
+import { RedeemCard } from './credits.jsx';
 import { Layout } from './Layout.jsx';
 import { LiveUpsell } from './live.jsx';
 import { RadioSettings, RadioTeamSection } from './radio.jsx';
@@ -2581,7 +2582,18 @@ export const WatchPage = ({ user, event, entitlement }) => (
  */
 const SIGNUP_FIELDS = PROFILE_COLUMNS.filter((f) => f !== 'email');
 
-export const SignIn = ({ mode, sent, next, passwordError, magicError, values, errors }) => (
+export const SignIn = ({
+  mode,
+  sent,
+  next,
+  passwordError,
+  magicError,
+  values,
+  errors,
+  // A scarce INV- invite this sign-up came with. Carried on the emailed link, so
+  // it still counts when the link is opened in another browser.
+  invite = null,
+}) => (
   <Layout
     title={mode === 'signup' ? 'Create your account' : 'Sign in'}
     script={mode === 'signup' ? '/vendor-profile.js' : undefined}
@@ -2596,6 +2608,7 @@ export const SignIn = ({ mode, sent, next, passwordError, magicError, values, er
       ) : (
         <>
           <p class="muted">
+            {invite ? 'You have an invite: it is saved with this sign-up. ' : ''}
             {mode === 'signup'
               ? 'Enter your email and we will send you a link. No password to choose.'
               : 'We will email you a link. No password to remember.'}
@@ -2608,6 +2621,7 @@ export const SignIn = ({ mode, sent, next, passwordError, magicError, values, er
           <form method="post" action="/api/auth/magic">
             <input type="hidden" name="next" value={next ?? '/following'} />
             {mode === 'signup' ? <input type="hidden" name="mode" value="signup" /> : null}
+            {invite ? <input type="hidden" name="invite" value={invite} /> : null}
             <label>
               Email
               <input
@@ -3119,6 +3133,11 @@ export const Settings = ({
   // The live TV pass behind a managed list, or null. Only read when the list is
   // ours; a list of their own has no pass to report on.
   livePass = null,
+  // The "Have a code?" card's result, carried back on the redirect.
+  codeNotice = null,
+  codeError = null,
+  // Scarce invites left, for the line pointing at /invites. Null hides it.
+  invitesLeft = null,
 }) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
@@ -3583,6 +3602,18 @@ export const Settings = ({
         </form>
       ) : null}
     </section>
+
+    <RedeemCard next="/settings#redeem" notice={codeNotice} error={codeError} />
+
+    {invitesLeft !== null ? (
+      <section id="invites">
+        <h2>Invites</h2>
+        <p class="muted">
+          You have {invitesLeft} invite{invitesLeft === 1 ? '' : 's'} left.{' '}
+          <a href="/invites">Make one</a> for somebody you would like here.
+        </p>
+      </section>
+    ) : null}
 
     <section>
       <h2>Account</h2>
