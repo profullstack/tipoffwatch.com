@@ -11,6 +11,7 @@ import { createGateway } from '@profullstack/x402-gateway';
 import * as auth from '@tipoff/auth';
 import * as invites from '@tipoff/auth/invites';
 import { brand, config, href } from '@tipoff/config';
+import * as credits from '@tipoff/credits';
 import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
 import * as live from '@tipoff/live';
@@ -61,6 +62,7 @@ import { MAX_TILES, parseChannelIds } from './lib/multiview.js';
 import { buildFeed } from './lib/rss.js';
 import { buildPolicy, SECURITY_HEADERS } from './lib/security-headers.js';
 import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
+import { InviteLanding, InvitesPage, RedeemPage, redeemedNotice } from './views/credits.jsx';
 import { Feeds } from './views/feeds.jsx';
 import { Contact, Privacy, Terms } from './views/legal.jsx';
 import { LivePage } from './views/live.jsx';
@@ -228,6 +230,10 @@ const crawlGateway = createGateway({
     '/leaderboard/',
     '/.well-known/openaccess.json',
     '/.well-known/openwebring.json',
+    // An invite link is opened by a person a friend picked, often from a chat
+    // app on whatever browser they have. Charging it as a crawler loses the
+    // invite; it costs one redirect or one small page.
+    '/i/',
   ],
   /*
    * Who pays is the gateway's own list since 0.8.0: training crawlers, SEO
@@ -2565,8 +2571,19 @@ app.get('/login', async (c) =>
 );
 app.get('/signup', viewBackoff);
 app.get('/signup', async (c) =>
-  c.html(await render(<SignIn mode="signup" next={c.req.query('next')} />)),
+  c.html(
+    await render(<SignIn mode="signup" next={c.req.query('next')} invite={scarceInvite(c)} />),
+  ),
 );
+
+/** The scarce invite (INV-...) this visitor came with, from the query or its cookie. */
+const SCARCE_INVITE_COOKIE = 'tw_inv';
+function scarceInvite(c, fromBody = null) {
+  for (const v of [fromBody, c.req.query('invite'), getCookie(c, SCARCE_INVITE_COOKIE)]) {
+    if (v && credits.looksLikeInvite(v)) return credits.canonicalInvite(v);
+  }
+  return null;
+}
 
 /**
  * Request a sign-in link.
@@ -2609,7 +2626,15 @@ app.post('/api/auth/magic', async (c) => {
         return c.json({ error: 'Some fields need fixing.', errors: check.errors }, 400);
       }
       return c.html(
-        await render(<SignIn mode="signup" next={body.next} values={body} errors={check.errors} />),
+        await render(
+          <SignIn
+            mode="signup"
+            next={body.next}
+            values={body}
+            errors={check.errors}
+            invite={scarceInvite(c, body.invite)}
+          />,
+        ),
         400,
       );
     }
@@ -2621,7 +2646,10 @@ app.post('/api/auth/magic', async (c) => {
     .toLowerCase();
   if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     try {
-      const url = await auth.createLoginLink(email, { profile });
+      const url = await auth.createLoginLink(email, {
+        profile,
+        inviteCode: scarceInvite(c, body.invite),
+      });
       await sendLoginLink({ email, url });
     } catch (err) {
       console.error('[auth] link send failed:', err.message);
@@ -2669,6 +2697,15 @@ app.get('/auth/magic', async (c) => {
   const code = getCookie(c, invites.INVITE_COOKIE);
   if (code) await invites.claimInvite({ code, user: result.user, created: result.created });
 
+  // The scarce invite (INV-...), a separate thing from the commission link
+  // above: it rides on the link itself (so another browser still counts) or
+  // its own cookie, and gives both people days -- only when this sign-in made
+  // the account. acceptInvite never throws.
+  const scarce = result.inviteCode ?? scarceInvite(c);
+  if (scarce) {
+    await credits.acceptInvite({ userId: result.user.id, code: scarce, created: result.created });
+  }
+
   // The fields typed on the signup form, saved now that the account exists and the
   // link has proved the mailbox. Like the invite, a failure here must not cost
   // anybody their sign-in: the settings page asks again.
@@ -2690,6 +2727,9 @@ app.get('/auth/magic', async (c) => {
   // Spent either way. A code that survives is one that gets tried again by an
   // account it can never credit.
   if (code) setCookie(c, invites.INVITE_COOKIE, '', { path: '/', maxAge: 0 });
+  if (getCookie(c, SCARCE_INVITE_COOKIE)) {
+    setCookie(c, SCARCE_INVITE_COOKIE, '', { path: '/', maxAge: 0 });
+  }
 
   return c.redirect(c.req.query('next') ?? '/following', 303);
 });
@@ -3104,6 +3144,13 @@ app.get('/settings', async (c) => {
       allowance: lineAllowance(row, config.playlists.proxy.maxPerUser),
     };
   });
+  // Scarce invites left, for the settings line that points at /invites. A
+  // failure here hides the line rather than the page.
+  const invitesLeft = await credits
+    .services()
+    .aff.quota(String(user.id))
+    .then((qt) => qt.left)
+    .catch(() => null);
   return c.html(
     await render(
       <Settings
@@ -3121,6 +3168,9 @@ app.get('/settings', async (c) => {
         // a pass gets no card rather than one that would be refused.
         shareLine={lines.find((l) => !l.managed) ?? null}
         livePass={livePass}
+        codeNotice={redeemedNotice(c.req.query('redeemed'), c.req.query('days'))}
+        codeError={c.req.query('code_error') ?? null}
+        invitesLeft={invitesLeft}
         lineCeiling={config.playlists.proxy.maxPerUser}
         playlistNotice={playlistNotice}
         playlistError={c.req.query('playlist_error') ?? null}
@@ -4212,8 +4262,38 @@ app.post('/api/live/use', async (c) => {
  * No account is required and none is created here. A link is an invitation, not an
  * action.
  */
-app.get('/i/:code', (c) => {
+app.get('/i/:code', async (c) => {
   const code = String(c.req.param('code') ?? '').slice(0, 64);
+
+  // A scarce INV- invite gets its own page and its own cookie, so it never
+  // overwrites the commission link's cookie (which would cost an inviter the
+  // credit) and the reader is told what it is before signing up.
+  if (credits.looksLikeInvite(code)) {
+    const canonical = credits.canonicalInvite(code);
+    const status = await credits.inviteStatus(canonical);
+    if (status === 'ok') {
+      setCookie(c, SCARCE_INVITE_COOKIE, canonical, {
+        httpOnly: true,
+        sameSite: 'Lax',
+        path: '/',
+        maxAge: invites.INVITE_COOKIE_MAX_AGE,
+        secure: config.isProd,
+      });
+    }
+    c.header('cache-control', 'no-store, private');
+    return c.html(
+      await render(
+        <InviteLanding
+          user={c.get('user')}
+          code={canonical}
+          status={status}
+          bonus={credits.inviteBonus()}
+        />,
+      ),
+      status === 'ok' ? 200 : 404,
+    );
+  }
+
   if (code) {
     setCookie(c, invites.INVITE_COOKIE, code, {
       httpOnly: true,
@@ -4276,6 +4356,134 @@ app.post('/api/invite/email', async (c) => {
     });
   }
   return respond(c, { json: result, redirectTo: `/invite?sent=${result.sent}` });
+});
+
+/* ------------------------------------------------- credit codes + invites -- */
+
+/**
+ * "Have a code?": a CR- code minted with `bun run credits mint` adds Live TV
+ * or Premium days through the same insert a paid term takes. A form posts
+ * here from /settings and /redeem; a script posts JSON with the session
+ * cookie and gets `{ ok, unit, days }` or `{ error, reason }`.
+ */
+const backTo = (next, fallback) => {
+  const n = String(next ?? '');
+  // Only somewhere on this site: an open redirect is not a feature of a form.
+  return n.startsWith('/') && !n.startsWith('//') ? n : fallback;
+};
+const withQuery = (path, params) => {
+  const [base, hash = ''] = path.split('#');
+  const qs = new URLSearchParams(params).toString();
+  return `${base}${base.includes('?') ? '&' : '?'}${qs}${hash ? `#${hash}` : ''}`;
+};
+
+app.get('/redeem', async (c) => {
+  const user = requireUser(c);
+  c.header('cache-control', 'no-store, private');
+  return c.html(
+    await render(
+      <RedeemPage
+        user={user}
+        code={String(c.req.query('code') ?? '').slice(0, 64)}
+        notice={redeemedNotice(c.req.query('redeemed'), c.req.query('days'))}
+        error={c.req.query('code_error') ?? null}
+      />,
+    ),
+  );
+});
+
+app.post('/api/credits/redeem', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const back = backTo(body.next, '/settings#redeem');
+  const r = await credits.redeemCode(user.id, body.code);
+  if (!r.ok) {
+    return respond(c, {
+      json: { error: r.error, reason: r.reason },
+      status: r.reason === 'grant_failed' ? 500 : 400,
+      redirectTo: withQuery(back, { code_error: r.error }),
+    });
+  }
+  return respond(c, {
+    json: r,
+    redirectTo: withQuery(back, { redeemed: r.unit, days: String(r.days) }),
+  });
+});
+
+/**
+ * Scarce invites: a few per account, single use, and an accepted one gives
+ * both people days. Distinct from /invite (the open commission link), which
+ * is unchanged and linked from here.
+ */
+app.get('/invites', async (c) => {
+  const user = requireUser(c);
+  const [mine, code] = await Promise.all([
+    credits.myInvites(user.id),
+    invites.inviteCodeFor(user.id),
+  ]);
+  // A freshly made invite is shown ONCE, from a short-lived cookie rather than
+  // the URL, so the code does not sit in the browser history or a referrer.
+  const fresh = getCookie(c, 'tw_inv_new');
+  if (fresh) setCookie(c, 'tw_inv_new', '', { path: '/invites', maxAge: 0 });
+  c.header('cache-control', 'no-store, private');
+  return c.html(
+    await render(
+      <InvitesPage
+        user={user}
+        quota={mine.quota}
+        invites={mine.invites}
+        bonus={mine.bonus}
+        created={
+          fresh && credits.looksLikeInvite(fresh)
+            ? { code: fresh, url: `${config.siteUrl}/i/${fresh}` }
+            : null
+        }
+        notice={c.req.query('revoked') ? 'Invite withdrawn; the slot is yours again.' : null}
+        error={c.req.query('invite_error') ?? null}
+        affiliateUrl={invites.inviteUrl(code)}
+      />,
+    ),
+  );
+});
+
+app.get('/api/invites', async (c) => {
+  const user = requireUser(c);
+  c.header('cache-control', 'no-store, private');
+  return c.json(await credits.myInvites(user.id));
+});
+
+app.post('/api/invites', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody();
+  const r = await credits.createInvite(user.id, body.note);
+  if (!r.ok) {
+    return respond(c, {
+      json: { error: r.error },
+      status: 409,
+      redirectTo: `/invites?invite_error=${encodeURIComponent(r.error)}`,
+    });
+  }
+  setCookie(c, 'tw_inv_new', r.invite.code, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    path: '/invites',
+    maxAge: 300,
+    secure: config.isProd,
+  });
+  return respond(c, { json: r, redirectTo: '/invites' });
+});
+
+app.post('/api/invites/:id/revoke', async (c) => {
+  const user = requireUser(c);
+  const r = await credits.revokeInvite(user.id, c.req.param('id'));
+  if (!r.ok) {
+    return respond(c, {
+      json: { error: r.error },
+      status: 404,
+      redirectTo: `/invites?invite_error=${encodeURIComponent(r.error)}`,
+    });
+  }
+  return respond(c, { json: r, redirectTo: '/invites?revoked=1' });
 });
 
 /* -------------------------------------------------------------- public API -- */

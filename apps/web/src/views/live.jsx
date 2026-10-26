@@ -20,7 +20,7 @@ const money = (cents, currency = 'USD') =>
   }).format((cents ?? 0) / 100);
 
 const termWord = { week: 'a week', month: 'a month', year: 'a year' };
-const planTitle = { week: 'Week', month: 'Month', year: 'Year' };
+const planTitle = { week: 'Week', month: 'Month', year: 'Year', gift: 'Code or invite' };
 
 /** "$1 a week", "$4 a month, billed yearly". */
 const priceLine = (plan) =>

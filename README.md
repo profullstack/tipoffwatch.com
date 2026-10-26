@@ -159,3 +159,21 @@ Knobs, all read at request time:
 The pending-code state between "send code" and "verify" lives in the web
 process's memory for ten minutes, which is right for one web replica and would
 need Redis for more.
+
+## Credit codes and invites
+
+`packages/credits` wraps `@profullstack/redeem-credits` and `@profullstack/affiliates`
+over the site's Postgres (migration `0040`). Neither keeps a second balance: days go
+through the same insert a paid term takes (`grantLivePass` with plan `gift`, or
+`grantMembership`), idempotent on `grant_ref`.
+
+- **Codes** (`CR-XXXX-XXXX-XXXX-XXXX`) grant Live TV pass days (default) or Premium days.
+  Mint on the box: `docker exec tipoffwatchcom-app-1 bun run credits mint --days 30 --label "for Kim"`
+  (`--unit premium`, `--max N`, `--expires DAYS`; also `list`, `revoke <id>`, `quota <email> <n>`).
+  Redeem: "Have a code?" on `/settings`, `/redeem?code=...`, or `POST /api/credits/redeem {code}`.
+  A Live TV code is refused, unspent, while Live TV is switched off.
+- **Invites** (`INV-XXXX-XXXX-XXXX`): `INVITE_QUOTA` (3) per account at `/invites`
+  (`GET/POST /api/invites`, `POST /api/invites/:id/revoke`), landing at `/i/<code>`. When an
+  invite creates an account (the emailed link spent), both people get
+  `INVITE_BONUS_PASS_DAYS` (3) of Live TV, or `INVITE_BONUS_PREMIUM_DAYS` (7) of Premium while
+  Live TV is off. The open commission link at `/invite` is a separate, older programme.

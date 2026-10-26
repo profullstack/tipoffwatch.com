@@ -18,6 +18,7 @@ COPY packages/queue/package.json packages/queue/
 COPY packages/radio/package.json packages/radio/
 COPY packages/sports/package.json packages/sports/
 COPY packages/live/package.json packages/live/
+COPY packages/credits/package.json packages/credits/
 RUN bun install --frozen-lockfile || bun install
 
 FROM base AS runtime

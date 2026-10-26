@@ -1,6 +1,6 @@
 {
   "name": "tipoffwatch.com",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "private": true,
   "type": "module",
   "description": "Sports calendar and reminder PWA. Follow any team in the world, get told before they play.",
@@ -17,7 +17,8 @@
     "test": "bun test",
     "lint": "bun run --bun biome check .",
     "icons": "bun install --cwd tools/icons && bun tools/icons/generate.js",
-    "format": "bun run --bun biome format --write ."
+    "format": "bun run --bun biome format --write .",
+    "credits": "bun packages/credits/src/cli.js"
   },
   "engines": {
     "bun": ">=1.3.0"
