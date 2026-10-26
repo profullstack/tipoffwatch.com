@@ -4378,7 +4378,96 @@ export async function setSyncCursor(name, cursor) {
 
 /** Every league, active or not: the mirror resolves a fixture's league by slug. */
 export async function leagueIndex() {
-  return sql`select id, provider, provider_key, slug, sport, active from leagues`;
+  return sql`select id, provider, provider_key, slug, sport, active, superseded_by from leagues`;
+}
+
+/**
+ * Retire every TheSportsDB league that another provider already carries.
+ *
+ * A slug clash is caught as the fixture arrives (basketball-nba is both
+ * providers' slug); this catches the rest, which is most of them, because the
+ * two name the same competition differently -- ESPN's "LALIGA" is TheSportsDB's
+ * "Spanish La Liga". Two tests, either one enough:
+ *
+ *   - the name: the same sport and the same name or abbreviation once case,
+ *     spaces and punctuation are gone;
+ *   - the games: at least three of its fixtures in the last fortnight and the
+ *     next, and at least half of them, have an ESPN fixture in the same sport
+ *     within twenty minutes whose two sides read alike (trigram similarity, so
+ *     "Man City" finds "Manchester City", either way round). Saturday at 3pm has
+ *     dozens of games kicking off together, so the time alone proves nothing;
+ *     both team names have to agree too.
+ *
+ * The league it points at is the ESPN one most of the matched games were in.
+ * Idempotent and only ever sets the column, so a decision is never undone by a
+ * later pass that happens to match less. A constant so the migration tests can
+ * run the same text against PGlite.
+ */
+export const SUPERSEDE_SPORTSDB_SQL = `
+    with sdb as (
+      select id, sport, regexp_replace(lower(name), '[^a-z0-9]+', '', 'g') as norm
+        from leagues
+       where provider = 'thesportsdb' and superseded_by is null
+    ),
+    by_name as (
+      select distinct on (s.id) s.id, k.id as keep
+        from sdb s
+        join leagues k
+          on k.provider <> 'thesportsdb' and k.sport = s.sport
+         and k.active and k.superseded_by is null
+         and (regexp_replace(lower(k.name), '[^a-z0-9]+', '', 'g') = s.norm
+              or regexp_replace(lower(coalesce(k.abbreviation, '')), '[^a-z0-9]+', '', 'g') = s.norm)
+       order by s.id, k.priority, k.id
+    ),
+    mine as (
+      select e.id, e.league_id, e.starts_at, l.sport, h.display_name as home, a.display_name as away
+        from events e
+        join sdb l on l.id = e.league_id
+        join teams h on h.id = e.home_team_id
+        join teams a on a.id = e.away_team_id
+       where e.starts_at between now() - interval '14 days' and now() + interval '14 days'
+    ),
+    matched as (
+      select distinct on (m.id) m.id, m.league_id, o.league_id as keep
+        from mine m
+        join events o
+          on o.provider <> 'thesportsdb'
+         and o.starts_at between m.starts_at - interval '20 minutes' and m.starts_at + interval '20 minutes'
+        join leagues ol on ol.id = o.league_id and ol.sport = m.sport and ol.superseded_by is null
+        join teams oh on oh.id = o.home_team_id
+        join teams oa on oa.id = o.away_team_id
+       where (similarity(m.home, oh.display_name) >= 0.3 and similarity(m.away, oa.display_name) >= 0.3)
+          or (similarity(m.home, oa.display_name) >= 0.3 and similarity(m.away, oh.display_name) >= 0.3)
+       order by m.id, similarity(m.home, oh.display_name) + similarity(m.away, oa.display_name) desc
+    ),
+    by_games as (
+      select distinct on (t.league_id) t.league_id as id, t.keep
+        from (
+          select league_id, keep, count(*) as n
+            from matched
+           group by league_id, keep
+        ) t
+        join (select league_id, count(*) as total from mine group by league_id) c
+          on c.league_id = t.league_id
+       where t.n >= 3 and t.n * 2 >= c.total
+       order by t.league_id, t.n desc
+    ),
+    pick as (
+      select id, keep from by_name
+      union all
+      select g.id, g.keep from by_games g where not exists (select 1 from by_name n where n.id = g.id)
+    )
+    update leagues l
+       set superseded_by = p.keep
+      from pick p
+     where l.id = p.id and l.superseded_by is null and p.keep <> l.id
+    returning l.id
+`;
+
+/** @returns {Promise<number>} TheSportsDB leagues retired by this call */
+export async function supersedeSportsdbLeagues() {
+  const rows = await sql.unsafe(SUPERSEDE_SPORTSDB_SQL);
+  return rows.length;
 }
 
 /**

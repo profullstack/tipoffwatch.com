@@ -85,6 +85,29 @@ const SINCE_KEY = { fixture: 'since', plays: 'playsSince' };
  */
 const skipped = (provider, sport) => provider === 'espn' && sport === 'tennis';
 
+/**
+ * TheSportsDB, through nichedb's sportsdb-schedule, sportsdb-live and
+ * sportsdb-leagues sources: 1,557 leagues across 38 sports against ESPN's ~360
+ * across 16 -- cricket, darts, handball, snooker, netball and the rest.
+ *
+ * ESPN owns any competition it carries: it has the clock, the plays, the box
+ * score and the odds, and TheSportsDB has none of them. So a TheSportsDB league
+ * never shares a row with an ESPN one. It is looked up by its own key, never by
+ * slug (`basketball-nba` is both providers' slug for the same thing, and a
+ * slug-first lookup would file TheSportsDB's NBA games into ESPN's league as
+ * duplicates); a slug already taken by another provider means the competition
+ * is covered and its fixtures are dropped; and supersedeSportsdbLeagues, after
+ * the pass, retires the ones ESPN carries under a different name.
+ *
+ * Its catalogue only ever fills in leagues a fixture has already created. Most
+ * of the 1,557 have nothing scheduled -- defunct cups, past Olympics, junior
+ * leagues -- and would be empty pages; a league with a game on arrives with it.
+ */
+export const SPORTSDB = 'thesportsdb';
+
+/** TheSportsDB leagues sort below ESPN's wherever priority orders a list. */
+const SPORTSDB_PRIORITY = 200;
+
 /* ---------------------------------------------------------------- mapping -- */
 
 /** nichedb states are already pre/in/post; anything else is treated as pre. */
@@ -148,13 +171,16 @@ export function leagueFromFixture(data) {
     slug: l.slug,
     name: text(l.name) ?? l.slug,
     abbreviation: text(l.abbreviation),
-    logo_url: null,
-    priority: 100,
+    logo_url: text(l.logoUrl),
+    priority: data.provider === SPORTSDB ? SPORTSDB_PRIORITY : 100,
     region: text(l.region),
     abbr_ambiguous: false,
     plays_supported: data.plays_supported !== false,
     boxscore_supported: data.boxscoreSupported !== false,
-    rosters_synced_at: null,
+    // A TheSportsDB league has no roster to fetch -- its teams come with its
+    // fixtures -- so it is stamped once, here, or the boot check would count it
+    // rosterless and force a full sweep on every boot.
+    rosters_synced_at: data.provider === SPORTSDB ? new Date() : null,
     active: true,
   };
 }
@@ -479,6 +505,7 @@ export function defaultStore() {
     leagueIndex: () => q.leagueIndex(),
     upsertLeague: (row) => q.upsertMirroredLeague(row),
     linkSuperseded: (ref) => q.linkSupersededLeague(ref),
+    supersedeSportsdb: () => q.supersedeSportsdbLeagues(),
     upsertTeams: (rows) => q.upsertTeams(rows),
     linkTeamsToLeague: (ids, leagueId) => q.linkTeamsToLeague(ids, leagueId),
     upsertEvents: (rows) => q.upsertEvents(rows),
@@ -510,9 +537,28 @@ async function loadIndex(store) {
     bySlug,
     byKey,
     add,
+    // TheSportsDB by its own key only -- see SPORTSDB.
     find: (provider, league) =>
-      bySlug.get(league?.slug) ?? byKey.get(`${provider}|${league?.key}`) ?? null,
+      provider === SPORTSDB
+        ? (byKey.get(`${provider}|${league?.key}`) ?? null)
+        : (bySlug.get(league?.slug) ?? byKey.get(`${provider}|${league?.key}`) ?? null),
   };
+}
+
+/**
+ * The slug a new TheSportsDB league can have, or null when the competition is
+ * another provider's. Two TheSportsDB leagues can slugify alike ("French
+ * National 2 Group D" is listed twice), so the second takes its id as a suffix.
+ */
+export function sportsdbSlug(row, index) {
+  const owner = index.bySlug.get(row.slug);
+  if (!owner) return row.slug;
+  if (owner.provider !== SPORTSDB) return null;
+  const alt = `${row.slug}-${row.provider_key}`;
+  const taken = index.bySlug.get(alt);
+  return !taken || (taken.provider === SPORTSDB && taken.provider_key === row.provider_key)
+    ? alt
+    : null;
 }
 
 async function applyLeagues(items, ctx) {
@@ -521,6 +567,16 @@ async function applyLeagues(items, ctx) {
   for (const item of items) {
     const row = mapLeague(item, { now: ctx.now });
     if (!row) continue;
+    if (row.provider === SPORTSDB) {
+      // Only a league a fixture already brought in; its slug stays the one it got.
+      const known = ctx.index.byKey.get(`${row.provider}|${row.provider_key}`);
+      if (!known) continue;
+      row.slug = known.slug;
+      row.priority = SPORTSDB_PRIORITY;
+      // A catalogue row is not a roster sync for this provider: its teams arrive
+      // with their fixtures, and the boot check must not read this as a sweep.
+      row.rosters_synced_at = null;
+    }
     const saved = await ctx.store.upsertLeague(row);
     ctx.index.add(saved);
     n++;
@@ -586,8 +642,20 @@ async function applyFixtures(items, ctx) {
     if (!league) {
       const row = leagueFromFixture(item.data);
       if (!row) continue;
+      if (row.provider === SPORTSDB) {
+        row.slug = sportsdbSlug(row, ctx.index);
+        if (!row.slug) {
+          ctx.stats.covered++;
+          continue;
+        }
+      }
       league = ctx.index.add(await ctx.store.upsertLeague(row));
       ctx.stats.leaguesCreated++;
+    }
+    // A TheSportsDB league ESPN has been found to carry: its games are ESPN's.
+    if (f.provider === SPORTSDB && league.superseded_by) {
+      ctx.stats.covered++;
+      continue;
     }
     fixtures.push({ ...f, leagueRow: league });
   }
@@ -848,6 +916,7 @@ async function withRun({ store, http, log, now, base, hourlyBudget }, fn) {
         fixtures: 0,
         live: 0,
         leaguesCreated: 0,
+        covered: 0,
         orphans: 0,
         snapshots: 0,
         playsItems: 0,
@@ -895,6 +964,7 @@ const catalogueSpecs = () => [
 function summary(stats, what) {
   const tail = [
     stats.leaguesCreated ? `${stats.leaguesCreated} league(s) created from fixtures` : null,
+    stats.covered ? `${stats.covered} TheSportsDB fixture(s) left to ESPN` : null,
     stats.orphans ? `${stats.orphans} team(s) with no known league` : null,
     stats.snapshots ? `${stats.snapshots} odds snapshot(s)` : null,
     stats.resumed.length ? `resumed ${stats.resumed.join(', ')}` : null,
@@ -917,11 +987,31 @@ const defaults = (opts) => ({
   hourlyBudget: opts.hourlyBudget ?? config.sports.nichedb.hourlyBudget,
 });
 
+/**
+ * Retire the TheSportsDB leagues ESPN turns out to carry (supersedeSportsdbLeagues).
+ * After every full pass, and after a since-pass only when it created a league:
+ * the query joins a month of fixtures, which is nothing daily and too much every
+ * minute.
+ */
+async function retireCovered(ctx, out, always) {
+  if (out.skipped || !ctx.store.supersedeSportsdb) return;
+  if (!always && !out.leaguesCreated) return;
+  try {
+    out.superseded = await ctx.store.supersedeSportsdb();
+    if (out.superseded) {
+      ctx.log(`[mirror] ${out.superseded} TheSportsDB league(s) already carried by ESPN, retired`);
+    }
+  } catch (err) {
+    ctx.log(`[mirror] TheSportsDB dedupe failed: ${err?.message ?? err}`);
+  }
+}
+
 /** Leagues and teams, whole. The daily catalogue. */
 export async function syncCatalogue(opts = {}) {
   const ctx = defaults(opts);
   const out = await withRun(ctx, (run) => runWalks(catalogueSpecs(), run));
   if (!out.skipped) ctx.log(summary(out, 'catalogue'));
+  await retireCovered(ctx, out, true);
   return out;
 }
 
@@ -935,6 +1025,7 @@ export async function syncAll(opts = {}) {
     ),
   );
   if (!out.skipped) ctx.log(summary(out, 'full'));
+  await retireCovered(ctx, out, true);
   return out;
 }
 
@@ -943,6 +1034,7 @@ export async function syncSince(opts = {}) {
   const ctx = defaults(opts);
   const out = await withRun(ctx, (run) => runWalks([fixturesSince(run.cursor, ctx.now)], run));
   if (!out.skipped) ctx.log(summary(out, 'since'));
+  await retireCovered(ctx, out, false);
   return out;
 }
 
