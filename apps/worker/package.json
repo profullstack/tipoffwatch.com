@@ -7,7 +7,7 @@
     "start": "bun src/main.js"
   },
   "dependencies": {
-    "@profullstack/watchdog": "^0.2.0",
+    "@profullstack/watchdog": "^0.3.0",
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
     "@tipoff/notify": "workspace:*",
