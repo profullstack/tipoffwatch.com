@@ -12,7 +12,7 @@
  * the owner, from anywhere, until the owner changes their password.
  */
 
-import { open, seal } from '@tipoff/auth';
+import { openOrLocked, seal, unlockStore, VaultLockedError } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
@@ -59,8 +59,14 @@ export function proxyFor(userId) {
 export async function storedSession(userId) {
   const row = await q.getSiriusXm(userId);
   if (!row) return null;
-  const accessToken = open(row.access_token);
-  const cookies = row.session_cookies ? open(row.session_cookies) : '';
+  // Sealed with the reader's key vault. Locked reads as `locked`, so settings can
+  // say "unlock" rather than "connect again".
+  const token = openOrLocked(row.access_token, userId);
+  const jar = row.session_cookies
+    ? openOrLocked(row.session_cookies, userId)
+    : { value: '', locked: false };
+  const accessToken = token.value;
+  const cookies = jar.value;
   // Who else may listen through this line. Carried on the session so settings
   // can draw the sharing card from the one row read it already makes.
   const sharing = {
@@ -69,6 +75,8 @@ export async function storedSession(userId) {
     sharedAt: row.shared_at ?? null,
     sharedLabel: row.shared_label ?? null,
   };
+  if (token.locked || jar.locked)
+    return { locked: true, unreadable: true, email: row.email, ...sharing };
   if (accessToken === null || cookies === null) {
     return { unreadable: true, email: row.email, ...sharing };
   }
@@ -91,8 +99,8 @@ export async function saveSession(
   await q.saveSiriusXm({
     userId,
     email: email ?? null,
-    accessToken: seal(accessToken),
-    sessionCookies: seal(cookies ?? ''),
+    accessToken: seal(accessToken, userId),
+    sessionCookies: seal(cookies ?? '', userId),
     accessTokenExpiresAt: accessTokenExpiresAt ?? null,
     refreshTokenExpiresAt: refreshTokenExpiresAt ?? null,
   });
@@ -119,10 +127,16 @@ export function forget(userId) {
   inflight.delete(userId);
 }
 
+// Locking the vault (or its expiry) also drops the opened bearer held here.
+unlockStore().onChange((userId, unlocked) => {
+  if (!unlocked) forget(userId);
+});
+
 const expired = (b) => b.expMs !== null && Date.now() + EXPIRY_SAFETY_MS >= b.expMs;
 
 async function loadBearer(userId) {
   const stored = await storedSession(userId);
+  if (stored?.locked) throw new VaultLockedError('vault_locked');
   if (!stored || stored.unreadable) {
     throw new SiriusXmError('SiriusXM is not connected. Connect it in settings.', 401);
   }
@@ -141,8 +155,8 @@ async function loadBearer(userId) {
   await q.saveSiriusXm({
     userId,
     email: stored.email,
-    accessToken: seal(refreshed.accessToken),
-    sessionCookies: seal(refreshed.cookies),
+    accessToken: seal(refreshed.accessToken, userId),
+    sessionCookies: seal(refreshed.cookies, userId),
     accessTokenExpiresAt: refreshed.accessTokenExpiresAt,
     refreshTokenExpiresAt: refreshed.refreshTokenExpiresAt,
   });

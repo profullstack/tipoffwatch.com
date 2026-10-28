@@ -132,6 +132,6 @@ describe('what reaches the database', () => {
    * thousand rows to look at their paths.
    */
   test('every stream URL is still sealed individually', () => {
-    expect(importer).toContain('streamUrl: seal(c.url)');
+    expect(importer).toContain('streamUrl: seal(c.url, ownerId)');
   });
 });

@@ -29,6 +29,8 @@ const BUNDLES = [
   // download hls.js, and one opening a news channel must not download the
   // transport stream demuxer.
   ['watch-entry.js', 'vendor-watch.js'],
+  // The key vault (Settings only): sealed-secrets' WebCrypto code, a few KB.
+  ['vault-entry.js', 'vendor-vault.js'],
 ];
 
 /*

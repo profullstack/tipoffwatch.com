@@ -306,24 +306,21 @@ export const config = {
     /**
      * The key the stored playlist URL is encrypted with.
      *
-     * PLAYLIST_SECRET when it is set, and otherwise derived from DATABASE_URL --
-     * which works because DATABASE_URL is required, so there is always a key, and
-     * because it is NOT stored in the database it protects. That is the whole
-     * point of encrypting these: the threat is a copy of the database (a backup, a
-     * dump pulled to a laptop), and a dump contains the sealed rows but not the
-     * environment that can open them.
-     *
-     * The trade for that convenience: rotating the database credentials makes
-     * stored lists unreadable, and every reader simply adds theirs again --
-     * decryption returns null rather than garbage, so nothing breaks loudly. Set
-     * PLAYLIST_SECRET explicitly to decouple the two.
+     * PLAYLIST_SECRET only. It used to fall back to DATABASE_URL, which made every
+     * reader's provider login readable by anyone holding the environment. Readers'
+     * logins are sealed with their own key vault now (packages/auth/src/vault.js);
+     * this old key is read only by the one-shot migration and by customer webhook
+     * signing secrets (serverbox.js). LEGACY_KEY_MIGRATION=off is the cutoff.
      */
     get secret() {
-      return opt('PLAYLIST_SECRET') || opt('DATABASE_URL');
+      // The OLD key (seal v1), read only by the one-shot migration to readers'
+      // vaults and by customer webhook secrets (serverbox.js). No DATABASE_URL
+      // fallback any more: that made every login readable from the environment.
+      return opt('PLAYLIST_SECRET');
     },
     /** Always on: there is no configuration left to forget. */
     get enabled() {
-      return Boolean(this.secret);
+      return true;
     },
     /**
      * Refuse a list bigger than this, in bytes. 0 -- the default -- accepts any.
@@ -799,7 +796,8 @@ export const config = {
     get enabled() {
       const dflt = (process.env.BRAND ?? 'tipoffwatch') === 'tipoffwatch' ? '1' : '0';
       return (
-        opt('SIRIUSXM', dflt) !== '0' && Boolean(opt('PLAYLIST_SECRET') || opt('DATABASE_URL'))
+        // Sessions are sealed with each reader's key vault now; no server key needed.
+        opt('SIRIUSXM', dflt) !== '0'
       );
     },
     /**

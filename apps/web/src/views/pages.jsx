@@ -2326,7 +2326,13 @@ export const EventPage = ({
               stop being offered until it comes back.
             </p>
           ) : null}
-          {ownChannels.matches.length === 0 ? (
+          {ownChannels.locked ? (
+            <p class="muted">
+              Your list is sealed with your key vault, which is locked.{' '}
+              <a href="/settings#key-vault">Unlock it</a> to see which of your{' '}
+              {ownChannels.channelCount.toLocaleString('en-US')} channels carry this.
+            </p>
+          ) : ownChannels.matches.length === 0 ? (
             <p class="muted">
               None of your {ownChannels.channelCount.toLocaleString('en-US')} channels name this
               fixture
@@ -3138,9 +3144,13 @@ export const Settings = ({
   codeError = null,
   // Scarce invites left, for the line pointing at /invites. Null hides it.
   invitesLeft = null,
+  // The reader's key vault: { app, exists, unlocked, expiresAt, legacy }.
+  vault = null,
 }) => (
   <Layout title="Settings" user={user}>
     <h1>Settings</h1>
+
+    {vault ? <KeyVaultCard user={user} vault={vault} /> : null}
 
     <section>
       <h2>Profile</h2>
@@ -3789,4 +3799,98 @@ export const PushCheck = ({ user }) => (
       you report the problem.
     </p>
   </Layout>
+);
+
+/**
+ * The key vault card. Playlist addresses carry provider logins, so they are
+ * sealed with a passphrase only the reader knows (packages/auth/src/vault.js).
+ * All crypto runs in vendor-vault.js in the browser; this only draws the form.
+ */
+export const KeyVaultCard = ({ user, vault }) => (
+  <section id="key-vault" class="card" data-app={vault.app} data-user={user.id}>
+    <h2>Key vault</h2>
+    <p class="muted small">
+      Your playlist addresses carry your provider login, so they are sealed with a passphrase only
+      you know. We cannot read them, and neither could anyone who broke into our servers. Playing,
+      refreshing and checking your lists works while the vault is unlocked; a restart on our side
+      locks it again and your lists wait until you unlock.
+    </p>
+    <p class="muted small">
+      If you lose both your passphrase and your recovery key, the stored addresses are gone for
+      good: nobody here can open them, and you would add your lists again.
+    </p>
+    <p data-vault-status class="notice" aria-live="polite">
+      {!vault.exists
+        ? 'No vault yet.'
+        : vault.unlocked
+          ? `Unlocked until ${new Date(vault.expiresAt).toUTCString()}.`
+          : 'Locked.'}
+      {vault.legacy ? ` ${vault.legacy} older item(s) will be re-sealed when you unlock.` : ''}
+    </p>
+    {vault.exists && vault.unlocked ? (
+      <p>
+        <button type="button" data-vault-lock>
+          Lock now
+        </button>
+      </p>
+    ) : (
+      <div class="stack">
+        <input
+          type="password"
+          name="passphrase"
+          autocomplete={vault.exists ? 'current-password' : 'new-password'}
+          placeholder={
+            vault.exists ? 'Passphrase (or recovery key)' : 'Passphrase, 10 characters or more'
+          }
+        />
+        {vault.exists ? (
+          <label class="small">
+            <input type="checkbox" name="recovery" /> That is my recovery key
+          </label>
+        ) : (
+          <input
+            type="password"
+            name="confirm"
+            autocomplete="new-password"
+            placeholder="The same again"
+          />
+        )}
+        <label class="small">
+          Stay unlocked for{' '}
+          <select name="ttl">
+            <option value="1h">1 hour</option>
+            <option value="8h" selected>
+              8 hours
+            </option>
+            <option value="1d">1 day</option>
+            <option value="7d">7 days</option>
+          </select>
+        </label>
+        {vault.exists ? (
+          <button type="button" data-vault-unlock>
+            Unlock
+          </button>
+        ) : (
+          <button type="button" data-vault-create>
+            Create my vault
+          </button>
+        )}
+        {vault.exists ? (
+          <details>
+            <summary class="small">Change passphrase</summary>
+            <input
+              type="password"
+              name="new_passphrase"
+              autocomplete="new-password"
+              placeholder="New passphrase"
+            />
+            <button type="button" data-vault-rewrap>
+              Change it
+            </button>
+          </details>
+        ) : null}
+      </div>
+    )}
+    <script src={assetUrl('vendor-vault.js')} defer />
+  </section>
 );
