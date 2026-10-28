@@ -190,7 +190,7 @@ describe('the routes that make it editable', () => {
     expect(view).not.toContain('source_url');
 
     const route = src.slice(src.indexOf("app.get('/settings'"));
-    expect(route.slice(0, 4000)).toContain('const { source_url: _sealed, ...safe } = row;');
+    expect(route.slice(0, 5000)).toContain('const { source_url: _sealed, ...safe } = row;');
   });
 
   test('every line gets the address, the edit form and Refresh, not just the first', () => {

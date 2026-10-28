@@ -252,7 +252,7 @@ describe('the body is never buffered whole', () => {
     expect(code).toContain('onEntries:');
     expect(code).not.toMatch(/list\.entries/);
     // And the consumer is awaited, which is what paces the parse to the inserts.
-    expect(code).toContain('append(entries.map(toChannelRow))');
+    expect(code).toContain('append(entries.map((c) => toChannelRow(c, userId)))');
     // The spilled file goes on every path out, including the throws.
     expect(src).toContain('} finally {');
     expect(src).toContain('await spilled.discard()');

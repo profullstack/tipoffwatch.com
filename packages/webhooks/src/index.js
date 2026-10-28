@@ -1,5 +1,5 @@
 import { postgresStore, WebhookError, Webhooks, webhooksApi } from '@profullstack/webhooks';
-import { open, seal } from '@tipoff/auth/secretbox';
+import { open, seal } from '@tipoff/auth/serverbox';
 import { config } from '@tipoff/config';
 import { sql } from '@tipoff/db';
 import { userIdForApiKey } from './apikeys.js';

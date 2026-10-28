@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { vapidKeysFromEnv, vapidPublicKeyResponse } from '@profullstack/notifications/server';
 import {
   createProfileStore,
@@ -14,7 +15,6 @@ import { brand, config, href } from '@tipoff/config';
 import * as credits from '@tipoff/credits';
 import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
-import * as webhooks from '@tipoff/webhooks';
 import * as live from '@tipoff/live';
 import { sendInviteEmail, sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
@@ -51,6 +51,7 @@ import {
   pickChannels,
   searchEverything,
 } from '@tipoff/sports';
+import * as webhooks from '@tipoff/webhooks';
 import { Hono } from 'hono';
 import { contextStorage } from 'hono/context-storage';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -236,6 +237,9 @@ const crawlGateway = createGateway({
     // app on whatever browser they have. Charging it as a crawler loses the
     // invite; it costs one redirect or one small page.
     '/i/',
+    // The worker asking the web process for a reader's playlist key over the
+    // private network (token-checked, refused through the edge). Never charged.
+    '/internal/',
   ],
   /*
    * Who pays is the gateway's own list since 0.8.0: training crawlers, SEO
@@ -313,6 +317,7 @@ const throttle = createThrottle({
     { path: '/api/auth/', limit: 10, credential: false },
     { path: '/auth/', limit: 10, credential: false },
     { path: '/healthz', open: true },
+    { path: '/internal/', open: true },
   ],
 });
 
@@ -378,6 +383,17 @@ function requireUser(c) {
 
 app.onError((err, c) => {
   if (err.redirect) return c.redirect(err.redirect, 303);
+  /*
+   * A locked key vault is a state, not a failure: the reader's provider logins
+   * are sealed with their passphrase and this process does not hold it. A page
+   * goes to Settings to unlock; anything else gets a 423 that says so.
+   */
+  if (auth.isVaultLocked(err)) {
+    const wantsPage =
+      c.req.method === 'GET' && (c.req.header('accept') ?? '').includes('text/html');
+    if (wantsPage) return c.redirect('/settings?vault=locked#key-vault', 303);
+    return c.json({ error: err.message, code: err.code, locked: true }, 423);
+  }
   console.error('[web]', err);
   return c.json({ error: 'internal' }, 500);
 });
@@ -1334,7 +1350,7 @@ app.post('/api/playlist', async (c) => {
       );
     }
 
-    const same = target ? auth.open(target.source_url) === url : false;
+    const same = target ? auth.open(target.source_url, user.id) === url : false;
     const result = await importPlaylist({
       userId: user.id,
       playlistId,
@@ -1670,7 +1686,8 @@ app.get('/shared/:channelId/stream.ts', async (c) => {
 
   let result;
   try {
-    result = await openStream(auth.open(row.stream_url), { signal });
+    // The OWNER's vault: a shared line plays only while its owner is unlocked.
+    result = await openStream(auth.open(row.stream_url, row.owner_id), { signal });
   } catch (err) {
     release();
     throw err;
@@ -1723,7 +1740,9 @@ app.get('/shared/:channelId/check', async (c) => {
   // be opened on. Never while that line is carrying something.
   if (streamSlotsOpen(row.owner_id) > 0) return c.json({ skipped: 'watching' });
 
-  const result = await probeStream(auth.open(row.stream_url), { signal: c.req.raw.signal });
+  const result = await probeStream(auth.open(row.stream_url, row.owner_id), {
+    signal: c.req.raw.signal,
+  });
   await q
     .markSharedChannelChecked({
       channelId: row.id,
@@ -2371,7 +2390,7 @@ async function ownChannelOr404(c, user) {
   // line itself outlives a weekly pass by three weeks, so the pass -- not the
   // list, not the line -- is what is checked, on every start.
   if (row.managed && !(await q.activeLivePass(user.id))) return null;
-  const url = auth.open(row.stream_url);
+  const url = auth.open(row.stream_url, user.id);
   return url ? { ...row, url } : null;
 }
 
@@ -3060,6 +3079,119 @@ app.post('/api/timezone', async (c) => {
   return respond(c, { redirectTo: '/settings' });
 });
 
+/* ------------------------------------------------------------ key vault -- */
+
+/**
+ * The reader's key vault (packages/auth/src/vault.js).
+ *
+ * The browser does every bit of cryptography; these routes store the sealed
+ * record, take the derived data key on unlock (never the passphrase) and keep
+ * only a playlist key derived from it, in this process's memory.
+ */
+async function vaultView(userId) {
+  const seal = await q.userVaultSeal(userId);
+  const st = auth.unlockStore().status(String(userId));
+  const { playlists, lines } = await q.legacySealedFor(userId);
+  return {
+    app: auth.VAULT_APP,
+    exists: Boolean(seal),
+    unlocked: st.unlocked,
+    expiresAt: st.expiresAt,
+    legacy: playlists.length + lines.length,
+  };
+}
+
+app.get('/my/vault', async (c) => {
+  const user = requireUser(c);
+  c.header('cache-control', 'no-store');
+  return c.json({ ...(await vaultView(user.id)), seal: await q.userVaultSeal(user.id) });
+});
+
+app.post('/my/vault', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.json().catch(() => ({}));
+  if (!auth.isSealRecordValue(body.seal))
+    return c.json({ error: 'A sealed vault record is required.' }, 400);
+  const created = await q.createUserVault({ userId: user.id, seal: body.seal });
+  if (!created) return c.json({ error: 'You already have a key vault.' }, 409);
+  return c.json({ exists: true }, 201);
+});
+
+/** A new passphrase: the same data key wrapped again; both records must open with it. */
+app.put('/my/vault', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.json().catch(() => ({}));
+  const current = await q.userVaultSeal(user.id);
+  if (!current) return c.json({ error: 'No key vault yet.' }, 404);
+  if (!auth.isSealRecordValue(body.seal) || typeof body.dek !== 'string') {
+    return c.json({ error: 'seal and dek are required' }, 400);
+  }
+  const ok = await auth.verifyRewrap(String(user.id), current, body.seal, body.dek);
+  if (!ok) return c.json({ error: 'That does not open your vault.' }, 403);
+  await q.replaceUserVault({ userId: user.id, seal: body.seal });
+  return c.json({ exists: true });
+});
+
+app.post('/my/vault/unlock', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.json().catch(() => ({}));
+  const seal = await q.userVaultSeal(user.id);
+  if (!seal) return c.json({ error: 'Set up your key vault first.', code: 'vault_missing' }, 404);
+  let ttl;
+  try {
+    ttl = auth.ttlSeconds(body.ttl);
+  } catch {
+    return c.json(
+      { error: 'Choose how long to stay unlocked, like 8h or 7d (7 days at most).' },
+      400,
+    );
+  }
+  try {
+    const status = await auth.unlockWithDataKey(user.id, seal, body.dek, ttl);
+    const migration = await auth.migrateLegacyFor(user.id);
+    return c.json({ ...status, migration });
+  } catch (err) {
+    if (err.status === 403) return c.json({ error: err.message }, 403);
+    throw err;
+  }
+});
+
+app.post('/my/vault/lock', async (c) => {
+  const user = requireUser(c);
+  auth.unlockStore().lock(String(user.id));
+  return c.json({ unlocked: false, expiresAt: null });
+});
+
+/**
+ * Private network only: the worker process asking for one reader's playlist key
+ * before refreshing their list. Refused for anything that came through the edge
+ * (which always sets a forwarding header) and without the shared token; a locked
+ * reader gets a 423 and their list waits.
+ */
+function internalCaller(c) {
+  if (c.req.header('x-forwarded-for') || c.req.header('x-real-ip')) return false;
+  const token = process.env.VAULT_INTERNAL_TOKEN ?? '';
+  const given = c.req.header('x-internal-token') ?? '';
+  if (!token || token.length !== given.length) return false;
+  return timingSafeEqual(Buffer.from(token), Buffer.from(given));
+}
+
+app.post('/internal/vault/key', async (c) => {
+  if (!internalCaller(c)) return c.json({ error: 'not found' }, 404);
+  const { userId } = await c.req.json().catch(() => ({}));
+  const key = auth.playlistKeyFor(String(userId ?? ''));
+  if (!key) return c.json({ error: 'locked' }, 423);
+  const st = auth.unlockStore().status(String(userId));
+  const ttl = Math.max(60, Math.floor((new Date(st.expiresAt).getTime() - Date.now()) / 1000));
+  return c.json({ key: Buffer.from(key).toString('base64'), ttl });
+});
+
+/** Counts only, for deciding the LEGACY_KEY_MIGRATION cutoff. */
+app.get('/internal/vault/legacy', async (c) => {
+  if (!internalCaller(c)) return c.json({ error: 'not found' }, 404);
+  return c.json(await q.legacySealedCounts());
+});
+
 app.get('/settings', async (c) => {
   const user = requireUser(c);
   const [prefs, passkeys, playlists, member, shareCandidates] = await Promise.all([
@@ -3134,15 +3266,20 @@ app.get('/settings', async (c) => {
    * credential, and nothing in the view has any use for it.
    */
   const lines = playlists.map((row) => {
-    const url = row.managed ? null : auth.open(row.source_url);
+    const opened = row.managed
+      ? { value: null, locked: false }
+      : auth.openOrLocked(row.source_url, user.id);
+    const url = opened.value;
     const { source_url: _sealed, ...safe } = row;
     return {
       ...safe,
+      // Locked: the address cannot be shown until the reader unlocks their vault.
+      locked: opened.locked,
       masked: url ? maskPlaylistUrl(url) : null,
       // A row whose seal will not open can still be renamed and removed; it just
       // cannot be refreshed or shown, and the card says so instead of drawing an
       // empty Address field.
-      unreadable: !row.managed && !url,
+      unreadable: !row.managed && !url && !opened.locked,
       allowance: lineAllowance(row, config.playlists.proxy.maxPerUser),
     };
   });
@@ -3192,6 +3329,7 @@ app.get('/settings', async (c) => {
         passwordMinLength={auth.PASSWORD_MIN_LENGTH}
         member={member}
         shareCandidates={shareCandidates}
+        vault={await vaultView(user.id)}
         radio={
           config.radio.enabled
             ? {
@@ -5206,6 +5344,8 @@ const STATIC_FILES = [
   ['/diag.js', 'diag.js', 'text/javascript'],
   ['/push-check.js', 'push-check.js', 'text/javascript'],
   ['/vendor-webauthn.js', 'vendor-webauthn.js', 'text/javascript'],
+  // The key vault's browser half (Settings only). See client/vault-entry.js.
+  ['/vendor-vault.js', 'vendor-vault.js', 'text/javascript'],
   // Fetched by app.js on the first press of Play, not linked by the Layout: the
   // house player's transport stream engine is a quarter of a megabyte of demuxer
   // that most readers never need.

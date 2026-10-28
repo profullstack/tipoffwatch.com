@@ -142,22 +142,27 @@ describe('the hand-off file', () => {
 
 describe('sealing the credential', () => {
   test('a sealed url is not the url, and round-trips', async () => {
-    const { seal, open } = await import('../packages/auth/src/secretbox.js');
+    const { seal: sealFor, open: openFor } = await import('../packages/auth/src/secretbox.js');
+    const { unlockStore } = await import('../packages/auth/src/vault.js');
+    unlockStore().unlock('reader-1', new Uint8Array(32).fill(3), 3600);
     const url = 'http://206.212.244.192/playlist/user/password/m3u';
-    const sealed = seal(url);
+    const sealed = sealFor(url, 'reader-1');
     expect(sealed).not.toContain('password');
-    expect(sealed.startsWith('v1.')).toBe(true);
-    expect(open(sealed)).toBe(url);
+    // v2: sealed under the reader's own key vault, never the server's.
+    expect(sealed.startsWith('v2.')).toBe(true);
+    expect(openFor(sealed, 'reader-1')).toBe(url);
   });
 
   test('a tampered value opens as null rather than garbage', async () => {
-    const { seal, open } = await import('../packages/auth/src/secretbox.js');
-    const sealed = seal('http://example.test/a');
+    const { seal: sealFor, open: openFor } = await import('../packages/auth/src/secretbox.js');
+    const { unlockStore } = await import('../packages/auth/src/vault.js');
+    unlockStore().unlock('reader-1', new Uint8Array(32).fill(3), 3600);
+    const sealed = sealFor('http://example.test/a', 'reader-1');
     const [v, iv, tag, body] = sealed.split('.');
     // Flip the ciphertext: GCM must reject it, not decrypt it into nonsense.
     const flipped = [v, iv, tag, `${body.slice(0, -2)}AA`].join('.');
-    expect(open(flipped)).toBeNull();
-    expect(open('nonsense')).toBeNull();
+    expect(openFor(flipped, 'reader-1')).toBeNull();
+    expect(openFor('nonsense', 'reader-1')).toBeNull();
   });
 });
 

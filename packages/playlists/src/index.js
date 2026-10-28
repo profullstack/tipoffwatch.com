@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { open, seal } from '@tipoff/auth';
+import { ensurePlaylistKey, open, openOrLocked, playlistKeyFor, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
@@ -80,7 +80,7 @@ export async function importPlaylist({ userId, playlistId = null, url, label, kn
     userId,
     playlistId,
     label: label || parsed.hostname,
-    sourceUrl: seal(url),
+    sourceUrl: seal(url, userId),
   });
   // Every write below is against THIS row. Without it an import into a reader's
   // second provider would wipe the channels of their first: the channel and status
@@ -116,7 +116,7 @@ export async function importPlaylist({ userId, playlistId = null, url, label, kn
     }
     // Compared unsealed: seal() carries a random nonce, so two ciphertexts of the
     // same URL never match and a ciphertext comparison would always roll back.
-    const before = open(previous.source_url);
+    const before = open(previous.source_url, userId);
     if (!before || before === url) return false;
     await q.savePlaylist({
       userId,
@@ -236,7 +236,7 @@ export async function importPlaylist({ userId, playlistId = null, url, label, kn
         fill: async (append) => {
           const list = await parseM3uStream(readSpill(spilled.path), {
             max: config.playlists.maxChannels,
-            onEntries: (entries) => append(entries.map(toChannelRow)),
+            onEntries: (entries) => append(entries.map((c) => toChannelRow(c, userId))),
           });
           // Only reachable when an operator has set PLAYLIST_MAX_CHANNELS: the
           // parser says so directly, where a length comparison could only infer it.
@@ -298,7 +298,7 @@ export async function importPlaylist({ userId, playlistId = null, url, label, kn
  * At module scope because it runs a few million times on a full catalogue and
  * there is no reason to rebuild the closure for every batch.
  */
-function toChannelRow(c) {
+function toChannelRow(c, ownerId) {
   return {
     title: c.title,
     // The provider's own group-title, verbatim. Not mapped onto our leagues: every
@@ -311,7 +311,7 @@ function toChannelRow(c) {
     kind: c.kind ?? null,
     // Sealed individually: each one is the same credential with a channel id on
     // the end, so a leak of any single row is a leak of the line.
-    streamUrl: seal(c.url),
+    streamUrl: seal(c.url, ownerId),
     normTitle: normaliseTeam(c.title),
   };
 }
@@ -400,7 +400,7 @@ export async function refreshPlaylist(userId, { playlistId = null, knownHash = n
     ? await q.getPlaylistFor({ userId, playlistId })
     : await q.getPlaylist(userId);
   if (!row) throw new Error('You have not added a list.');
-  const url = open(row.source_url);
+  const url = open(row.source_url, userId);
   if (!url) throw new Error('That stored list could not be read. Please add it again.');
   /*
    * The id goes through, and it is load-bearing rather than tidy.
@@ -445,7 +445,15 @@ export async function refreshDuePlaylists({ log = console.log, limit = 25 } = {}
 
   let changed = 0;
   let failed = 0;
+  let locked = 0;
   for (const row of due) {
+    // The address is sealed with the reader's own vault. A locked reader's list
+    // waits for them to unlock; it is not an error and is not backed off.
+    if (!(await ensurePlaylistKey(row.user_id))) {
+      locked++;
+      await q.postponePlaylistRefresh({ userId: row.user_id, playlistId: row.id }).catch(() => {});
+      continue;
+    }
     try {
       // By id: a reader can have several lists due at once, and refreshing "their
       // list" would poll the first one repeatedly and never touch the others.
@@ -461,8 +469,8 @@ export async function refreshDuePlaylists({ log = console.log, limit = 25 } = {}
     }
   }
 
-  log(`[playlists] ${due.length} due, ${changed} changed, ${failed} failed`);
-  return { checked: due.length, changed, failed };
+  log(`[playlists] ${due.length} due, ${changed} changed, ${failed} failed, ${locked} locked`);
+  return { checked: due.length, changed, failed, locked };
 }
 
 /**
@@ -559,6 +567,10 @@ export async function ownChannelsFor({ userId, fixture }) {
     q.playlistCandidates(userId, { terms: matchTerms(fixture) }),
   ]);
   if (channelCount === 0) return none;
+  // Locked vault: the entries are sealed with the reader's key, which this
+  // process does not hold. The page says so and offers the unlock.
+  if (!playlistKeyFor(userId))
+    return { hasList: true, channelCount, locked: true, matches: [], competition: [] };
   if (rows.length === 0) return { hasList: true, channelCount, matches: [], competition: [] };
 
   const ranked = rankChannelsForFixture(
@@ -595,7 +607,8 @@ export async function ownChannelsFor({ userId, fixture }) {
           playlistId: row?.playlist_id ?? null,
           providerLabel: row?.playlist_label ?? null,
           providerManaged: row?.playlist_managed === true,
-          url: open(m.url),
+          // openOrLocked: a channel still on the old key mid-migration is skipped.
+          url: openOrLocked(m.url, userId).value,
           // What we last learned about this slot, so the page does not re-probe
           // something confirmed a moment ago. A verdict older than this is worth
           // nothing: these slots come and go during the day, which is the entire
@@ -912,7 +925,9 @@ export async function marketChannelsForEvent({ userId, markets }) {
     country: m.country,
     channels: m.channels.map((ch) => ({
       name: ch.name,
-      own: ch.own.map((c) => ({ id: c.id, title: c.title, url: open(c.url) })).filter((c) => c.url),
+      own: ch.own
+        .map((c) => ({ id: c.id, title: c.title, url: openOrLocked(c.url, userId).value }))
+        .filter((c) => c.url),
     })),
   }));
 
