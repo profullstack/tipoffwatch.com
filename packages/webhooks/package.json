@@ -1,0 +1,17 @@
+{
+  "name": "@tipoff/webhooks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./scan": "./src/scan.js",
+    "./apikeys": "./src/apikeys.js"
+  },
+  "dependencies": {
+    "@profullstack/webhooks": "0.2.1",
+    "@tipoff/auth": "workspace:*",
+    "@tipoff/config": "workspace:*",
+    "@tipoff/db": "workspace:*"
+  }
+}

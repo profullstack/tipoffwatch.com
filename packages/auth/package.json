@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.js",
-    "./invites": "./src/invites.js"
+    "./invites": "./src/invites.js",
+    "./secretbox": "./src/secretbox.js"
   },
   "dependencies": {
     "@tipoff/config": "workspace:*",

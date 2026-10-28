@@ -86,6 +86,34 @@ Responses cap at ~100 events, so `fetchSchedule` splits the window and re-fetche
 when it hits the cap — a truncated response is otherwise indistinguishable from a
 quiet fortnight and would silently drop half a busy league's season.
 
+## Webhooks
+
+A reader's own server can be told, signed, when something happens to a game they
+follow (packages/webhooks, on @profullstack/webhooks). Set up at
+`/settings/webhooks`, or over the API with a personal key made on that page:
+
+```sh
+curl -H "Authorization: Bearer $KEY" https://tipoffwatch.com/api/v1/webhooks
+curl -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/hook","events":["game.*"]}' https://tipoffwatch.com/api/v1/webhooks
+```
+
+| Event | When |
+| --- | --- |
+| `game.starting` | a timed fixture kicks off within the hour (once) |
+| `game.started` | it went live |
+| `game.final` | it finished, with the score |
+| `line.moved` | the pre-kickoff line moved (with the previous reading) |
+
+Each delivery is a CloudEvent signed per Standard Webhooks (`webhook-id`,
+`webhook-timestamp`, `webhook-signature`), retried with backoff for about three
+days, with a delivery log. Secrets are sealed at rest with the playlist key.
+Nothing is hooked into the sync or the live tick: a scan in the worker role
+(every 30 s) finds fixtures in an announceable state that someone with an
+endpoint follows, claims each in `webhook_marks` so it is sent once, and queues
+it. Per account per hour: 60 line moves, 300 of each game event; past the cap the
+rest of the hour is skipped.
+
 ## Deploying
 
 One Railway service from the Dockerfile, plus managed Postgres and Redis.

@@ -19,6 +19,7 @@ COPY packages/radio/package.json packages/radio/
 COPY packages/sports/package.json packages/sports/
 COPY packages/live/package.json packages/live/
 COPY packages/credits/package.json packages/credits/
+COPY packages/webhooks/package.json packages/webhooks/
 RUN bun install --frozen-lockfile || bun install
 
 FROM base AS runtime

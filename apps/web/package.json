@@ -29,6 +29,7 @@
     "@tipoff/queue": "workspace:*",
     "@tipoff/radio": "workspace:*",
     "@tipoff/sports": "workspace:*",
+    "@tipoff/webhooks": "workspace:*",
     "hono": "^4.13.14"
   }
 }
