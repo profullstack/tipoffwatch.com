@@ -5,6 +5,7 @@ import { migrate } from '@tipoff/db/migrate';
 import { configurePayments } from '@tipoff/payments';
 import { closeQueues, connection, installSchedules, pruneHistory } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
+import { startWebhooks } from '@tipoff/webhooks';
 import { app } from './app.js';
 
 /*
@@ -64,9 +65,12 @@ await preflight('postgres', () => migrate());
 if (!(await healthcheck())) throw new Error('database healthcheck failed at boot');
 
 let workers = [];
+let stopWebhooks = () => {};
 if (config.roles.includes('worker')) {
   await preflight('redis', () => installSchedules());
   workers = startWorkers();
+  // Customer webhooks: deliver what is due and scan for new events. Once, here.
+  stopWebhooks = startWebhooks();
   // History written under the old, looser retention -- 385MB of it in
   // bull:sync:events on 2026-10-01. Paced in small steps and never awaited.
   pruneHistory().catch((err) => console.error('[queue] retention pass', err));
@@ -110,6 +114,7 @@ async function shutdown(signal) {
   // Before anything else: a shutdown closes these clients, and a watchdog probing
   // a closing pool would call a clean drain a wedge and exit(1) over the top of it.
   watchdogs.stop();
+  stopWebhooks();
   // Stop taking new work before closing the pool, so an in-flight fan-out finishes
   // its claim rather than half-sending a batch.
   await Promise.allSettled([server?.stop(true), ...workers.map((w) => w.close())]);

@@ -13,6 +13,7 @@
     "@tipoff/notify": "workspace:*",
     "@tipoff/payments": "workspace:*",
     "@tipoff/queue": "workspace:*",
-    "@tipoff/sports": "workspace:*"
+    "@tipoff/sports": "workspace:*",
+    "@tipoff/webhooks": "workspace:*"
   }
 }

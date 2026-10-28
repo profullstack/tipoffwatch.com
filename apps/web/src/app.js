@@ -14,6 +14,7 @@ import { brand, config, href } from '@tipoff/config';
 import * as credits from '@tipoff/credits';
 import { sql } from '@tipoff/db';
 import * as q from '@tipoff/db/queries';
+import * as webhooks from '@tipoff/webhooks';
 import * as live from '@tipoff/live';
 import { sendInviteEmail, sendLoginLink } from '@tipoff/notify';
 import * as pay from '@tipoff/payments';
@@ -91,6 +92,7 @@ import { Inbox, PeopleListPage, ProfilePage, Thread } from './views/people.jsx';
 import { InvitePage, PremiumPage } from './views/premium.jsx';
 import { RadioPage, RadioSidesFragment } from './views/radio.jsx';
 import { WatchChannel, WatchIndex } from './views/watch.jsx';
+import { WebhooksPage } from './views/webhooks.jsx';
 
 export const app = new Hono();
 
@@ -4488,6 +4490,132 @@ app.post('/api/invites/:id/revoke', async (c) => {
 
 /* -------------------------------------------------------------- public API -- */
 
+/* ------------------------------------------------------------- webhooks -- */
+
+/*
+ * Customer webhooks (@tipoff/webhooks over @profullstack/webhooks).
+ *
+ * /api/v1/webhooks is the package's own API: a personal key
+ * (Authorization: Bearer tok_...) or a signed-in browser, reads always, writes
+ * only from this origin. Nobody gets a 401. /settings/webhooks is the same
+ * thing as plain forms.
+ */
+async function webhooksRoute(c) {
+  c.header('cache-control', 'no-store, private');
+  const owner = await webhooks.webhookOwner(c.req.raw, c.get('user'));
+  return (await webhooks.webhooksHandler(owner)(c.req.raw)) ?? c.notFound();
+}
+app.all('/api/v1/webhooks', webhooksRoute);
+app.all('/api/v1/webhooks/*', webhooksRoute);
+
+async function webhooksPage(c, user, extra = {}) {
+  const hub = webhooks.hooks();
+  const uid = String(user.id);
+  const [endpoints, deliveries, apiKey] = await Promise.all([
+    hub.listEndpoints(uid),
+    hub.deliveries(uid, { limit: 25 }),
+    webhooks.apiKeyInfo(webhooks.pool, user.id),
+  ]);
+  c.header('cache-control', 'no-store, private');
+  return c.html(
+    await render(
+      <WebhooksPage
+        user={user}
+        site={config.siteUrl}
+        endpoints={endpoints}
+        deliveries={deliveries}
+        eventTypes={webhooks.EVENT_TYPES}
+        descriptions={webhooks.EVENT_DESCRIPTIONS}
+        caps={webhooks.HOURLY_CAP}
+        apiKey={apiKey}
+        notice={c.req.query('notice') ?? null}
+        error={c.req.query('error') ?? null}
+        {...extra}
+      />,
+    ),
+    extra.status ?? 200,
+  );
+}
+
+const webhookFail = (c, err) => {
+  if (err?.status && err.status < 500) {
+    return c.redirect(withQuery('/settings/webhooks', { error: err.message }), 303);
+  }
+  throw err;
+};
+
+app.get('/settings/webhooks', async (c) => webhooksPage(c, requireUser(c)));
+
+app.post('/settings/webhooks', async (c) => {
+  const user = requireUser(c);
+  const body = await c.req.parseBody({ all: true });
+  const events = [body.events ?? []].flat().map(String).filter(Boolean);
+  try {
+    const { secret } = await webhooks.hooks().createEndpoint(String(user.id), {
+      url: String(body.url ?? '').trim(),
+      description: String(body.description ?? '').slice(0, 200),
+      events: events.length ? events : ['*'],
+    });
+    return webhooksPage(c, user, {
+      notice: 'Endpoint added. Verify deliveries with this signing secret.',
+      reveal: { title: 'Signing secret', value: secret },
+    });
+  } catch (err) {
+    return webhookFail(c, err);
+  }
+});
+
+app.post('/settings/webhooks/key', async (c) => {
+  const user = requireUser(c);
+  const key = await webhooks.createApiKey(webhooks.pool, user.id);
+  return webhooksPage(c, user, {
+    notice: 'New API key made. Any earlier key stopped working.',
+    reveal: { title: 'API key', value: key },
+  });
+});
+
+app.post('/settings/webhooks/key/revoke', async (c) => {
+  const user = requireUser(c);
+  await webhooks.revokeApiKey(webhooks.pool, user.id);
+  return c.redirect(withQuery('/settings/webhooks', { notice: 'API key revoked.' }), 303);
+});
+
+app.post('/settings/webhooks/:id/:action', async (c) => {
+  const user = requireUser(c);
+  const uid = String(user.id);
+  const { id, action } = c.req.param();
+  const hub = webhooks.hooks();
+  try {
+    if (action === 'rotate') {
+      const { secret } = await hub.rotateSecret(uid, id);
+      return webhooksPage(c, user, {
+        notice: 'New signing secret. The old one no longer verifies.',
+        reveal: { title: 'Signing secret', value: secret },
+      });
+    }
+    let notice;
+    if (action === 'test') {
+      const r = await hub.test(uid, id);
+      notice = r.ok
+        ? `Test delivered (HTTP ${r.status}).`
+        : `Test failed: ${r.error ?? `HTTP ${r.status}`}.`;
+    } else if (action === 'toggle') {
+      const body = await c.req.parseBody();
+      const on = body.enabled === '1';
+      await hub.updateEndpoint(uid, id, { enabled: on });
+      notice = on ? 'Endpoint on.' : 'Endpoint off.';
+    } else if (action === 'delete') {
+      await hub.deleteEndpoint(uid, id);
+      notice = 'Endpoint removed.';
+    } else {
+      return c.notFound();
+    }
+    return c.redirect(withQuery('/settings/webhooks', { notice }), 303);
+  } catch (err) {
+    return webhookFail(c, err);
+  }
+});
+
 /**
  * Free, unauthenticated, documented at its own root.
  *
@@ -4508,6 +4636,10 @@ app.get('/api/v1', async (c) => {
       'GET /api/v1/leagues?sport=soccer': 'Leagues, optionally filtered by sport.',
       'GET /api/v1/events?league=soccer-eng-1&sport=soccer&limit=100':
         'Upcoming fixtures. Both filters optional; limit caps at 200.',
+      'GET|POST /api/v1/webhooks':
+        'Your webhook endpoints (needs your API key from /settings/webhooks). Events: ' +
+        webhooks.EVENT_TYPES.join(', ') +
+        '.',
     },
   });
 });

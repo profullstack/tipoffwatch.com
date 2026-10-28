@@ -3615,6 +3615,14 @@ export const Settings = ({
       </section>
     ) : null}
 
+    <section id="webhooks">
+      <h2>Webhooks</h2>
+      <p class="muted">
+        Have your own server told, signed, when a game you follow is about to start, starts,
+        finishes, or its betting line moves. <a href="/settings/webhooks">Set up webhooks</a>
+      </p>
+    </section>
+
     <section>
       <h2>Account</h2>
       <p class="muted">{user.email}</p>

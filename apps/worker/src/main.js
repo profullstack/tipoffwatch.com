@@ -12,6 +12,7 @@ import { migrate } from '@tipoff/db/migrate';
 import { configurePayments } from '@tipoff/payments';
 import { closeQueues, connection, installSchedules, pruneHistory } from '@tipoff/queue';
 import { startWorkers } from '@tipoff/queue/workers';
+import { startWebhooks } from '@tipoff/webhooks';
 
 /*
  * Hand the payments package its database handle and settings.
@@ -27,6 +28,8 @@ configurePayments({ sql, coinpay: config.coinpay, siteUrl: config.siteUrl });
 await migrate();
 await installSchedules();
 const workers = startWorkers();
+// Customer webhooks: deliver what is due and scan for new events. Once, here.
+const stopWebhooks = startWebhooks();
 // History written under the old, looser retention. Paced, never awaited.
 pruneHistory().catch((err) => console.error('[queue] retention pass', err));
 
@@ -51,6 +54,7 @@ async function shutdown(signal) {
   console.log(`[worker] ${signal}, draining`);
   // FIRST: a clean drain closes these clients and must not look like a wedge.
   watchdogs.stop();
+  stopWebhooks();
   await Promise.allSettled(workers.map((w) => w.close()));
   await Promise.allSettled([closeQueues(), closeDb()]);
   process.exit(0);
