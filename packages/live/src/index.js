@@ -1,4 +1,4 @@
-import { open, playlistKeyFor, seal } from '@tipoff/auth';
+import { canSealFor, open, seal } from '@tipoff/auth';
 import { brand, config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import { importPlaylist } from '@tipoff/playlists';
@@ -137,7 +137,7 @@ export async function ensureLine(userId, { log = console.log } = {}) {
    * at the provider until it can be stored: creating a line we then cannot save
    * would leave a paid-for line nobody can find, and a retry would open another.
    */
-  if (!playlistKeyFor(userId)) return { ok: false, reason: 'locked', locked: true };
+  if (!canSealFor(userId)) return { ok: false, reason: 'locked', locked: true };
 
   const done = [];
   let line = await q.providerLine(userId);

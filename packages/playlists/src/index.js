@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { ensurePlaylistKey, open, openOrLocked, playlistKeyFor, seal } from '@tipoff/auth';
+import { canSealFor, ensurePlaylistKey, open, openOrLocked, seal } from '@tipoff/auth';
 import { config } from '@tipoff/config';
 import * as q from '@tipoff/db/queries';
 import {
@@ -569,7 +569,7 @@ export async function ownChannelsFor({ userId, fixture }) {
   if (channelCount === 0) return none;
   // Locked vault: the entries are sealed with the reader's key, which this
   // process does not hold. The page says so and offers the unlock.
-  if (!playlistKeyFor(userId))
+  if (!canSealFor(userId))
     return { hasList: true, channelCount, locked: true, matches: [], competition: [] };
   if (rows.length === 0) return { hasList: true, channelCount, matches: [], competition: [] };
 
