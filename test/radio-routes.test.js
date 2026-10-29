@@ -47,7 +47,7 @@ describe('radio routes', () => {
     const src = await read('../apps/web/src/app.js');
     const verify = src.slice(src.indexOf("app.post('/api/radio/connect/verify'"));
     expect(verify.slice(0, 2500)).toContain(
-      'if (status === 400) radio.putPending(user.id, pending)',
+      'if (status === 400 || status === 423) radio.putPending(user.id, pending)',
     );
     expect(verify.slice(0, 2500)).toContain('That code has expired');
   });
