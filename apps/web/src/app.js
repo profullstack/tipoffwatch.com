@@ -1,3 +1,4 @@
+import { createVaultHandlers, mountVaultRoutes } from '@profullstack/sealed-secrets/vault-server';
 import { timingSafeEqual } from 'node:crypto';
 import { vapidKeysFromEnv, vapidPublicKeyResponse } from '@profullstack/notifications/server';
 import {
@@ -3101,67 +3102,34 @@ async function vaultView(userId) {
   };
 }
 
-app.get('/my/vault', async (c) => {
-  const user = requireUser(c);
-  c.header('cache-control', 'no-store');
-  return c.json({ ...(await vaultView(user.id)), seal: await q.userVaultSeal(user.id) });
-});
-
-app.post('/my/vault', async (c) => {
-  const user = requireUser(c);
-  const body = await c.req.json().catch(() => ({}));
-  if (!auth.isSealRecordValue(body.seal))
-    return c.json({ error: 'A sealed vault record is required.' }, 400);
-  const created = await q.createUserVault({ userId: user.id, seal: body.seal });
-  if (!created) return c.json({ error: 'You already have a key vault.' }, 409);
-  // From here new values need the vault; the unlock that follows re-seals the v1 ones.
-  auth.noteVaultOwner(user.id);
-  return c.json({ exists: true }, 201);
-});
-
-/** A new passphrase: the same data key wrapped again; both records must open with it. */
-app.put('/my/vault', async (c) => {
-  const user = requireUser(c);
-  const body = await c.req.json().catch(() => ({}));
-  const current = await q.userVaultSeal(user.id);
-  if (!current) return c.json({ error: 'No key vault yet.' }, 404);
-  if (!auth.isSealRecordValue(body.seal) || typeof body.dek !== 'string') {
-    return c.json({ error: 'seal and dek are required' }, 400);
-  }
-  const ok = await auth.verifyRewrap(String(user.id), current, body.seal, body.dek);
-  if (!ok) return c.json({ error: 'That does not open your vault.' }, 403);
-  await q.replaceUserVault({ userId: user.id, seal: body.seal });
-  return c.json({ exists: true });
-});
-
-app.post('/my/vault/unlock', async (c) => {
-  const user = requireUser(c);
-  const body = await c.req.json().catch(() => ({}));
-  const seal = await q.userVaultSeal(user.id);
-  if (!seal) return c.json({ error: 'Set up your key vault first.', code: 'vault_missing' }, 404);
-  let ttl;
-  try {
-    ttl = auth.ttlSeconds(body.ttl);
-  } catch {
-    return c.json(
-      { error: 'Choose how long to stay unlocked, like 8h or 7d (7 days at most).' },
-      400,
-    );
-  }
-  try {
-    const status = await auth.unlockWithDataKey(user.id, seal, body.dek, ttl);
-    const migration = await auth.migrateLegacyFor(user.id);
-    return c.json({ ...status, migration });
-  } catch (err) {
-    if (err.status === 403) return c.json({ error: err.message }, 403);
-    throw err;
-  }
-});
-
-app.post('/my/vault/lock', async (c) => {
-  const user = requireUser(c);
-  auth.unlockStore().lock(String(user.id));
-  return c.json({ unlocked: false, expiresAt: null });
+// The routes are the house ones (@profullstack/sealed-secrets/vault-server); what
+// is ours is where the record lives and what an unlock keeps: only the playlist
+// key derived from the data key, never the data key itself.
+mountVaultRoutes(app, {
+  userId: (c) => requireUser(c).id,
+  handlers: createVaultHandlers({
+    sealer: auth.sealer,
+    store: {
+      get: (userId) => q.userVaultSeal(userId),
+      create: (userId, seal) => q.createUserVault({ userId, seal }),
+      replace: (userId, seal) => q.replaceUserVault({ userId, seal }),
+    },
+    // From here new values need the vault; the unlock that follows re-seals the v1 ones.
+    onCreate: (userId) => auth.noteVaultOwner(userId),
+    onUnlock: async (userId, dek, ttl) => {
+      const key = auth.derivePlaylistKey(dek, userId);
+      const status = auth.unlockStore().unlock(String(userId), key, ttl);
+      key.fill(0);
+      const migration = await auth.migrateLegacyFor(userId);
+      return { ...status, migration };
+    },
+    onLock: (userId) => auth.unlockStore().lock(String(userId)),
+    status: (userId) => auth.unlockStore().status(String(userId)),
+    view: async (userId) => {
+      const { exists, ...rest } = await vaultView(userId);
+      return rest;
+    },
+  }),
 });
 
 /**
@@ -3398,6 +3366,14 @@ const radioBack = (query) => `/settings?${query}#siriusxm`;
  * The reader's problem or ours, in the status. A SiriusXmError knows which;
  * anything else is ours and must not read as "wrong code".
  */
+const RADIO_VAULT_LOCKED =
+  'Unlock your key vault first (Key vault, on this page), then connect SiriusXM. Your session is sealed with it.';
+/** Where a radio failure sends the reader: to the vault card when that is the fix. */
+const radioBackFor = (failure) =>
+  failure.vault
+    ? `/settings?siriusxm_error=${encodeURIComponent(failure.message)}#key-vault`
+    : radioBack(`siriusxm_error=${encodeURIComponent(failure.message)}`);
+
 function radioFailure(err) {
   if (err instanceof radio.SiriusXmError) {
     // Logged as well as shown: the page gets the sentence, the log gets what
@@ -3407,6 +3383,12 @@ function radioFailure(err) {
       `[radio] ${err.status} ${err.message}${err.data ? ` -- ${JSON.stringify(err.data).slice(0, 300)}` : ''}`,
     );
     return { message: err.message, status: err.status };
+  }
+  // The session is sealed under the reader's key vault; a locked (or, before
+  // 0.25.1, missing) vault is theirs to fix, not "SiriusXM did not answer".
+  if (auth.isVaultLocked(err)) {
+    console.warn(`[radio] vault ${err.code}: cannot seal the SiriusXM session`);
+    return { message: RADIO_VAULT_LOCKED, status: 423, vault: true };
   }
   console.error('[radio]', err);
   return { message: 'SiriusXM did not answer. Try again in a moment.', status: 502 };
@@ -3424,16 +3406,26 @@ app.post('/api/radio/connect', async (c) => {
       redirectTo: radioBack('siriusxm_error=Enter%20the%20email%20on%20your%20SiriusXM%20account.'),
     });
   }
+  // No code is sent that could not be saved: the session is sealed under the vault.
+  if (!auth.canSealFor(user.id)) {
+    const failure = { message: RADIO_VAULT_LOCKED, status: 423, vault: true };
+    return respond(c, {
+      json: { error: failure.message, code: 'vault_locked' },
+      status: 423,
+      redirectTo: radioBackFor(failure),
+    });
+  }
   try {
     const state = await radio.startOtpLogin(email, { proxy: radio.proxyFor(user.id) });
     radio.putPending(user.id, { ...state, email });
     return respond(c, { json: { ok: true, step: 'code' }, redirectTo: radioBack('siriusxm=code') });
   } catch (err) {
-    const { message, status } = radioFailure(err);
+    const failure = radioFailure(err);
+    const { message, status } = failure;
     return respond(c, {
       json: { error: message },
       status,
-      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+      redirectTo: radioBackFor(failure),
     });
   }
 });
@@ -3472,14 +3464,16 @@ app.post('/api/radio/connect/verify', async (c) => {
       redirectTo: radioBack('siriusxm=connected'),
     });
   } catch (err) {
-    const { message, status } = radioFailure(err);
+    const failure = radioFailure(err);
+    const { message, status } = failure;
     // A wrong code does not spend the sign-in: the jar goes back so the reader
     // can try the code again rather than asking for a new one.
-    if (status === 400) radio.putPending(user.id, pending);
+    // A locked vault does not spend it either: unlock, then press Verify again.
+    if (status === 400 || status === 423) radio.putPending(user.id, pending);
     return respond(c, {
       json: { error: message },
       status,
-      redirectTo: radioBack(`siriusxm_error=${encodeURIComponent(message)}`),
+      redirectTo: radioBackFor(failure),
     });
   }
 });
