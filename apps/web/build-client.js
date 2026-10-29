@@ -90,6 +90,10 @@ for (const [entry, name] of BUNDLES) {
     naming: name,
     minify: true,
     target: 'browser',
+    // Classic scripts share one global scope. Unwrapped, two minified bundles
+    // collide on names like `P` ("Identifier 'P' has already been declared") and
+    // the second one never runs: on Settings that was the key vault or WebAuthn.
+    format: 'iife',
     ...(PLAYER_BUNDLES.has(entry) ? HLS_ONLY : {}),
     ...(TS_BUNDLES.has(entry) ? TS_ONLY : {}),
   });

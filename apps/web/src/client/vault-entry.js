@@ -42,12 +42,14 @@ if (root) {
       wipe(dek);
     }
   };
-  const run = (fn) => async (event) => {
+  const run = (fn, { reload = true } = {}) => async (event) => {
     event.preventDefault();
     for (const b of root.querySelectorAll('button')) b.disabled = true;
+    // The key derivation takes a second or two on a phone; say something meanwhile.
+    say('Working...');
     try {
       say(await fn());
-      setTimeout(() => location.reload(), 1200);
+      if (reload) setTimeout(() => location.reload(), 1200);
     } catch (err) {
       say(err.message || 'That did not work.', true);
     } finally {
@@ -60,11 +62,11 @@ if (root) {
       ? sealer.unlockSealWithRecovery(seal, value('passphrase').trim(), userId)
       : sealer.unlockSeal(seal, value('passphrase'), userId);
 
-  root.querySelector('[data-vault-create]')?.addEventListener(
-    'click',
-    run(async () => {
-      if (value('passphrase') !== value('confirm'))
-        throw new Error('The two passphrases are different.');
+  const create = run(async () => {
+    if (value('passphrase').length < 10)
+      throw new Error('Use a passphrase of 10 characters or more.');
+    if (value('passphrase') !== value('confirm'))
+      throw new Error('The two passphrases are different.');
       const made = await sealer.createSeal(value('passphrase'), userId);
       try {
         await api('/my/vault', { seal: made.seal });
@@ -72,17 +74,19 @@ if (root) {
         wipe(made.dek);
         throw err;
       }
-      // Shown once, and blocking on purpose: it is the only way back in.
+      // Shown once: it is the only way back in. Some browsers and installed apps
+      // suppress prompt(), so the key also stays on the page until they reload.
       window.prompt(
         'Your recovery key. Save it now (a password manager is ideal); it is shown only once:',
         made.recoveryKey,
       );
-      return sendUnlock(made.dek);
-    }),
-  );
-  root.querySelector('[data-vault-unlock]')?.addEventListener(
-    'click',
-    run(async () => sendUnlock(await openDek(await currentSeal()))),
+    const unlocked = await sendUnlock(made.dek);
+    return `${unlocked} Your recovery key, shown only this once: ${made.recoveryKey} (save it in a password manager, then reload).`;
+  }, { reload: false });
+  const unlock = run(async () => sendUnlock(await openDek(await currentSeal())));
+  // Enter in any field, or the Create / Unlock button: whichever this form has.
+  root.querySelector('[data-vault-form]')?.addEventListener('submit', (event) =>
+    root.querySelector('[data-vault-create]') ? create(event) : unlock(event),
   );
   root.querySelector('[data-vault-lock]')?.addEventListener(
     'click',

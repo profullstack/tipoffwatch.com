@@ -1,4 +1,5 @@
 import { watchDependencies } from '@profullstack/watchdog';
+import { startVaultOwnerSync } from '@tipoff/auth';
 import { assertCoinpayMerchantKey, config } from '@tipoff/config';
 import { close as closeDb, healthcheck, sql } from '@tipoff/db';
 import { migrate } from '@tipoff/db/migrate';
@@ -61,6 +62,8 @@ async function preflight(what, fn) {
 // Migrations apply themselves. An advisory lock inside makes this safe when the web
 // and worker roles boot at the same moment.
 await preflight('postgres', () => migrate());
+// Before any request or job: who still reads and writes under the legacy key.
+await startVaultOwnerSync();
 
 if (!(await healthcheck())) throw new Error('database healthcheck failed at boot');
 
