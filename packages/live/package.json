@@ -8,6 +8,7 @@
     "./provider": "./src/provider.js"
   },
   "dependencies": {
+    "@profullstack/stream-providers": "^0.1.1",
     "@tipoff/auth": "workspace:*",
     "@tipoff/config": "workspace:*",
     "@tipoff/db": "workspace:*",
