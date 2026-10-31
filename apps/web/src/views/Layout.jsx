@@ -318,10 +318,10 @@ export const Layout = (props) => {
 
         <main id="main">{props.children}</main>
 
-        <footer>
+        <aside class="data-attribution muted" aria-label="Sports data attribution">
           {/* Where the rows actually came from, per brand: a credit that names the
             wrong upstream is worse than none, because a reader takes it as fact. */}
-          <p class="muted">
+          <p>
             {brand.sources.lead}{' '}
             {brand.sources.list.map((s, i) => (
               <>
@@ -339,7 +339,7 @@ export const Layout = (props) => {
               </>
             )}
           </p>
-        </footer>
+        </aside>
         {/* The links, copyright and webring row; the pit.world footer is last. */}
         <ProfullstackFooter />
 
