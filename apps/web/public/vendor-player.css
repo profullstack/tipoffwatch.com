@@ -74,10 +74,9 @@
 .pux-player--playing .pux-player__overlay {
   opacity: 0;
 }
-.pux-player--playing:hover .pux-player__overlay svg,
-.pux-player--playing .pux-player__overlay:focus-visible svg {
-  opacity: 1;
-}
+/* Pointing at a playing picture while the bar is up shows the pause the click
+   would do. Gated on the bar so a stuck :hover (touch) cannot pin it. */
+.pux-player--playing.pux-player--controls:hover .pux-player__overlay,
 .pux-player--playing .pux-player__overlay:focus-visible {
   opacity: 1;
 }
