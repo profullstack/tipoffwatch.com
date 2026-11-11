@@ -2,6 +2,53 @@
    form; this file localises times and adds push notifications and passkeys where the
    browser has them. */
 
+/* ----------------------------------------------------------- list filter -- */
+
+/**
+ * Filter a list of leagues or teams as you type.
+ *
+ * Every word must appear somewhere in the row's `data-filter` text, in any order
+ * and ignoring case: "city man" keeps Manchester City, "MAN" keeps it too. The
+ * box is server-rendered `hidden` and only shown here, so with JavaScript off
+ * nobody sees a control that does nothing.
+ */
+function listFilterWords(query) {
+  return String(query || '')
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function listFilterMatches(text, words) {
+  const hay = String(text || '').toLocaleLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+function initListFilters(root = document) {
+  for (const box of root.querySelectorAll('[data-list-filter]')) {
+    if (box.dataset.ready) continue;
+    const list = document.getElementById(box.dataset.listFilter);
+    const input = box.querySelector('input');
+    if (!list || !input) continue;
+    box.dataset.ready = '1';
+    box.hidden = false;
+    const empty = box.querySelector('.list-filter-empty');
+    const apply = () => {
+      const words = listFilterWords(input.value);
+      let shown = 0;
+      for (const li of list.children) {
+        const ok = listFilterMatches(li.dataset.filter ?? li.textContent, words);
+        li.hidden = !ok;
+        if (ok) shown++;
+      }
+      if (empty) empty.hidden = shown > 0;
+    };
+    input.addEventListener('input', apply);
+    // A value the browser restored on back/forward must filter too.
+    if (input.value) apply();
+  }
+}
+
 /* ------------------------------------------------------------ local time -- */
 
 /**
@@ -880,6 +927,7 @@ function initNavigation() {
       if (push) history.pushState({}, '', url);
       window.scrollTo(0, 0);
       localiseTimes();
+      initListFilters();
       initMarketTabs();
       initOwnChannelActions();
       initInlinePlayer();
@@ -919,6 +967,7 @@ function initNavigation() {
 }
 
 localiseTimes();
+initListFilters();
 reportTimezone();
 initMarketTabs();
 initOwnChannelActions();

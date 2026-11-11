@@ -2957,3 +2957,19 @@ ul.group-grid .meta {
     --ok: oklch(0.78 0.16 155);
   }
 }
+/* ---- league / team list filter (shown by app.js) ---- */
+.list-filter {
+  margin: 0.75rem 0;
+}
+.list-filter input[type="search"] {
+  max-width: 24rem;
+}
+.list-filter-empty {
+  margin-top: 0.5rem;
+}
+ul.sports > li[hidden],
+ul.leagues > li[hidden],
+ul.teams > li[hidden],
+ul.chips > li[hidden] {
+  display: none;
+}
