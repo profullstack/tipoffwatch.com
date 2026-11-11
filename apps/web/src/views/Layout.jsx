@@ -205,6 +205,16 @@ export const Layout = (props) => {
             async
           />
         ) : null}
+        {/* WebMCP (@profullstack/webmcp): site_info, open_page, search_site (public JSON search) and the
+            search form for the AI agent in the visitor's browser. */}
+        <script
+          type="module"
+          data-webmcp=""
+          src="https://cdn.jsdelivr.net/npm/@profullstack/webmcp@0/src/embed.js"
+          data-search-api="/api/v1/search?q={query}&limit={limit}"
+          data-search="/search?q={query}"
+          data-pages={JSON.stringify({ live: '/live', results: '/results', watch: '/watch', multiview: '/multiview', radio: '/radio', following: '/following', premium: '/premium', about: '/about' })}
+        />
       </head>
       {/* Carries the zone the server has on file, so app.js can report a correction
         from any page rather than only from settings -- someone who never opens
@@ -249,7 +259,7 @@ export const Layout = (props) => {
           refining a search means editing what you typed rather than retyping it.
         */}
           <search class="topsearch">
-            <form class="topsearch-form" method="get" action="/search">
+            <form class="topsearch-form" method="get" action="/search" toolname="search_form" tooldescription="Search teams, games, leagues and channels and show the results page" toolautosubmit="">
               <label class="sr-only" for="topsearch-q">
                 Search
               </label>

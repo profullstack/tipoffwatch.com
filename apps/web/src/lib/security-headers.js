@@ -36,7 +36,7 @@ export const buildPolicy = ({ styleNonce } = {}) =>
      * styleNonce for its first use): @profullstack/footer 0.4.0 puts it on the
      * inline script that posts the newsletter form and reports the result inline.
      */
-    `script-src 'self' https://crawlproof.com${styleNonce ? ` 'nonce-${styleNonce}'` : ''}`,
+    `script-src 'self' https://crawlproof.com https://cdn.jsdelivr.net${styleNonce ? ` 'nonce-${styleNonce}'` : ''}`,
     /*
      * The inline <style>s are @profullstack/footer's and the pit.world network
      * footer's, allowed by a per-request nonce rather than 'unsafe-inline' or a
