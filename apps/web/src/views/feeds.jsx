@@ -1,4 +1,5 @@
 import { brand, Word } from '@tipoff/config';
+import { ListFilter } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
 /**
@@ -31,9 +32,10 @@ export const Feeds = ({ user, sports, leagues }) => (
     </ul>
 
     <h2>By {brand.words.category}</h2>
-    <ul class="sports">
+    <ListFilter target="feed-sports" label={`Filter ${brand.words.categories}`} />
+    <ul class="sports" id="feed-sports">
       {sports.map((s) => (
-        <li>
+        <li data-filter={s.sport.replace(/-/g, ' ')}>
           <a href={`/feeds/sport/${s.sport}.xml`}>
             <strong>{s.sport.replace(/-/g, ' ')}</strong>
             <span class="muted">
@@ -50,9 +52,10 @@ export const Feeds = ({ user, sports, leagues }) => (
       and a calendar at <code>/calendar/league/&lt;slug&gt;.ics</code>, whether or not it is listed
       here.
     </p>
-    <ul class="leagues">
+    <ListFilter target="feed-leagues" label={`Filter ${brand.words.collections}`} />
+    <ul class="leagues" id="feed-leagues">
       {leagues.map((l) => (
-        <li>
+        <li data-filter={l.name}>
           <a href={`/feeds/league/${l.slug}.xml`}>{l.name}</a>
           <span class="muted small">
             {l.upcoming} upcoming · <a href={`/calendar/league/${l.slug}.ics`}>calendar</a>

@@ -609,9 +609,27 @@ export const EventList = ({ events, emptyText, showBroadcast = false, showOdds =
     </ul>
   );
 
+/**
+ * A filter box for a list of leagues or teams.
+ *
+ * Every word typed has to appear in a row, in any order and ignoring case, so
+ * "city man" finds Manchester City. Rendered `hidden` and switched on by app.js:
+ * without JavaScript the box would do nothing, and a control that does nothing
+ * is worse than no control. Rows match on their `data-filter` text, which is the
+ * name alone, so "upcoming" or "follow" never matches every row.
+ */
+export const ListFilter = ({ target, label }) => (
+  <div class="list-filter" data-list-filter={target} hidden>
+    <input type="search" aria-label={label} placeholder={`${label}…`} autocomplete="off" />
+    <p class="muted small list-filter-empty" hidden>
+      Nothing matches.
+    </p>
+  </div>
+);
+
 /** A team in the follow picker. */
 export const TeamRow = ({ team, user, next }) => (
-  <li class="team">
+  <li class="team" data-filter={team.display_name}>
     {team.logo_url ? (
       <img src={team.logo_url} alt="" loading="lazy" width="28" height="28" />
     ) : (

@@ -1,6 +1,6 @@
 import { COLUMNS as PROFILE_COLUMNS, renderProfileFields } from '@profullstack/profile';
-import { brand, href, Word } from '@tipoff/config';
 import { keyVaultCardHtml } from '@profullstack/sealed-secrets/vault-card';
+import { brand, href, Word } from '@tipoff/config';
 import { raw } from 'hono/html';
 import { assetUrl } from '../lib/asset-version.js';
 import { coinpayConfig } from '../lib/coinpay-signin.js';
@@ -11,6 +11,7 @@ import {
   EventList,
   FollowButton,
   KickoffTime,
+  ListFilter,
   LocalTime,
   OddsPanel,
   oddsOf,
@@ -781,9 +782,10 @@ export const SportsIndex = ({
       <li>{Word.collection}</li>
       <li>{Word.participant}</li>
     </ol>
-    <ul class="sports">
+    <ListFilter target="sports-list" label={`Filter ${brand.words.categories}`} />
+    <ul class="sports" id="sports-list">
       {sports.map((s) => (
-        <li>
+        <li data-filter={`${categoryLabel(s.sport)} ${s.sport}`}>
           <a href={href.category(s.sport)}>
             <strong>{categoryLabel(s.sport)}</strong>
             <span class="muted">
@@ -1069,9 +1071,10 @@ export const SportPage = ({
         heading={`Watch ${name} now`}
         blurb="Live channels, playing here. No account, nothing to install."
       />
-      <ul class="leagues">
+      <ListFilter target="leagues-list" label={`Filter ${brand.words.collections}`} />
+      <ul class="leagues" id="leagues-list">
         {leagues.map((l) => (
-          <li>
+          <li data-filter={l.name}>
             <a href={href.collection(l.slug)}>{l.name}</a>
             <FollowButton
               user={user}
@@ -1173,11 +1176,14 @@ export const LeaguePage = ({
       {teams.length === 0 ? (
         <p class="empty">{brand.copy.emptyParticipants}</p>
       ) : (
-        <ul class="teams">
-          {teams.map((t) => (
-            <TeamRow team={t} user={user} next={href.collection(league.slug)} />
-          ))}
-        </ul>
+        <>
+          <ListFilter target="teams-list" label={`Filter ${brand.words.participants}`} />
+          <ul class="teams" id="teams-list">
+            {teams.map((t) => (
+              <TeamRow team={t} user={user} next={href.collection(league.slug)} />
+            ))}
+          </ul>
+        </>
       )}
 
       <h2>Upcoming fixtures</h2>
@@ -1539,9 +1545,10 @@ export const Following = ({ user, events, follows, cleared, calendarUrl }) => (
             </button>
           </form>
         </div>
-        <ul class="chips">
+        <ListFilter target="follows-list" label="Filter what you follow" />
+        <ul class="chips" id="follows-list">
           {follows.map((f) => (
-            <li class="chip">
+            <li class="chip" data-filter={f.label}>
               {f.label}
               <form method="post" action="/api/unfollow" class="inline">
                 <input type="hidden" name="subject_type" value={f.subject_type} />
@@ -3236,7 +3243,13 @@ export const Settings = ({
       {contactError ? <p class="feedback error">{contactError}</p> : null}
       {contactSaved ? <p class="feedback ok">Contact details saved.</p> : null}
       <form method="post" action="/api/settings/contact">
-        {raw(renderProfileFields({ fields: SIGNUP_FIELDS, values: contact ?? {}, importOpenProfile: true }))}
+        {raw(
+          renderProfileFields({
+            fields: SIGNUP_FIELDS,
+            values: contact ?? {},
+            importOpenProfile: true,
+          }),
+        )}
         <div class="form-actions">
           <button class="cta" type="submit">
             Save contact details
