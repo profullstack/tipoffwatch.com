@@ -1,4 +1,5 @@
 import { brand } from '@tipoff/config';
+import { CheckoutForm } from './checkout.jsx';
 import { LocalTime } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
@@ -21,12 +22,6 @@ const money = (cents, currency = 'USD') =>
 
 const termWord = { week: 'a week', month: 'a month', year: 'a year' };
 const planTitle = { week: 'Week', month: 'Month', year: 'Year', gift: 'Code or invite' };
-
-/** "$1 a week", "$4 a month, billed yearly". */
-const priceLine = (plan) =>
-  plan.perMonthCents
-    ? `${money(plan.perMonthCents, plan.currency)} a month, ${money(plan.priceCents, plan.currency)} for the year`
-    : `${money(plan.priceCents, plan.currency)} ${termWord[plan.key]}`;
 
 /** The cheapest way in, for a card that has one line to say it. */
 export const fromPrice = (plans) => {
@@ -70,12 +65,11 @@ export const LivePage = ({
   history = [],
   connections = 1,
   paymentsEnabled = true,
+  checkout = null,
   enabled = true,
-  eventId = null,
   notice = null,
   error = null,
 }) => {
-  const back = eventId ? `?event=${eventId}` : '';
   return (
     <Layout
       title="Live TV"
@@ -107,41 +101,11 @@ export const LivePage = ({
         <p class="empty">Payments are not switched on here.</p>
       ) : null}
 
-      {enabled && paymentsEnabled ? (
+      {enabled && paymentsEnabled && checkout ? (
         <section class="plans">
-          <h2>{pass ? 'Add time' : 'Pick a pass'}</h2>
-          {pass ? (
-            <p class="muted small">
-              Time you buy is added to the end of what you hold, so buying early costs you nothing.
-            </p>
-          ) : null}
-          <ul class="plan-list">
-            {plans.map((plan) => (
-              <li class={`card plan${plan.key === 'year' ? ' plan-best' : ''}`}>
-                <div class="card-head">
-                  <h3 class="card-title">{planTitle[plan.key]}</h3>
-                  <p class="card-desc plan-price">{priceLine(plan)}</p>
-                </div>
-                {user ? (
-                  <form method="post" action="/api/live/buy">
-                    <input type="hidden" name="plan" value={plan.key} />
-                    {eventId ? <input type="hidden" name="event" value={String(eventId)} /> : null}
-                    <button class="cta" type="submit">
-                      {pass ? `Add ${termWord[plan.key]}` : `Buy ${termWord[plan.key]}`}
-                    </button>
-                  </form>
-                ) : (
-                  <a class="cta" href={`/login?next=${encodeURIComponent(`/live${back}`)}`}>
-                    Sign in to buy
-                  </a>
-                )}
-              </li>
-            ))}
-          </ul>
-          <p class="muted small">
-            Paid through the same checkout as {brand.copy.premiumTitle}: any major coin or PayPal.
-            Access begins the moment the payment settles, usually within a few minutes.
-          </p>
+          {/* The three passes as one form: pick one, one button. Signed out, the
+              button reads "Sign in to buy" and the post goes to sign in and back. */}
+          <CheckoutForm html={checkout} />
         </section>
       ) : null}
 

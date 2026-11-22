@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { InvitePage, PremiumPage } from '../apps/web/src/views/premium.jsx';
 
 process.env.DATABASE_URL = 'postgres://localhost:5432/unused';
+
+const { formHtml, membershipCheckout } = await import('../apps/web/src/lib/checkout.js');
+const { InvitePage, PremiumPage } = await import('../apps/web/src/views/premium.jsx');
 
 /**
  * The two pages that talk about money.
@@ -28,7 +30,22 @@ const base = {
   ledger: [],
 };
 
-const render = async (props) => String(await PremiumPage({ ...base, ...props }).toString());
+/** The form the route hands the page: built for whoever is signed in, as /premium does. */
+const formFor = ({ user, membership }) =>
+  formHtml(
+    membershipCheckout({
+      user: user ? { ...user, email: 'chovy@example.test' } : null,
+      renewing: Boolean(membership),
+      start: async () => ({ checkoutUrl: 'https://coinpay.example/checkout/cs_x' }),
+    }),
+    { query: {}, user: user ? { email: 'chovy@example.test' } : null },
+  );
+
+const render = async (props) => {
+  const all = { ...base, ...props };
+  const checkout = all.paymentsEnabled ? formFor(all) : null;
+  return String(await PremiumPage({ checkout, ...all }).toString());
+};
 
 describe('what the page says it costs', () => {
   test('the price and the rate are the ones it was handed', async () => {
@@ -60,17 +77,35 @@ describe('what the page says it costs', () => {
 });
 
 describe('controls it can actually honour', () => {
-  test('no checkout is offered without an account', async () => {
+  test('signed out, the one button is a way to sign in, never a way to pay', async () => {
     // The webhook credits an account. A signed-out checkout would take money and
-    // have nowhere to put the membership.
+    // have nowhere to put the membership: the form's post goes to sign in and
+    // back (test/checkout-form.test.js), and its button says so.
     const html = await render({ user: null, inviteUrl: null });
-    expect(html).not.toContain('action="/api/membership/buy"');
     expect(html).toContain('Sign in to join');
+    expect(html).not.toContain('Continue to payment');
+    expect(html).not.toContain('action="/api/membership/buy"');
   });
 
-  test('nor when payments are switched off', async () => {
+  test('signed in, the form sells the term: one option, one button, the amount due', async () => {
+    const html = await render({});
+    expect(html).toContain('action="/checkout/premium"');
+    expect(html).toContain('<h2 class="pfc-title">Join</h2>');
+    expect(html).toContain('name="option" value="premium" checked');
+    expect(html).toContain('USD 10.00');
+    expect(html).toContain('Continue to payment');
+    expect(html).toContain('It does not renew itself');
+    // One <h1> on the page: the form is a section of it.
+    expect(html.match(/<h1/g)?.length).toBe(1);
+    // The package's own files, from this origin; nothing inline.
+    expect(html).toMatch(/<link rel="stylesheet" href="\/vendor-checkout\.css\?v=[0-9a-f]+"/);
+    expect(html).toMatch(/<script type="module" src="\/vendor-checkout\.js\?v=[0-9a-f]+"/);
+  });
+
+  test('no form when payments are switched off', async () => {
     const html = await render({ paymentsEnabled: false });
-    expect(html).not.toContain('action="/api/membership/buy"');
+    expect(html).not.toContain('action="/checkout/premium"');
+    expect(html).not.toContain('pfc-cta');
     expect(html).toContain('not switched on');
   });
 
@@ -78,7 +113,8 @@ describe('controls it can actually honour', () => {
     const html = await render({
       membership: { expires_at: new Date('2027-01-01T00:00:00Z').toISOString() },
     });
-    expect(html).toContain('Renew for $10.00');
+    expect(html).toContain('<h2 class="pfc-title">Renew</h2>');
+    expect(html).toContain('action="/checkout/premium"');
     expect(html).toContain('adds another');
   });
 

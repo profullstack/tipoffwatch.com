@@ -9,6 +9,7 @@
     "build:client": "bun build-client.js"
   },
   "dependencies": {
+    "@profullstack/checkout": "^0.1.4",
     "@profullstack/coinpay-onboard": "^0.5.1",
     "@profullstack/footer": "latest",
     "@profullstack/leaderboard": "^0.3.1",

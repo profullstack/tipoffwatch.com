@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { formHtml, livePassCheckout } from '../apps/web/src/lib/checkout.js';
 import { fromPrice, LivePage, LiveUpsell } from '../apps/web/src/views/live.jsx';
 import { ChannelRow } from '../apps/web/src/views/pages.jsx';
 import { config } from '../packages/config/src/index.js';
@@ -231,19 +232,56 @@ describe('the provider host', () => {
 
 describe('the pages', () => {
   const plans = plansForSale();
+  /** The form the route hands the page, as GET /live builds it. */
+  const formFor = (who, { adding = false, eventId = null } = {}) =>
+    formHtml(
+      livePassCheckout({
+        user: who,
+        eventId,
+        adding,
+        start: async () => ({ checkoutUrl: 'https://coinpay.example/checkout/cs_x' }),
+      }),
+      { query: {}, user: who },
+    );
 
   test('sell three passes with the configured prices and no number of their own', async () => {
-    const html = await render(LivePage({ user, plans, enabled: true, paymentsEnabled: true }));
-    expect(html).toContain('$1 a week');
-    expect(html).toContain('$10 a month');
-    expect(html).toContain('$4 a month, $48 for the year');
-    expect(html).toContain('action="/api/live/buy"');
-    expect(html).toContain('name="plan" value="week"');
-    expect(html).toContain('name="plan" value="year"');
+    const html = await render(
+      LivePage({ user, plans, checkout: formFor(user), enabled: true, paymentsEnabled: true }),
+    );
+    expect(html).toContain('<h2 class="pfc-title">Pick a pass</h2>');
+    expect(html).toContain('action="/checkout/live"');
+    expect(html).toContain('name="option" value="week"');
+    expect(html).toContain('name="option" value="month"');
+    // The year is the one the page has always marked out, so it is the one selected.
+    expect(html).toContain('name="option" value="year" checked');
+    expect(html).toContain('USD 1.00');
+    expect(html).toContain('USD 10.00');
+    expect(html).toContain('USD 48.00');
+    expect(html).toContain('365 days, $4 a month');
+    expect(html).toContain('Continue to payment');
+    // One button, and the old one-form-per-pass markup is gone.
+    expect(html.match(/pfc-cta/g)?.length).toBe(1);
+    expect(html).not.toContain('action="/api/live/buy"');
+    expect(html.match(/<h1/g)?.length).toBe(1);
+  });
+
+  test('a pass bought from a game keeps the game on the form', async () => {
+    const html = await render(
+      LivePage({
+        user,
+        plans,
+        checkout: formFor(user, { eventId: 74799 }),
+        enabled: true,
+        paymentsEnabled: true,
+      }),
+    );
+    expect(html).toContain('action="/checkout/live?event=74799"');
   });
 
   test('never name the provider', async () => {
-    const html = await render(LivePage({ user, plans, enabled: true, paymentsEnabled: true }));
+    const html = await render(
+      LivePage({ user, plans, checkout: formFor(user), enabled: true, paymentsEnabled: true }),
+    );
     expect(html.toLowerCase()).not.toContain('argon');
     expect(read('../apps/web/src/views/live.jsx').toLowerCase()).not.toContain('argon');
     expect(read('../apps/web/src/views/pages.jsx').toLowerCase()).not.toContain('argon');
@@ -251,19 +289,34 @@ describe('the pages', () => {
 
   test('a signed-out reader sees the prices and is sent to sign in', async () => {
     const html = await render(
-      LivePage({ user: null, plans, enabled: true, paymentsEnabled: true }),
+      LivePage({
+        user: null,
+        plans,
+        checkout: formFor(null),
+        enabled: true,
+        paymentsEnabled: true,
+      }),
     );
-    expect(html).toContain('$1 a week');
+    expect(html).toContain('USD 1.00');
     expect(html).toContain('Sign in to buy');
-    expect(html).not.toContain('action="/api/live/buy"');
+    expect(html).not.toContain('Continue to payment');
   });
 
   test('a held pass offers to add time and reports on the channels', async () => {
     const pass = { expires_at: new Date('2030-01-01T00:00:00Z').toISOString() };
     const set = await render(
-      LivePage({ user, plans, pass, managed: true, enabled: true, paymentsEnabled: true }),
+      LivePage({
+        user,
+        plans,
+        pass,
+        checkout: formFor(user, { adding: true }),
+        managed: true,
+        enabled: true,
+        paymentsEnabled: true,
+      }),
     );
     expect(set).toContain('Add time');
+    expect(set).toContain('added to the end of what you hold');
     expect(set).toContain('Your channels are set up');
     const notYet = await render(
       LivePage({ user, plans, pass, managed: false, enabled: true, paymentsEnabled: true }),
@@ -325,9 +378,14 @@ describe('the routes', () => {
   test('the buy route charges what the page shows, tagged for the webhook', () => {
     const body = routeBody("app.post('/api/live/buy'");
     expect(body).toContain("const plan = live.planFor(String(body.plan ?? ''))");
-    expect(body).toContain('amountCents: plan.priceCents');
-    expect(body).toContain('metadata: { kind: live.LIVE_PASS_KIND, plan: plan.key }');
+    // What is charged and how it is tagged lives in one place, shared with the
+    // form on /live: livePassCharge.
+    expect(body).toContain('livePassCharge(user, plan, eventIdOf(body.event))');
+    const charge = read('../apps/web/src/lib/checkout.js');
+    expect(charge).toContain('amountCents: plan.priceCents');
+    expect(charge).toContain('metadata: { kind: live.LIVE_PASS_KIND, plan: plan.key }');
     expect(body).not.toContain('argon');
+    expect(charge.toLowerCase()).not.toContain('argon');
   });
 
   test('the webhook grants a pass by kind and sets the line up outside the transaction', () => {
