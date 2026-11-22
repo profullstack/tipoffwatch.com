@@ -82,6 +82,16 @@ import { finishSignIn as finishCoinpaySignIn } from '@profullstack/coinpay-onboa
 import { buildCalendar } from './lib/ics.js';
 import { agentName, leaderboard } from './lib/leaderboard.js';
 import { MAX_TILES, parseChannelIds } from './lib/multiview.js';
+import {
+  CHECKOUT_ASSETS,
+  eventIdOf,
+  formHtml,
+  livePassCharge,
+  livePassCheckout,
+  membershipCharge,
+  membershipCheckout,
+  pageError,
+} from './lib/checkout.js';
 import { buildFeed } from './lib/rss.js';
 import { buildPolicy, SECURITY_HEADERS } from './lib/security-headers.js';
 import { llmsTxt, robotsTxt, securityTxt, skillMd } from './lib/well-known.js';
@@ -4323,11 +4333,17 @@ app.get('/premium', async (c) => {
       ])
     : [null, [], [], [], null];
 
+  // The form that sells the term. Nothing is offered when money cannot be taken.
+  const checkout = pay.paymentsEnabled()
+    ? membershipCheckout({ user, renewing: Boolean(membership), start: pay.createCheckout })
+    : null;
+
   return c.html(
     await render(
       <PremiumPage
         user={user}
         membership={membership}
+        checkout={checkout ? formHtml(checkout, { query: c.req.query(), user }) : null}
         priceCents={config.membership.priceCents}
         currency={config.membership.currency}
         termDays={config.membership.termDays}
@@ -4347,7 +4363,7 @@ app.get('/premium', async (c) => {
               ? 'Payout details saved.'
               : null
         }
-        error={c.req.query('error') ?? null}
+        error={pageError(c.req.query('error'))}
       />,
     ),
   );
@@ -4375,26 +4391,25 @@ app.post('/api/membership/buy', async (c) => {
     });
   }
 
-  /*
-   * `kind` is what the webhook will branch on, and it is the only thing that makes
-   * this payment a membership rather than a seat at a fixture. A checkout that
-   * omitted it would settle, be recorded, and grant nothing at all.
-   */
-  const { checkoutUrl } = await pay.createCheckout({
-    user,
-    // CoinPay files every session under who paid; the hosted page offers every coin + PayPal.
-    email: user.email,
-    accountId: String(user.id),
-    amountCents: config.membership.priceCents,
-    currency: config.membership.currency,
-    description: `${brand.name} premium, ${config.membership.termDays} days`,
-    metadata: { kind: member.MEMBERSHIP_KIND },
-    successUrl: `${config.siteUrl}/premium?paid=1`,
-    cancelUrl: `${config.siteUrl}/premium`,
-  });
+  // The same session the form on /premium opens: see membershipCharge.
+  const { checkoutUrl } = await pay.createCheckout(membershipCharge(user));
 
   return respond(c, { json: { checkoutUrl }, redirectTo: checkoutUrl });
 });
+
+/**
+ * The form on /premium posts here (@profullstack/checkout). It only accepts a
+ * post from this site, takes the buyer from the session, and opens the session
+ * membershipCharge describes, the one the route above opens.
+ */
+app.post('/checkout/premium', async (c) => {
+  if (!pay.paymentsEnabled()) {
+    return c.redirect('/premium?error=Payments%20are%20not%20switched%20on%20here.', 303);
+  }
+  const checkout = membershipCheckout({ user: c.get('user'), start: pay.createCheckout });
+  return checkout.POST(c.req.raw);
+});
+app.get('/checkout/premium', (c) => c.redirect('/premium', 302));
 
 /**
  * Where to send this account's commission.
@@ -4477,7 +4492,12 @@ app.get('/live', async (c) => {
       ])
     : [null, null, []];
 
-  const eventId = Number(c.req.query('event'));
+  const eventId = eventIdOf(c.req.query('event'));
+  // The form that sells a pass. Nothing is offered when one cannot be sold.
+  const checkout =
+    config.live.enabled && pay.paymentsEnabled()
+      ? livePassCheckout({ user, eventId, adding: Boolean(pass), start: pay.createCheckout })
+      : null;
   const notice =
     c.req.query('paid') === '1'
       ? 'Payment started. Your channels are set up the moment it settles on chain, usually within a few minutes.'
@@ -4491,6 +4511,7 @@ app.get('/live', async (c) => {
       <LivePage
         user={user}
         plans={live.plansForSale()}
+        checkout={checkout ? formHtml(checkout, { query: c.req.query(), user }) : null}
         pass={pass}
         managed={Boolean(playlist?.managed)}
         hasOwnList={Boolean(playlist) && !playlist.managed}
@@ -4498,9 +4519,8 @@ app.get('/live', async (c) => {
         connections={config.live.connections}
         paymentsEnabled={pay.paymentsEnabled()}
         enabled={config.live.enabled}
-        eventId={Number.isInteger(eventId) && eventId > 0 ? eventId : null}
         notice={notice}
-        error={c.req.query('error') ?? null}
+        error={pageError(c.req.query('error'))}
       />,
     ),
   );
@@ -4532,23 +4552,31 @@ app.post('/api/live/buy', async (c) => {
     });
   }
 
-  const eventId = Number(body.event);
-  const back = Number.isInteger(eventId) && eventId > 0 ? `/events/${eventId}` : '/live';
-  const { checkoutUrl } = await pay.createCheckout({
-    user,
-    // CoinPay files every session under who paid; the hosted page offers every coin + PayPal.
-    email: user.email,
-    accountId: String(user.id),
-    amountCents: plan.priceCents,
-    currency: plan.currency,
-    // What the buyer reads at checkout. "Live TV", never the provider.
-    description: `${brand.name} Live TV, ${plan.days} days`,
-    metadata: { kind: live.LIVE_PASS_KIND, plan: plan.key },
-    successUrl: `${config.siteUrl}/live?paid=1${back !== '/live' ? `&event=${eventId}` : ''}`,
-    cancelUrl: `${config.siteUrl}${back}`,
-  });
+  // The same session the form on /live opens: see livePassCharge.
+  const { checkoutUrl } = await pay.createCheckout(
+    livePassCharge(user, plan, eventIdOf(body.event)),
+  );
   return respond(c, { json: { checkoutUrl }, redirectTo: checkoutUrl });
 });
+
+/**
+ * The form on /live posts here (@profullstack/checkout): the pass is the option
+ * picked, the buyer is the session's, and the game they came from rides on the
+ * form's own address. It opens the session livePassCharge describes, the one
+ * the route above opens.
+ */
+app.post('/checkout/live', async (c) => {
+  if (!config.live.enabled || !pay.paymentsEnabled()) {
+    return c.redirect('/live?error=Passes%20are%20not%20on%20sale%20right%20now.', 303);
+  }
+  const checkout = livePassCheckout({
+    user: c.get('user'),
+    eventId: eventIdOf(c.req.query('event')),
+    start: pay.createCheckout,
+  });
+  return checkout.POST(c.req.raw);
+});
+app.get('/checkout/live', (c) => c.redirect('/live', 302));
 
 /**
  * Make a held pass usable: the button behind "set up my channels" and "use the
@@ -5579,6 +5607,21 @@ for (const [route, spec, type] of PACKAGE_FILES) {
     // deploy that bumps the package has to be able to reach a warm cache.
     c.header('cache-control', 'public, max-age=60');
     return c.body(await Bun.file(path).arrayBuffer());
+  });
+}
+
+// The checkout form's stylesheet and script (@profullstack/checkout). The pages
+// link them with their content hash, so that URL can be cached hard.
+for (const asset of Object.values(CHECKOUT_ASSETS)) {
+  app.get(asset.path, (c) => {
+    c.header('content-type', asset.type);
+    c.header(
+      'cache-control',
+      c.req.query('v') === asset.hash
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=60, must-revalidate',
+    );
+    return c.body(asset.body);
   });
 }
 

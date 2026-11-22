@@ -1,4 +1,5 @@
 import { brand } from '@tipoff/config';
+import { CheckoutForm } from './checkout.jsx';
 import { LocalTime } from './components.jsx';
 import { Layout } from './Layout.jsx';
 
@@ -40,6 +41,7 @@ export const PremiumPage = ({
   commissionBps,
   freeHistoryDays,
   paymentsEnabled,
+  checkout = null,
   inviteUrl,
   invited = [],
   earnings = [],
@@ -108,41 +110,26 @@ export const PremiumPage = ({
             {term(termDays)} to the end of it rather than starting again — you never lose time you
             have already paid for.
           </p>
-          <form method="post" action="/api/membership/buy">
-            <button class="cta" type="submit" disabled={!paymentsEnabled}>
-              Renew for {money(priceCents, currency)}
-            </button>
-          </form>
+          {paymentsEnabled && checkout ? (
+            <CheckoutForm html={checkout} />
+          ) : (
+            <p class="empty">Payments are not switched on here at the moment.</p>
+          )}
         </section>
       ) : (
         <section>
-          <h2>Join</h2>
-          {paymentsEnabled ? (
+          {paymentsEnabled && checkout ? (
             <>
-              <p>
-                {money(priceCents, currency)} for {term(termDays)}, paid through CoinPay in any
-                major coin or PayPal. It does not renew itself — there is nothing to cancel and no
-                card on file.
-              </p>
+              {/* The form carries the "Join" heading, the price and the one
+                  button. A checkout has to attach to an account, because the
+                  webhook credits one: signed out, its button reads "Sign in to
+                  join" and the post goes to sign in and back, never to payment. */}
+              <CheckoutForm html={checkout} />
               <p class="muted">
                 Deposit $99 in your CoinPay wallet and get a free month:{' '}
                 <a href="https://coinpayportal.com/pass">CoinPay Pass</a>. Sign in with CoinPay to
                 use it.
               </p>
-              {user ? (
-                <form method="post" action="/api/membership/buy">
-                  <button class="cta" type="submit">
-                    Become a member — {money(priceCents, currency)}
-                  </button>
-                </form>
-              ) : (
-                /* A checkout has to attach to an account, because the webhook
-                   credits one. Sending a signed-out visitor to it would take
-                   their money and have nowhere to put the membership. */
-                <a class="cta" href="/login">
-                  Sign in to join
-                </a>
-              )}
             </>
           ) : (
             /* Never a dead button. If money cannot be taken, the page says so

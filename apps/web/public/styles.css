@@ -2678,31 +2678,53 @@ ul.group-grid .meta {
    here so the package and the site cannot drift apart, which is the whole
    reason the package exists. */
 
-/* Live TV passes: the three plans side by side, and the card on a game page. */
-.plan-list {
-  list-style: none;
+/* The checkout form on /premium and /live (@profullstack/checkout, whose own
+   stylesheet is /vendor-checkout.css), in this site's colours. It is a section
+   of a longer page here rather than a page of its own, so it sits at the left
+   edge under a heading the size of the page's other headings. */
+.pfc {
+  --pfc-accent: var(--accent);
+  --pfc-accent-fg: #150a06;
+  --pfc-fg: var(--fg);
+  --pfc-muted: var(--muted);
+  --pfc-card: var(--panel);
+  --pfc-border: var(--line);
+  --pfc-error: var(--live);
+  --pfc-radius: 8px;
+  --pfc-title-size: 1.6rem;
+}
+/* `main` in front: the package's stylesheet is linked after this one, by the
+   form itself, so an equal selector here would lose to it. */
+main .pfc {
+  justify-items: start;
+  margin: 2rem 0 1rem;
   padding: 0;
-  margin: 0.6rem 0;
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
 }
-.plan {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
+main .pfc-head {
+  justify-items: start;
+  text-align: left;
 }
-.plan .cta {
-  margin-top: auto;
+main .pfc-subtitle,
+main .pfc-account,
+main .pfc-assure {
+  text-align: left;
 }
-.plan-best {
-  outline: 2px solid var(--accent, #6cf);
-  outline-offset: -2px;
+main .pfc-total {
+  justify-content: flex-start;
 }
-.plan-price {
-  font-size: 1.05rem;
-  color: var(--fg, #eee);
+/* The option cards are a <fieldset>: not this site's boxed one with a tab legend. */
+main .pfc-options {
+  background: none;
 }
+main .pfc-options > legend {
+  margin-left: 0;
+  padding: 0;
+  background: none;
+}
+main .pfc-cta {
+  justify-self: start;
+}
+/* The card on a game page that points at /live. */
 .live-upsell {
   margin-bottom: 0.8rem;
 }
